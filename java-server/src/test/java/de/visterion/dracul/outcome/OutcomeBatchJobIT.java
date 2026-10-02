@@ -1,5 +1,7 @@
 package de.visterion.dracul.outcome;
 
+import de.visterion.dracul.executor.ExecutorPositionFixtures;
+
 import de.visterion.dracul.ContainerConfig;
 import de.visterion.dracul.executor.DecisionLog;
 import de.visterion.dracul.executor.DecisionLogRepository;
@@ -48,7 +50,7 @@ class OutcomeBatchJobIT {
     private static BigDecimal bd(String v) { return new BigDecimal(v); }
 
     private ExecutorPosition openPosition(String symbol, String signalId, BigDecimal qty) {
-        return new ExecutorPosition(
+        return ExecutorPositionFixtures.withoutKillLevel(
                 null, "depot-1", symbol, "BUY", qty, bd("100"), bd("95"), bd("95"), 1, bd("5"),
                 List.of(), signalId, "strigoi-spin", null, null, "OPEN", null, bd("100"), null, 0,
                 null, null, null, null, null, null, null, null, null, 0, null, null, null, null, null, null, false, null, null);

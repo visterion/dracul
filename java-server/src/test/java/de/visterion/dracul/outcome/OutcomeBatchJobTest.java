@@ -1,5 +1,7 @@
 package de.visterion.dracul.outcome;
 
+import de.visterion.dracul.executor.ExecutorPositionFixtures;
+
 import de.visterion.dracul.executor.DecisionLog;
 import de.visterion.dracul.executor.DecisionLogRepository;
 import de.visterion.dracul.executor.ExecutorPosition;
@@ -66,7 +68,7 @@ class OutcomeBatchJobTest {
 
     private ExecutorPosition closedPosition(long id, String symbol, String signalId, BigDecimal qty,
             BigDecimal exitPrice, BigDecimal realizedR, BigDecimal lowestPrice) {
-        return new ExecutorPosition(
+        return ExecutorPositionFixtures.withoutKillLevel(
                 id, "depot-1", symbol, "BUY", qty, bd("100"), bd("95"), bd("95"), 1, bd("5"),
                 List.of(), signalId, "strigoi-spin", "2026-06-01 10:00:00.0", null, "CLOSED", null,
                 bd("100"), bd("2.0"), 0, exitPrice, realizedR, "TAKE_PROFIT", "2026-06-10 10:00:00.0",
@@ -223,7 +225,7 @@ class OutcomeBatchJobTest {
      *  re-entry-window tests below. */
     private ExecutorPosition closedPositionOn(long id, String symbol, String signalId,
             LocalDate entryDate, LocalDate closedDate) {
-        return new ExecutorPosition(
+        return ExecutorPositionFixtures.withoutKillLevel(
                 id, "depot-1", symbol, "BUY", bd("10"), bd("100"), bd("95"), bd("95"), 1, bd("5"),
                 List.of(), signalId, "strigoi-spin", entryDate.toString(), null, "CLOSED", null,
                 bd("100"), bd("2.0"), 0, bd("105"), bd("1.0"), "TAKE_PROFIT", closedDate.toString(),

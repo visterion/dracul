@@ -168,7 +168,7 @@ class VetoServiceTest {
     }
 
     private ExecutorPosition position(String symbol, String sector) {
-        return new ExecutorPosition(1L, "sim", symbol, "LONG", BigDecimal.TEN,
+        return ExecutorPositionFixtures.withoutKillLevel(1L, "sim", symbol, "LONG", BigDecimal.TEN,
                 BigDecimal.valueOf(50), BigDecimal.valueOf(45), BigDecimal.valueOf(45), 1,
                 BigDecimal.ONE, List.of("kill"), "src-sig", "agent", "2026-07-01",
                 BigDecimal.ZERO, "OPEN", null, BigDecimal.valueOf(50), BigDecimal.ZERO, 0,

@@ -58,7 +58,7 @@ class MaintenancePipelineTest {
             BigDecimal highestPrice, BigDecimal mfeR, int softConfirmCount, List<String> killCriteria) {
         // entryFilledAt is set (broker confirmed the fill) so tranche-2 eligibility in these
         // pipeline tests is decided by price/reinforcing-signal evidence, not by this precondition.
-        return new ExecutorPosition(id, "c", symbol, "BUY", BigDecimal.TEN, new BigDecimal("100"),
+        return ExecutorPositionFixtures.withoutKillLevel(id, "c", symbol, "BUY", BigDecimal.TEN, new BigDecimal("100"),
                 new BigDecimal("95"), activeStop, 1, null, killCriteria, "sig-1", "agent",
                 "2026-06-01", null, "OPEN", "brk-1", highestPrice, mfeR, softConfirmCount, null,
                 null, null, null, "stop-1", null, null, null, null, 0, null, null,
@@ -370,7 +370,7 @@ class MaintenancePipelineTest {
     @Test
     void buyPosition_lowestPriceAlreadyLower_doesNotWriteAdverseExtreme() {
         // BUY, lowestPrice already 39, close rises to 40 -> never a new low, no write.
-        ExecutorPosition bbb = new ExecutorPosition(1L, "c", "BBB", "BUY", BigDecimal.TEN,
+        ExecutorPosition bbb = ExecutorPositionFixtures.withoutKillLevel(1L, "c", "BBB", "BUY", BigDecimal.TEN,
                 new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 1, null,
                 List.of(), "sig-1", "agent", "2026-06-01", null, "OPEN", "brk-1",
                 new BigDecimal("110"), new BigDecimal("1.6"), 0, null, null, null, null, "stop-1",
@@ -393,7 +393,7 @@ class MaintenancePipelineTest {
     @Test
     void sellPosition_neverWritesLowestPrice() {
         // SELL side: adverse extreme is the highest close, already tracked via highestPrice/ratchet.
-        ExecutorPosition aaa = new ExecutorPosition(1L, "c", "AAA", "SELL", BigDecimal.TEN,
+        ExecutorPosition aaa = ExecutorPositionFixtures.withoutKillLevel(1L, "c", "AAA", "SELL", BigDecimal.TEN,
                 new BigDecimal("100"), new BigDecimal("105"), new BigDecimal("105"), 1, null,
                 List.of(), "sig-1", "agent", "2026-06-01", null, "OPEN", "brk-1",
                 new BigDecimal("90"), new BigDecimal("1.6"), 0, null, null, null, null, "stop-1",
@@ -562,7 +562,7 @@ class MaintenancePipelineTest {
         // the `|| p.pendingExitReason() != null` half of the restriction would stay green.
         ExecutorPosition dark = openPosition(1L, "DARK", new BigDecimal("95"),
                 new BigDecimal("110"), new BigDecimal("1.6"), 0);
-        ExecutorPosition pendingExit = new ExecutorPosition(2L, "c", "OTHER", "BUY",
+        ExecutorPosition pendingExit = ExecutorPositionFixtures.withoutKillLevel(2L, "c", "OTHER", "BUY",
                 BigDecimal.TEN, new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"),
                 1, null, List.of(), "sig-1", "agent", "2026-06-01", null, "OPEN", "brk-1",
                 new BigDecimal("110"), new BigDecimal("1.6"), 0, null, null, null, null,

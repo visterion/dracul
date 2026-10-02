@@ -107,7 +107,7 @@ class StopRatchetServiceTest {
     private ExecutorPosition openPosition(long id, String symbol, String side, BigDecimal highestPrice,
             BigDecimal activeStop, BigDecimal mfeR, int softConfirmCount,
             String brokerOrderId, int tranche, String tranche2OrderId, String tranche2StopOrderId) {
-        return new ExecutorPosition(id, "c", symbol, side, BigDecimal.TEN, new BigDecimal("100"),
+        return ExecutorPositionFixtures.withoutKillLevel(id, "c", symbol, side, BigDecimal.TEN, new BigDecimal("100"),
                 new BigDecimal("90"), activeStop, tranche, null, List.of(), "sig-1", "agent", "2026-07-01",
                 null, "OPEN", brokerOrderId, highestPrice, mfeR, softConfirmCount, null, null, null, null,
                 "stop-1", null, null, tranche2OrderId, tranche2StopOrderId, 0, null, null,
@@ -235,7 +235,7 @@ class StopRatchetServiceTest {
 
     @Test
     void tranche2_missingFirstStopLegId_stillEscalates() {
-        ExecutorPosition p = new ExecutorPosition(23L, "c", "ACME", "BUY", BigDecimal.TEN,
+        ExecutorPosition p = ExecutorPositionFixtures.withoutKillLevel(23L, "c", "ACME", "BUY", BigDecimal.TEN,
                 new BigDecimal("100"), new BigDecimal("90"), new BigDecimal("95"), 2, null, List.of(),
                 "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-1", new BigDecimal("110"),
                 new BigDecimal("1.0"), 0, null, null, null, null,
@@ -392,7 +392,7 @@ class StopRatchetServiceTest {
      *  test wants in the two stop-leg id columns. Order ids are invented 10-digit values. */
     private ExecutorPosition collapsedPosition(long id, String symbol, String stopOrderId,
             String tranche2StopOrderId) {
-        return new ExecutorPosition(id, "c", symbol, "BUY", BigDecimal.TEN,
+        return ExecutorPositionFixtures.withoutKillLevel(id, "c", symbol, "BUY", BigDecimal.TEN,
                 new BigDecimal("100"), new BigDecimal("90"), new BigDecimal("95"), 2, null, List.of(),
                 "sig-1", "agent", "2026-07-01", null, "OPEN", "2000000000", new BigDecimal("110"),
                 new BigDecimal("1.0"), 0, null, null, null, null,
@@ -526,7 +526,7 @@ class StopRatchetServiceTest {
         // stop_order_id="stop-1" here is deliberately NOT the address used: see the stopOrderId()
         // assertion below for why naming it explicitly would be actively wrong, not merely
         // unverified.
-        ExecutorPosition p = new ExecutorPosition(40L, "c", "ACME", "BUY", BigDecimal.TEN,
+        ExecutorPosition p = ExecutorPositionFixtures.withoutKillLevel(40L, "c", "ACME", "BUY", BigDecimal.TEN,
                 new BigDecimal("100"), new BigDecimal("90"), new BigDecimal("95"), 2, null, List.of(),
                 "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-1", new BigDecimal("110"),
                 new BigDecimal("1.0"), 0, null, null, null, null,
@@ -561,7 +561,7 @@ class StopRatchetServiceTest {
     void anUncollapsedTwoTranchePositionWithAMissingLegStillEscalates() {
         // Same row as above, but stop_legs_collapsed is false: this is the genuinely unaddressable
         // case the escalation exists for, and it must still fire exactly as before.
-        ExecutorPosition p = new ExecutorPosition(41L, "c", "ACME", "BUY", BigDecimal.TEN,
+        ExecutorPosition p = ExecutorPositionFixtures.withoutKillLevel(41L, "c", "ACME", "BUY", BigDecimal.TEN,
                 new BigDecimal("100"), new BigDecimal("90"), new BigDecimal("95"), 2, null, List.of(),
                 "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-1", new BigDecimal("110"),
                 new BigDecimal("1.0"), 0, null, null, null, null,
@@ -1471,7 +1471,7 @@ class StopRatchetServiceTest {
                 p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
                 p.trimCount(), p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
                 p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(),
-                p.stopLegsCollapsed(), brokerStop, p.entryFilledAt());
+                p.stopLegsCollapsed(), brokerStop, p.entryFilledAt(), p.killCloseBelow(), p.killCloseBelowDropped());
     }
 
     /** Test 15. The broker leg rests a buffer BELOW the logical chandelier, and the book records

@@ -87,5 +87,13 @@ public record ExecutorPosition(
          *  no entry order still working. NULL means the entry is not (yet) filled, which makes the
          *  position ineligible for a second tranche. Written once, by
          *  {@code ReconcileService.reconcile}. */
-        String entryFilledAt) {
+        String entryFilledAt,
+        /** The structured kill level the hard trigger enforces (V51): one daily close strictly
+         *  below it on a BUY => HARD_KILL_CRITERIA. Null when the signal had none or place-entry
+         *  dropped it. There is deliberately NO back-compat constructor: every copy site
+         *  (ReconcileService rebuilds every OPEN row each run) must forward it explicitly. */
+        BigDecimal killCloseBelow,
+        /** Why place-entry did not arm the signal's level: {@code too_tight} or
+         *  {@code breached_at_adoption}; null when nothing was dropped (V51). */
+        String killCloseBelowDropped) {
 }

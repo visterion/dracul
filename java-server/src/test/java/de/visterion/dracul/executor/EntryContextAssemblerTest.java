@@ -100,7 +100,7 @@ class EntryContextAssemblerTest {
 
     private ExecutorPosition openPosition(String symbol, BigDecimal qty, BigDecimal entryPrice,
             BigDecimal activeStop, String sourceSignalId) {
-        return new ExecutorPosition(1L, "depot-1", symbol, "BUY", qty, entryPrice,
+        return ExecutorPositionFixtures.withoutKillLevel(1L, "depot-1", symbol, "BUY", qty, entryPrice,
                 entryPrice, activeStop, 1, null, List.of(), sourceSignalId, "agent", "2026-07-01",
                 null, "OPEN", "brk-1", null, null, 0, null, null, null, null,
                 "stop-1", null, null, null, null, 0, null, null, null, null, null, null, false, null, null);

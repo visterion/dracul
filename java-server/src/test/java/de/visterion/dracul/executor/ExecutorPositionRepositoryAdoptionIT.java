@@ -35,7 +35,7 @@ class ExecutorPositionRepositoryAdoptionIT {
     }
 
     private long insert(String symbol, String status, String stopOrderId, String tranche2StopOrderId) {
-        return repo.insert(new ExecutorPosition(null, "depot-1", symbol, "buy", new BigDecimal("10"),
+        return repo.insert(ExecutorPositionFixtures.withoutKillLevel(null, "depot-1", symbol, "buy", new BigDecimal("10"),
                 new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 1,
                 new BigDecimal("1"), List.of("kc1"), "sig-1", "index-strigoi", null, null, status,
                 "ord-entry", new BigDecimal("100"), null, 0, null, null, null, null, stopOrderId,

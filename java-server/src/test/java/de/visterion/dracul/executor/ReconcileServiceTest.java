@@ -94,7 +94,7 @@ class ReconcileServiceTest {
     private ExecutorPosition openPosition(long id, String symbol, String side, BigDecimal entry,
             BigDecimal initialStop, String brokerOrderId, String stopOrderId,
             BigDecimal highest, BigDecimal mfeR) {
-        return new ExecutorPosition(id, "c", symbol, side, BigDecimal.TEN, entry, initialStop,
+        return ExecutorPositionFixtures.withoutKillLevel(id, "c", symbol, side, BigDecimal.TEN, entry, initialStop,
                 initialStop, 1, null, List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN",
                 brokerOrderId, highest, mfeR, 0, null, null, null, null, stopOrderId,
                 null, null, null, null, 0, null, null, null, null, null, null, false, null, null);
@@ -142,7 +142,7 @@ class ReconcileServiceTest {
     private ExecutorPosition pendingExitPosition(long id, String symbol, BigDecimal entry,
             BigDecimal initialStop, String stopOrderId, String pendingExitReason,
             String exitOrderId, BigDecimal pendingExitFillPrice) {
-        return new ExecutorPosition(id, "c", symbol, "BUY", BigDecimal.TEN, entry, initialStop,
+        return ExecutorPositionFixtures.withoutKillLevel(id, "c", symbol, "BUY", BigDecimal.TEN, entry, initialStop,
                 initialStop, 1, null, List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN",
                 "brk-" + id, null, null, 0, null, null, null, null, stopOrderId,
                 null, null, null, null, 0, null, null, null,
@@ -414,7 +414,7 @@ class ReconcileServiceTest {
     void maintenanceSyncsEntryPriceFromBrokerBasis() {
         // Verified prod bug: booked entry_price 100.01 (the submitted limit) never
         // corrected to the broker's real fill 100.00 -> slippage always computed as 0.
-        ExecutorPosition p = new ExecutorPosition(20L, "c", "SYNP", "BUY", BigDecimal.TEN,
+        ExecutorPosition p = ExecutorPositionFixtures.withoutKillLevel(20L, "c", "SYNP", "BUY", BigDecimal.TEN,
                 new BigDecimal("100.01"), new BigDecimal("96.13"), new BigDecimal("96.13"), 1, null,
                 List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-20", null,
                 BigDecimal.ZERO, 0, null, null, null, null, "stop-20",
@@ -468,7 +468,7 @@ class ReconcileServiceTest {
      *  {@code entryExpiresAt} still set (the GTD marker that {@code entryJustFilled} reads). */
     private ExecutorPosition firstFillPendingPosition(long id, String symbol, String side,
             BigDecimal limit, BigDecimal stop) {
-        return new ExecutorPosition(id, "c", symbol, side, BigDecimal.TEN, limit, stop, stop, 1,
+        return ExecutorPositionFixtures.withoutKillLevel(id, "c", symbol, side, BigDecimal.TEN, limit, stop, stop, 1,
                 null, List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-" + id,
                 limit, BigDecimal.ZERO, 0, null, null, null, null, "stop-" + id,
                 null, null, null, null, 0, null, "2026-07-15T00:00:00Z", limit,
@@ -571,7 +571,7 @@ class ReconcileServiceTest {
         // NOT the first fill: entryExpiresAt is already null (entry was filled earlier), so
         // entryJustFilled is false even though avgEntryPrice changes again (tranche-2 fill).
         // The running highest_price (108, built up since entry) must survive untouched.
-        ExecutorPosition p = new ExecutorPosition(34L, "c", "TST", "BUY", BigDecimal.TEN,
+        ExecutorPosition p = ExecutorPositionFixtures.withoutKillLevel(34L, "c", "TST", "BUY", BigDecimal.TEN,
                 new BigDecimal("100.00"), new BigDecimal("95.00"), new BigDecimal("95.00"), 2,
                 null, List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-34",
                 new BigDecimal("108.00"), BigDecimal.ZERO, 0, null, null, null, null, "stop-34",
@@ -646,7 +646,7 @@ class ReconcileServiceTest {
     void stillOpen_pinsSectorEntryDayHighAndTranche2FieldsThroughReconcile() {
         // Task-1 review carry-over: ReconcileService's still-open position-copy must not drop
         // sector/entryDayHigh/tranche2OrderId/tranche2StopOrderId — pin the pass-through here.
-        ExecutorPosition p = new ExecutorPosition(7L, "c", "BBB", "BUY", BigDecimal.TEN,
+        ExecutorPosition p = ExecutorPositionFixtures.withoutKillLevel(7L, "c", "BBB", "BUY", BigDecimal.TEN,
                 new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 1, null,
                 List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-7", null,
                 BigDecimal.ZERO, 0, null, null, null, null, "stop-7",
@@ -720,7 +720,7 @@ class ReconcileServiceTest {
         // t2 position (has tranche2OrderId/tranche2StopOrderId); the t1 TAKE_PROFIT leg fills.
         // v1 cannot safely TRIM the row to the surviving tranche, so it must neither close nor
         // silently keep it — it escalates and leaves the row OPEN.
-        ExecutorPosition p = new ExecutorPosition(8L, "c", "ACME", "BUY", BigDecimal.TEN,
+        ExecutorPosition p = ExecutorPositionFixtures.withoutKillLevel(8L, "c", "ACME", "BUY", BigDecimal.TEN,
                 new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 1, null,
                 List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-8", null,
                 BigDecimal.ZERO, 0, null, null, null, null, "stop-8",
@@ -752,7 +752,7 @@ class ReconcileServiceTest {
         // The filled leg matches ONLY via tranche2StopOrderId — matchesPosition must recognize it
         // as belonging to this position (not "foreign"/unmatched), and because this is a t2
         // position it must escalate rather than fall through to a silent updateMaintenance.
-        ExecutorPosition p = new ExecutorPosition(9L, "c", "ACME", "BUY", BigDecimal.TEN,
+        ExecutorPosition p = ExecutorPositionFixtures.withoutKillLevel(9L, "c", "ACME", "BUY", BigDecimal.TEN,
                 new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 1, null,
                 List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-9", null,
                 BigDecimal.ZERO, 0, null, null, null, null, "stop-9",
@@ -823,7 +823,7 @@ class ReconcileServiceTest {
         // entry_expires_at doubles as the persisted "unfilled" flag for LLM-exit gating: once
         // the broker actually holds the position (confirmed fill), reconcile must clear it —
         // otherwise exit_position would keep rejecting a genuinely filled position NOT_FILLED.
-        ExecutorPosition p = new ExecutorPosition(13L, "c", "FILLPOS", "BUY", BigDecimal.TEN,
+        ExecutorPosition p = ExecutorPositionFixtures.withoutKillLevel(13L, "c", "FILLPOS", "BUY", BigDecimal.TEN,
                 new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 1, null,
                 List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-13",
                 new BigDecimal("100"), BigDecimal.ZERO, 0, null, null, null, null, "stop-13",
@@ -1293,7 +1293,7 @@ class ReconcileServiceTest {
     /** Two-tranche position whose tranche-2 limit is still working: the book was grown to the
      *  intended total at placement, the broker holds only tranche 1. */
     private ExecutorPosition unfilledTranche2Position(long id, String symbol, BigDecimal bookedQty) {
-        return new ExecutorPosition(id, "c", symbol, "BUY", bookedQty, new BigDecimal("100"),
+        return ExecutorPositionFixtures.withoutKillLevel(id, "c", symbol, "BUY", bookedQty, new BigDecimal("100"),
                 new BigDecimal("95"), new BigDecimal("95"), 2, null, List.of(), "sig-1", "agent",
                 "2026-07-01", null, "OPEN", "2000000001", null, null, 0, null, null, null, null,
                 "2000000002", null, null, "2000000003", "2000000004", 0, null, null, null,
@@ -1368,7 +1368,7 @@ class ReconcileServiceTest {
 
     private ExecutorPosition twoTranchePosition(long id, String symbol, BigDecimal qty,
             BigDecimal entry, BigDecimal initialStop) {
-        return new ExecutorPosition(id, "c", symbol, "BUY", qty, entry, initialStop,
+        return ExecutorPositionFixtures.withoutKillLevel(id, "c", symbol, "BUY", qty, entry, initialStop,
                 initialStop, 2, null, List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN",
                 "ord-1", null, BigDecimal.ZERO, 0, null, null, null, null, "stop-1",
                 null, null, "ord-2", "stop-2", 0, null, null, null, null, null, null, false, null, null);
@@ -2247,7 +2247,7 @@ class ReconcileServiceTest {
         // by name, and nothing escalates. The leg reconcile just closed (stop-1) is not addressed
         // at all -- that, and not a special case inside the ratchet, is why the ordinary "the leg
         // is gone because it filled" case never produces a STOP_LEG_MISSING row.
-        ExecutorPosition p = new ExecutorPosition(1L, "c", "ACME", "BUY", new BigDecimal("20"),
+        ExecutorPosition p = ExecutorPositionFixtures.withoutKillLevel(1L, "c", "ACME", "BUY", new BigDecimal("20"),
                 new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 2, null, List.of(),
                 "sig-1", "agent", "2026-07-01", null, "OPEN", "ord-1", new BigDecimal("110"),
                 BigDecimal.ZERO, 0, null, null, null, null, "stop-1", null, null, "ord-2", "stop-2",
@@ -2561,7 +2561,7 @@ class ReconcileServiceTest {
                 p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
                 p.trimCount(), p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
                 p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(),
-                p.stopLegsCollapsed(), brokerStop, entryFilledAt);
+                p.stopLegsCollapsed(), brokerStop, entryFilledAt, p.killCloseBelow(), p.killCloseBelowDropped());
     }
 
     /** Test 27. A protective leg filled with no reported price: the estimate must be the price the
@@ -2728,7 +2728,7 @@ class ReconcileServiceTest {
                 base.tranche2StopOrderId(), base.trimCount(), base.lowestPrice(),
                 base.entryExpiresAt(), base.submittedLimitPrice(), base.pendingExitReason(),
                 base.exitOrderId(), base.pendingExitFillPrice(), base.stopLegsCollapsed(),
-                null, "2026-07-01T09:00:00Z");
+                null, "2026-07-01T09:00:00Z", base.killCloseBelow(), base.killCloseBelowDropped());
         when(positionRepo.findOpen()).thenReturn(List.of(p));
         gateway.seedPosition(new BrokerPosition("ACME", "BUY", BigDecimal.TEN,
                 new BigDecimal("100"), new BigDecimal("101"), 1));
@@ -2757,7 +2757,7 @@ class ReconcileServiceTest {
                 base.tranche2StopOrderId(), base.trimCount(), base.lowestPrice(),
                 base.entryExpiresAt(), base.submittedLimitPrice(), base.pendingExitReason(),
                 base.exitOrderId(), base.pendingExitFillPrice(), base.stopLegsCollapsed(),
-                new BigDecimal("93.00"), "2026-07-01T09:00:00Z");
+                new BigDecimal("93.00"), "2026-07-01T09:00:00Z", base.killCloseBelow(), base.killCloseBelowDropped());
         when(positionRepo.findOpen()).thenReturn(List.of(p));
         // A broker holding whose avg entry price differs from the book forces the ENTRY_PRICE_SYNC
         // rebuild AND the updateMaintenance rebuild on one pass.
@@ -3033,5 +3033,97 @@ class ReconcileServiceTest {
                 null, new BigDecimal("90"), java.time.Instant.parse("2026-09-08T14:00:00Z"));
 
         assertThat(service.findFilledExitLeg(p, List.of(historyStop))).isNull();
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // V51: kill_close_below / kill_close_below_dropped survive every positional rebuild.
+    // The record has no back-compat constructor, so the compiler forces each rebuild site to
+    // name both components; these tests pin that each one forwards p's values instead of null.
+    // Both fields are set on one fixture so a dropped forward of EITHER is caught.
+    // ---------------------------------------------------------------------------------------
+
+    private static final BigDecimal KILL_LEVEL = new BigDecimal("88.50");
+    private static final String KILL_DROPPED = "too_tight";
+
+    private static ExecutorPosition withKill(ExecutorPosition p) {
+        return ExecutorPositionFixtures.withKillLevel(p, KILL_LEVEL, KILL_DROPPED);
+    }
+
+    private static void assertKillCarried(ExecutorPosition p) {
+        assertThat(p.killCloseBelow()).isEqualByComparingTo(KILL_LEVEL);
+        assertThat(p.killCloseBelowDropped()).isEqualTo(KILL_DROPPED);
+    }
+
+    /** ENTRY_PRICE_SYNC rebuild + updateMaintenance rebuild, one pass. */
+    @Test
+    void entryPriceSyncAndMaintenanceRebuildsCarryTheKillLevel() {
+        ExecutorPosition p = withKill(withFillState(openPosition(70L, "SYNK", "BUY",
+                new BigDecimal("100"), new BigDecimal("95"), "brk-70", "stop-70", null, null),
+                new BigDecimal("93.00"), "2026-07-01T09:00:00Z"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        gateway.seedPosition(new BrokerPosition("SYNK", "BUY", BigDecimal.TEN,
+                new BigDecimal("99.50"), new BigDecimal("101"), 1));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
+
+        verify(positionRepo).syncEntryPrice(70L, new BigDecimal("99.50"));
+        assertThat(survivors).singleElement().satisfies(ReconcileServiceTest::assertKillCarried);
+    }
+
+    /** withTrim rebuild. */
+    @Test
+    void trimRebuildCarriesTheKillLevel() {
+        ExecutorPosition p = withKill(withFillState(
+                twoTranchePosition(71L, "SYNK", new BigDecimal("20"),
+                        new BigDecimal("100"), new BigDecimal("95")),
+                new BigDecimal("93.00"), "2026-07-01T09:00:00Z"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(legRepo.findOpenByPosition(71L)).thenReturn(List.of(
+                leg(20L, 71L, 1, "ord-1", "stop-1", new BigDecimal("10")),
+                leg(21L, 71L, 2, "ord-2", "stop-2", new BigDecimal("10"))));
+        gateway.seedPosition(new BrokerPosition("SYNK", "BUY", new BigDecimal("10"),
+                new BigDecimal("100"), new BigDecimal("98"), null));
+        gateway.seedOrder(filled("stop-1", "SYNK", new BigDecimal("10"), new BigDecimal("95")));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
+
+        verify(positionRepo).recordTrim(eq(71L), argThatComparesTo("10"), eq(1));
+        assertThat(survivors).singleElement().satisfies(ReconcileServiceTest::assertKillCarried);
+    }
+
+    /** withQty rebuild (QTY_SYNC). */
+    @Test
+    void qtySyncRebuildCarriesTheKillLevel() {
+        ExecutorPosition p = withKill(withFillState(
+                unfilledTranche2Position(72L, "SYNK", new BigDecimal("12")),
+                new BigDecimal("93.00"), "2026-07-01T09:00:00Z"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        gateway.seedPosition(new BrokerPosition("SYNK", "BUY", new BigDecimal("6"),
+                new BigDecimal("100"), new BigDecimal("104"), null));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
+
+        verify(positionRepo).syncQty(72L, new BigDecimal("6"));
+        assertThat(survivors).singleElement().satisfies(ReconcileServiceTest::assertKillCarried);
+    }
+
+    /** RECONCILE_GONE close-match entry-price rebuild ({@code effective}, booked and notified). */
+    @Test
+    void reconcileGoneCloseMatchRebuildCarriesTheKillLevel() {
+        ExecutorPosition p = withKill(withFillState(
+                openPosition(73L, "SYNK", "BUY", new BigDecimal("100.00"),
+                        new BigDecimal("67.97"), "brk-73", "stop-73", null, null),
+                new BigDecimal("66.00"), "2026-07-01T09:00:00Z"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        gateway.seedClosedPosition(new BrokerClosedPosition("SYNK", new BigDecimal("61.78"),
+                new BigDecimal("61.53"), new BigDecimal("-0.25"), "sig-1"));
+
+        service.reconcile("c", "run1");
+
+        verify(positionRepo).syncEntryPrice(73L, new BigDecimal("61.78"));
+        ArgumentCaptor<ExecutorPosition> booked = ArgumentCaptor.forClass(ExecutorPosition.class);
+        verify(executorNotifier).notifyExit(booked.capture(), eq("RECONCILE_GONE"), any(), any(), any());
+        assertThat(booked.getValue().entryPrice()).isEqualByComparingTo("61.78");
+        assertKillCarried(booked.getValue());
     }
 }

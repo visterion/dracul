@@ -143,7 +143,7 @@ class ExecutorPositionLegRepositoryTest {
     }
 
     private long insertTestPosition(String symbol, BigDecimal qty) {
-        var pos = new ExecutorPosition(null, "depot-1", symbol, "BUY",
+        var pos = ExecutorPositionFixtures.withoutKillLevel(null, "depot-1", symbol, "BUY",
                 qty, new BigDecimal("100.00"), new BigDecimal("90.00"),
                 new BigDecimal("95.00"), 1, new BigDecimal("1.5"),
                 List.of("EARNINGS_MISS"), "sig-" + UUID.randomUUID(), "strigoi-spin",

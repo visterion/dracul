@@ -51,7 +51,8 @@ public class ExecutorPositionRepository {
                    realized_r, exit_reason, stop_order_id, sector, entry_day_high,
                    tranche2_order_id, tranche2_stop_order_id, trim_count, lowest_price,
                    entry_expires_at, submitted_limit_price, pending_exit_reason, exit_order_id,
-                   pending_exit_fill_price, stop_legs_collapsed, broker_stop, entry_filled_at)
+                   pending_exit_fill_price, stop_legs_collapsed, broker_stop, entry_filled_at,
+                   kill_close_below, kill_close_below_dropped)
                 VALUES (:connection, :symbol, :side, :qty, :entryPrice, :initialStop, :activeStop,
                         :tranche, :rValue, CAST(:killCriteria AS jsonb), :sourceSignalId, :sourceAgent,
                         :mfe, :status, :brokerOrderId, :highestPrice, :mfeR, :softConfirmCount,
@@ -59,7 +60,7 @@ public class ExecutorPositionRepository {
                         :tranche2OrderId, :tranche2StopOrderId, :trimCount, :lowestPrice,
                         CAST(:entryExpiresAt AS timestamptz), :submittedLimitPrice, :pendingExitReason,
                         :exitOrderId, :pendingExitFillPrice, :stopLegsCollapsed, :brokerStop,
-                        CAST(:entryFilledAt AS timestamptz))
+                        CAST(:entryFilledAt AS timestamptz), :killCloseBelow, :killCloseBelowDropped)
                 """)
                 .param("connection", p.connection())
                 .param("symbol", p.symbol())
@@ -97,6 +98,8 @@ public class ExecutorPositionRepository {
                 .param("stopLegsCollapsed", p.stopLegsCollapsed())
                 .param("brokerStop", p.brokerStop())
                 .param("entryFilledAt", p.entryFilledAt())
+                .param("killCloseBelow", p.killCloseBelow())
+                .param("killCloseBelowDropped", p.killCloseBelowDropped())
                 .update(keyHolder, "id");
         return ((Number) keyHolder.getKeys().get("id")).longValue();
     }
@@ -652,7 +655,9 @@ public class ExecutorPositionRepository {
                 rs.getBigDecimal("pending_exit_fill_price"),
                 rs.getBoolean("stop_legs_collapsed"),
                 rs.getBigDecimal("broker_stop"),
-                entryFilledAtOrNull(rs));
+                entryFilledAtOrNull(rs),
+                rs.getBigDecimal("kill_close_below"),
+                rs.getString("kill_close_below_dropped"));
     }
 
     private String entryExpiresAtOrNull(ResultSet rs) throws SQLException {

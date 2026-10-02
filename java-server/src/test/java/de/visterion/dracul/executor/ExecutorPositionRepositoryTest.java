@@ -34,7 +34,7 @@ class ExecutorPositionRepositoryTest {
         String symbolA = "POS-A-" + UUID.randomUUID();
         String symbolB = "POS-B-" + UUID.randomUUID();
 
-        var posA = new ExecutorPosition(null, "depot-1", symbolA, "BUY",
+        var posA = ExecutorPositionFixtures.withoutKillLevel(null, "depot-1", symbolA, "BUY",
                 new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("90.00"),
                 new BigDecimal("95.00"), 1, new BigDecimal("1.5"),
                 List.of("EARNINGS_MISS", "GUIDANCE_CUT"), "sig-a", "strigoi-spin",
@@ -42,7 +42,7 @@ class ExecutorPositionRepositoryTest {
                 null, null, 0, null, null, null, null, null,
                 null, null, null, null, 0, null, null, null, null, null, null, false,
                 null, null);
-        var posB = new ExecutorPosition(null, "depot-1", symbolB, "BUY",
+        var posB = ExecutorPositionFixtures.withoutKillLevel(null, "depot-1", symbolB, "BUY",
                 new BigDecimal("5"), new BigDecimal("50.00"), new BigDecimal("45.00"),
                 new BigDecimal("47.00"), 1, new BigDecimal("0.8"),
                 List.of("STOP_HIT"), "sig-b", "strigoi-insider",
@@ -71,7 +71,7 @@ class ExecutorPositionRepositoryTest {
     @Test
     void updateMaintenanceReflected() {
         String symbol = "POS-MAINT-" + UUID.randomUUID();
-        var pos = new ExecutorPosition(null, "depot-1", symbol, "BUY",
+        var pos = ExecutorPositionFixtures.withoutKillLevel(null, "depot-1", symbol, "BUY",
                 new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("90.00"),
                 new BigDecimal("95.00"), 1, new BigDecimal("1.5"),
                 List.of("EARNINGS_MISS"), "sig-maint", "strigoi-spin",
@@ -95,7 +95,7 @@ class ExecutorPositionRepositoryTest {
     @Test
     void closeMovesOutOfOpen() {
         String symbol = "POS-CLOSE-" + UUID.randomUUID();
-        var pos = new ExecutorPosition(null, "depot-1", symbol, "BUY",
+        var pos = ExecutorPositionFixtures.withoutKillLevel(null, "depot-1", symbol, "BUY",
                 new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("90.00"),
                 new BigDecimal("95.00"), 1, new BigDecimal("1.5"),
                 List.of("EARNINGS_MISS"), "sig-close", "strigoi-spin",
@@ -538,7 +538,7 @@ class ExecutorPositionRepositoryTest {
     @Test
     void insertPersistsAndReadsBackBrokerStopAndEntryFilledAt() {
         String symbol = "POS-V48-" + UUID.randomUUID();
-        var p = new ExecutorPosition(null, "depot-1", symbol, "BUY",
+        var p = ExecutorPositionFixtures.withoutKillLevel(null, "depot-1", symbol, "BUY",
                 new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("90.00"),
                 new BigDecimal("95.00"), 1, null, List.of("X"), "sig-v48", "strigoi-spin",
                 null, null, "OPEN", null,
@@ -559,7 +559,7 @@ class ExecutorPositionRepositoryTest {
     @Test
     void mapRowReturnsNullForPreV48Rows() {
         String symbol = "POS-V48N-" + UUID.randomUUID();
-        var p = new ExecutorPosition(null, "depot-1", symbol, "BUY",
+        var p = ExecutorPositionFixtures.withoutKillLevel(null, "depot-1", symbol, "BUY",
                 new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("90.00"),
                 new BigDecimal("95.00"), 1, null, List.of("X"), "sig-v48n", "strigoi-spin",
                 null, null, "OPEN", null,
@@ -581,7 +581,7 @@ class ExecutorPositionRepositoryTest {
     @Test
     void updateMaintenanceWithNullBrokerStopPreservesStoredValue() {
         String symbol = "POS-V48C-" + UUID.randomUUID();
-        var p = new ExecutorPosition(null, "depot-1", symbol, "BUY",
+        var p = ExecutorPositionFixtures.withoutKillLevel(null, "depot-1", symbol, "BUY",
                 new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("90.00"),
                 new BigDecimal("95.00"), 1, null, List.of("X"), "sig-v48c", "strigoi-spin",
                 null, null, "OPEN", null,
@@ -609,7 +609,7 @@ class ExecutorPositionRepositoryTest {
     @Test
     void markEntryFilledIsWriteOnce() {
         String symbol = "POS-V48F-" + UUID.randomUUID();
-        var p = new ExecutorPosition(null, "depot-1", symbol, "BUY",
+        var p = ExecutorPositionFixtures.withoutKillLevel(null, "depot-1", symbol, "BUY",
                 new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("90.00"),
                 new BigDecimal("95.00"), 1, null, List.of("X"), "sig-v48f", "strigoi-spin",
                 null, null, "OPEN", null,
@@ -626,8 +626,37 @@ class ExecutorPositionRepositoryTest {
         assertThat(repo.findById(id).entryFilledAt()).startsWith("2026-09-01");
     }
 
+    /** V51: both kill-level columns round-trip through insert + mapRow; absent stays null. */
+    @Test
+    void killCloseBelowAndDroppedRoundTrip() {
+        String armed = "KL-A-" + UUID.randomUUID();
+        String dropped = "KL-D-" + UUID.randomUUID();
+        var base = ExecutorPositionFixtures.withoutKillLevel(null, "depot-1", armed, "BUY",
+                new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("90.00"),
+                new BigDecimal("90.00"), 1, null, List.of("X"), "sig-kl-a", "strigoi-echo",
+                null, null, "OPEN", null, null, null, 0, null, null, null, null, null,
+                null, null, null, null, 0, null, null, null, null, null, null, false,
+                null, null);
+        long idA = repo.insert(ExecutorPositionFixtures.withKillLevel(base,
+                new BigDecimal("94.5"), null));
+        var baseD = ExecutorPositionFixtures.withoutKillLevel(null, "depot-1", dropped, "BUY",
+                new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("90.00"),
+                new BigDecimal("90.00"), 1, null, List.of("X"), "sig-kl-d", "strigoi-echo",
+                null, null, "OPEN", null, null, null, 0, null, null, null, null, null,
+                null, null, null, null, 0, null, null, null, null, null, null, false,
+                null, null);
+        long idD = repo.insert(ExecutorPositionFixtures.withKillLevel(baseD, null, "too_tight"));
+
+        ExecutorPosition a = repo.findById(idA);
+        assertThat(a.killCloseBelow()).isEqualByComparingTo("94.5");
+        assertThat(a.killCloseBelowDropped()).isNull();
+        ExecutorPosition d = repo.findById(idD);
+        assertThat(d.killCloseBelow()).isNull();
+        assertThat(d.killCloseBelowDropped()).isEqualTo("too_tight");
+    }
+
     private long insertOpenPosition(String symbol, String entryPrice) {
-        return repo.insert(new ExecutorPosition(null, "depot-1", symbol, "BUY",
+        return repo.insert(ExecutorPositionFixtures.withoutKillLevel(null, "depot-1", symbol, "BUY",
                 new BigDecimal("10"), new BigDecimal(entryPrice), new BigDecimal("90.00"),
                 new BigDecimal("95.00"), 1, new BigDecimal("1.5"),
                 List.of("EARNINGS_MISS"), "sig-" + symbol, "strigoi-spin",
@@ -638,7 +667,7 @@ class ExecutorPositionRepositoryTest {
     }
 
     private ExecutorPosition openPosition(String symbol) {
-        return new ExecutorPosition(null, "depot-1", symbol, "BUY",
+        return ExecutorPositionFixtures.withoutKillLevel(null, "depot-1", symbol, "BUY",
                 new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("90.00"),
                 new BigDecimal("95.00"), 1, new BigDecimal("1.5"),
                 List.of("EARNINGS_MISS"), "sig-" + symbol, "strigoi-spin",
@@ -650,7 +679,7 @@ class ExecutorPositionRepositoryTest {
     }
 
     private ExecutorPosition openPositionWithStops(String symbol, String stopOrderId, String tranche2StopOrderId) {
-        return new ExecutorPosition(null, "depot-1", symbol, "BUY",
+        return ExecutorPositionFixtures.withoutKillLevel(null, "depot-1", symbol, "BUY",
                 new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("90.00"),
                 new BigDecimal("95.00"), 2, new BigDecimal("1.5"),
                 List.of("EARNINGS_MISS"), "sig-" + symbol, "strigoi-spin",

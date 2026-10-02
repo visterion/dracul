@@ -36,7 +36,7 @@ class ExecutorPositionLegRepositoryIT {
     }
 
     private long position(String symbol) {
-        return positionRepo.insert(new ExecutorPosition(null, "depot-1", symbol, "buy",
+        return positionRepo.insert(ExecutorPositionFixtures.withoutKillLevel(null, "depot-1", symbol, "buy",
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
                 new BigDecimal("95"), 1, new BigDecimal("1"), List.of("kc1"), "sig-1",
                 "index-strigoi", null, null, "OPEN", "ord-entry", new BigDecimal("100"), null, 0,

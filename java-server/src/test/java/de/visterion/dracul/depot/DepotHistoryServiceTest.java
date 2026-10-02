@@ -1,5 +1,7 @@
 package de.visterion.dracul.depot;
 
+import de.visterion.dracul.executor.ExecutorPositionFixtures;
+
 import de.visterion.dracul.executor.DecisionLog;
 import de.visterion.dracul.executor.DecisionLogRepository;
 import de.visterion.dracul.executor.ExecutorPosition;
@@ -37,7 +39,7 @@ class DepotHistoryServiceTest {
         when(client.orders(eq("depot-1"), eq("all"), any(), any())).thenReturn(List.of(
                 new DepotOrder("o-1", "AAPL", "buy", new BigDecimal("10"), "market", "filled", "entry", null,
                         null, null, null, null, null)));
-        when(positions.findByBrokerOrderId("o-1")).thenReturn(new ExecutorPosition(
+        when(positions.findByBrokerOrderId("o-1")).thenReturn(ExecutorPositionFixtures.withoutKillLevel(
                 7L, "depot-1", "AAPL", "buy", new BigDecimal("10"), new BigDecimal("100"), null, null, 1,
                 null, List.of("stop below 95"), "sig-1", "index-strigoi", null, null, "CLOSED", "o-1",
                 null, null, 0, new BigDecimal("110"), new BigDecimal("2.0"), "TAKE_PROFIT", "2026-01-02",
@@ -132,7 +134,7 @@ class DepotHistoryServiceTest {
         when(client.closedPositions(eq("depot-1"), any(), any())).thenReturn(List.of(
                 new DepotClosedPosition("SAP", new BigDecimal("100"), new BigDecimal("120"),
                         new BigDecimal("200"), "sig-9", "2026-06-01T09:00:00Z", "2026-06-05T15:00:00Z")));
-        when(positions.findBySourceSignalId("sig-9")).thenReturn(new ExecutorPosition(
+        when(positions.findBySourceSignalId("sig-9")).thenReturn(ExecutorPositionFixtures.withoutKillLevel(
                 7L, "depot-1", "SAP", "buy", new BigDecimal("10"), new BigDecimal("100"), null, null, 1,
                 null, List.of("stop below 95"), "sig-9", "pead", null, null, "CLOSED", null,
                 null, null, 0, new BigDecimal("120"), new BigDecimal("1.8"), "TAKE_PROFIT", "2026-06-05",
@@ -161,7 +163,7 @@ class DepotHistoryServiceTest {
                 new DepotClosedPosition("SAP", new BigDecimal("100"), new BigDecimal("120"),
                         new BigDecimal("200"), "t2-sig-9", "2026-06-01T09:00:00Z", "2026-06-05T15:00:00Z")));
         when(positions.findBySourceSignalId("t2-sig-9")).thenReturn(null);
-        when(positions.findBySourceSignalId("sig-9")).thenReturn(new ExecutorPosition(
+        when(positions.findBySourceSignalId("sig-9")).thenReturn(ExecutorPositionFixtures.withoutKillLevel(
                 7L, "depot-1", "SAP", "buy", new BigDecimal("10"), new BigDecimal("100"), null, null, 1,
                 null, List.of("stop below 95"), "sig-9", "pead", null, null, "CLOSED", null,
                 null, null, 0, new BigDecimal("120"), new BigDecimal("1.8"), "TAKE_PROFIT", "2026-06-05",
@@ -203,7 +205,7 @@ class DepotHistoryServiceTest {
         when(client.closedPositions(eq("depot-1"), any(), any())).thenReturn(List.of(
                 new DepotClosedPosition("SAP", new BigDecimal("100"), new BigDecimal("120"),
                         new BigDecimal("200"), "sig-1", "2026-06-01T09:00:00Z", "2026-06-05T15:00:00Z")));
-        when(positions.findBySourceSignalId("sig-1")).thenReturn(new ExecutorPosition(
+        when(positions.findBySourceSignalId("sig-1")).thenReturn(ExecutorPositionFixtures.withoutKillLevel(
                 7L, "depot-1", "SAP", "buy", new BigDecimal("10"), new BigDecimal("100"), null, null, 1,
                 null, List.of("stop below 95"), "sig-1", "pead", null, null, "CLOSED", null,
                 null, null, 0, new BigDecimal("120"), new BigDecimal("1.8"), "TAKE_PROFIT", "2026-06-05",
@@ -229,7 +231,7 @@ class DepotHistoryServiceTest {
         var decisions = mock(DecisionLogRepository.class);
         var signals = mock(ExecutorSignalRepository.class);
 
-        when(positions.findOpenBySymbol("depot-1", "AAPL")).thenReturn(new ExecutorPosition(
+        when(positions.findOpenBySymbol("depot-1", "AAPL")).thenReturn(ExecutorPositionFixtures.withoutKillLevel(
                 7L, "depot-1", "AAPL", "buy", new BigDecimal("10"), new BigDecimal("100"), null, null, 1,
                 null, List.of("stop below 95"), "sig-open", "index-strigoi", null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
@@ -277,7 +279,7 @@ class DepotHistoryServiceTest {
         var decisions = mock(DecisionLogRepository.class);
         var signals = mock(ExecutorSignalRepository.class);
 
-        when(positions.findOpenBySymbol("depot-1", "AAPL")).thenReturn(new ExecutorPosition(
+        when(positions.findOpenBySymbol("depot-1", "AAPL")).thenReturn(ExecutorPositionFixtures.withoutKillLevel(
                 7L, "depot-1", "AAPL", "buy", new BigDecimal("10"), new BigDecimal("100"), null, null, 1,
                 null, List.of("stop below 95"), null, "index-strigoi", null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
@@ -299,7 +301,7 @@ class DepotHistoryServiceTest {
         var decisions = mock(DecisionLogRepository.class);
         var signals = mock(ExecutorSignalRepository.class);
 
-        when(positions.findOpenBySymbol("depot-1", "AAPL")).thenReturn(new ExecutorPosition(
+        when(positions.findOpenBySymbol("depot-1", "AAPL")).thenReturn(ExecutorPositionFixtures.withoutKillLevel(
                 7L, "depot-1", "AAPL", "buy", new BigDecimal("10"), new BigDecimal("100"), null, null, 1,
                 null, List.of("stop below 95"), "sig-open", "index-strigoi", null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
@@ -342,7 +344,7 @@ class DepotHistoryServiceTest {
         var positions = mock(ExecutorPositionRepository.class);
         var decisions = mock(DecisionLogRepository.class);
 
-        when(positions.findOpenBySymbol("depot-1", "AAPL")).thenReturn(new ExecutorPosition(
+        when(positions.findOpenBySymbol("depot-1", "AAPL")).thenReturn(ExecutorPositionFixtures.withoutKillLevel(
                 7L, "depot-1", "AAPL", "buy", new BigDecimal("10"), new BigDecimal("100"), null, null, 1,
                 null, List.of("stop below 95"), null, "index-strigoi", null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,

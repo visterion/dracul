@@ -51,7 +51,7 @@ class HardTriggerServiceTest {
 
     private ExecutorPosition openPosition(long id, String symbol, String side, BigDecimal entry,
             BigDecimal initialStop, BigDecimal activeStop, BigDecimal mfeR, List<String> killCriteria) {
-        return new ExecutorPosition(id, "c", symbol, side, BigDecimal.TEN, entry, initialStop,
+        return ExecutorPositionFixtures.withoutKillLevel(id, "c", symbol, side, BigDecimal.TEN, entry, initialStop,
                 activeStop, 1, null, killCriteria, "sig-1", "agent", "2026-07-01", null, "OPEN",
                 "brk-1", null, mfeR, 0, null, null, null, null, "stop-1",
                 null, null, null, null, 0, null, null, null, null, null, null, false, null, null);
@@ -438,7 +438,7 @@ class HardTriggerServiceTest {
                 p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
                 p.trimCount(), p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
                 p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(),
-                p.stopLegsCollapsed(), brokerStop, p.entryFilledAt());
+                p.stopLegsCollapsed(), brokerStop, p.entryFilledAt(), p.killCloseBelow(), p.killCloseBelowDropped());
     }
 
     /** Test 22. The hard trigger is the DECISION and it is close-based against active_stop; the

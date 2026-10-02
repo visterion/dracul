@@ -342,7 +342,7 @@ class ExecutorWebhookControllerTest {
 
     private ExecutorPosition openPosition(long id, String symbol, String side,
             BigDecimal entry, BigDecimal initialStop) {
-        return new ExecutorPosition(id, "depot-1", symbol, side, new BigDecimal("10"),
+        return ExecutorPositionFixtures.withoutKillLevel(id, "depot-1", symbol, side, new BigDecimal("10"),
                 entry, initialStop, initialStop, 1, null, List.of("X"), "sig-1", "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", entry, null, 0, null, null, null, null, null,
                 null, null, null, null, 0, null, null, null, null, null, null, false, null, null);
@@ -360,14 +360,14 @@ class ExecutorWebhookControllerTest {
                 p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
                 p.trimCount(), p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
                 p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(),
-                p.stopLegsCollapsed(), null, entryFilledAt);
+                p.stopLegsCollapsed(), null, entryFilledAt, p.killCloseBelow(), p.killCloseBelowDropped());
     }
 
     /** Same fixture as {@link #openPosition} but with an explicit {@code qty} and
      *  {@code trimCount} for scale-out/ladder tests. */
     private ExecutorPosition openPosition(long id, String symbol, String side,
             BigDecimal entry, BigDecimal initialStop, BigDecimal qty, int trimCount) {
-        return new ExecutorPosition(id, "depot-1", symbol, side, qty,
+        return ExecutorPositionFixtures.withoutKillLevel(id, "depot-1", symbol, side, qty,
                 entry, initialStop, initialStop, 1, null, List.of("X"), "sig-1", "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", entry, null, 0, null, null, null, null, null,
                 null, null, null, null, trimCount, null, null, null, null, null, null, false, null, null);
@@ -376,7 +376,7 @@ class ExecutorWebhookControllerTest {
     /** Two-tranche position, tranche-2 limit still working: {@code qty} is what the broker HOLDS
      *  (tranche 1 only), the tranche-2 leg ids are set. Mirrors the prod STT/OFG shape. */
     private ExecutorPosition unfilledTranche2Position(long id, String symbol, BigDecimal heldQty) {
-        return new ExecutorPosition(id, "depot-1", symbol, "BUY", heldQty,
+        return ExecutorPositionFixtures.withoutKillLevel(id, "depot-1", symbol, "BUY", heldQty,
                 new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 2, null,
                 List.of("X"), "sig-1", "hunter", "2026-06-01", null, "OPEN", "2000000001",
                 new BigDecimal("100"), null, 0, null, null, null, null, "2000000002",
@@ -492,7 +492,7 @@ class ExecutorWebhookControllerTest {
      *  nulls {@code entryDayHigh} and pins {@code activeStop == initialStop}. */
     private ExecutorPosition positionWithEntryDayHighAndActiveStop(long id, String symbol, String side,
             BigDecimal entry, BigDecimal initialStop, BigDecimal activeStop, BigDecimal entryDayHigh) {
-        return new ExecutorPosition(id, "depot-1", symbol, side, new BigDecimal("10"),
+        return ExecutorPositionFixtures.withoutKillLevel(id, "depot-1", symbol, side, new BigDecimal("10"),
                 entry, initialStop, activeStop, 1, null, List.of("X"), "sig-1", "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", entry, null, 0, null, null, null, null,
                 /* stopOrderId */ null, /* sector */ null, entryDayHigh,
@@ -543,7 +543,7 @@ class ExecutorWebhookControllerTest {
     /** An open book row. 39 components; everything not named is null/zero/false. */
     private static ExecutorPosition bookRow(long id, String symbol, String sourceSignalId,
             String entryExpiresAt, String entryFilledAt, String brokerOrderId) {
-        return new ExecutorPosition(id, "depot-1", symbol, "buy", new BigDecimal("10"),
+        return ExecutorPositionFixtures.withoutKillLevel(id, "depot-1", symbol, "buy", new BigDecimal("10"),
                 new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 1,
                 new BigDecimal("1"), List.of(), sourceSignalId, "index-strigoi", null, null,
                 "OPEN", brokerOrderId, new BigDecimal("100"), null, 0, null, null, null, null,
@@ -3317,7 +3317,7 @@ class ExecutorWebhookControllerTest {
                 position.entryDayHigh(), position.tranche2OrderId(), position.tranche2StopOrderId(),
                 position.trimCount(), position.lowestPrice(), position.entryExpiresAt(),
                 position.submittedLimitPrice(), position.pendingExitReason(), position.exitOrderId(),
-                position.pendingExitFillPrice(), false, null, null);
+                position.pendingExitFillPrice(), false, null, null, position.killCloseBelow(), position.killCloseBelowDropped());
         when(positionRepo.findById(1L)).thenReturn(ratcheted);
 
         ExecutorSignal signal = new ExecutorSignal("sig-42", "spin-hunter", "v1", "ACME", "BUY",
@@ -3423,7 +3423,7 @@ class ExecutorWebhookControllerTest {
         // entry_expires_at != null marks a GTD entry with no confirmed fill (set at placement,
         // cleared by reconcile on fill / by expiry on cancel). An LLM exit on it would flatten
         // zero broker holdings and fabricate a close -> rejected NOT_FILLED, no broker call.
-        ExecutorPosition unfilled = new ExecutorPosition(7L, "depot-1", "ACME", "BUY",
+        ExecutorPosition unfilled = ExecutorPositionFixtures.withoutKillLevel(7L, "depot-1", "ACME", "BUY",
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
                 new BigDecimal("95"), 1, null, List.of("X"), "sig-1", "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", new BigDecimal("100"), null, 0, null, null,
@@ -4645,7 +4645,7 @@ class ExecutorWebhookControllerTest {
 
     @Test
     void addTranche_nullSourceSignalId_clientRefFallsBackToPositionId() {
-        ExecutorPosition open = new ExecutorPosition(42L, "depot-1", "ACME", "BUY",
+        ExecutorPosition open = ExecutorPositionFixtures.withoutKillLevel(42L, "depot-1", "ACME", "BUY",
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
                 new BigDecimal("95"), 1, null, List.of("X"), null, "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", new BigDecimal("100"), null, 0,
@@ -4670,7 +4670,7 @@ class ExecutorWebhookControllerTest {
 
     @Test
     void addTranche_rejectsWhenTrancheLimitReached() {
-        ExecutorPosition open = new ExecutorPosition(7L, "depot-1", "ACME", "BUY",
+        ExecutorPosition open = ExecutorPositionFixtures.withoutKillLevel(7L, "depot-1", "ACME", "BUY",
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
                 new BigDecimal("95"), 2, null, List.of("X"), "sig-1", "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", new BigDecimal("100"), null, 0,
@@ -5252,7 +5252,7 @@ class ExecutorWebhookControllerTest {
     void addTranche_positionWithoutSourceSignalStillPlacesUnconditionally() {
         // A manual/imported position has no counting axis at all — neither the throttle nor the
         // cap may fire, and neither count may even be queried.
-        ExecutorPosition open = new ExecutorPosition(42L, "depot-1", "ACME", "BUY",
+        ExecutorPosition open = ExecutorPositionFixtures.withoutKillLevel(42L, "depot-1", "ACME", "BUY",
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
                 new BigDecimal("95"), 1, null, List.of("X"), null, "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", new BigDecimal("100"), null, 0,

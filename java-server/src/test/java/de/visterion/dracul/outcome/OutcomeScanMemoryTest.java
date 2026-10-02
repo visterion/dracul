@@ -1,5 +1,7 @@
 package de.visterion.dracul.outcome;
 
+import de.visterion.dracul.executor.ExecutorPositionFixtures;
+
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
@@ -129,7 +131,7 @@ class OutcomeScanMemoryTest {
 
     private static ExecutorPosition closedPosition(long id, String symbol, String signalId,
             BigDecimal exitPrice, BigDecimal realizedR, String sourceAgent) {
-        return new ExecutorPosition(
+        return ExecutorPositionFixtures.withoutKillLevel(
                 id, "depot-1", symbol, "BUY", bd("100"), bd("100"), bd("95"), bd("95"), 1, bd("5"),
                 List.of(), signalId, sourceAgent, "2026-06-01 10:00:00.0", null, "CLOSED", null,
                 bd("100"), bd("2.0"), 0, exitPrice, realizedR, "TAKE_PROFIT",

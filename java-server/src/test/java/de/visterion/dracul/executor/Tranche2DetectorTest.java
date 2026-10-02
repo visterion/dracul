@@ -24,7 +24,7 @@ class Tranche2DetectorTest {
     private ExecutorPosition position(int tranche, String side, BigDecimal entryPrice,
             BigDecimal initialStop, BigDecimal entryDayHigh, String symbol, String status,
             String entryFilledAt) {
-        return new ExecutorPosition(1L, "c", symbol, side, BigDecimal.TEN, entryPrice, initialStop,
+        return ExecutorPositionFixtures.withoutKillLevel(1L, "c", symbol, side, BigDecimal.TEN, entryPrice, initialStop,
                 initialStop, tranche, null, List.of(), "sig-1", "agent", "2026-07-01", null, status,
                 "brk-1", null, null, 0, null, null, null, null, "stop-1", null, entryDayHigh, null, null, 0, null, null,
                 null, null, null, null, false, null, entryFilledAt);

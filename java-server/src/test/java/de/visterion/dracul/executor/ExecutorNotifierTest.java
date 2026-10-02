@@ -24,7 +24,7 @@ class ExecutorNotifierTest {
     }
 
     private ExecutorPosition pos(long id, String sym, BigDecimal qty, BigDecimal entry, String expires) {
-        return new ExecutorPosition(id, "depot-1", sym, "BUY", qty, entry,
+        return ExecutorPositionFixtures.withoutKillLevel(id, "depot-1", sym, "BUY", qty, entry,
                 new BigDecimal("178.00"), new BigDecimal("178.00"), 1, null, List.of(),
                 "sig-1", "strigoi-pead", "2026-07-20", null, "OPEN", "bo-1", null, null, 0,
                 null, null, null, null, "so-1", "Tech", null, null, null, 0, null,
