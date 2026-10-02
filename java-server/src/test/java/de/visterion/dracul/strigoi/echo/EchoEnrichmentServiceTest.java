@@ -331,28 +331,49 @@ class EchoEnrichmentServiceTest {
                 new ConfounderScreen(cd), new EchoDeterministicGate(new BigDecimal("0.10"), 10), 10);
     }
 
-    /** A stock series whose last bar is {@code lastBar}; SPY keeps the default series. */
-    private AgoraMarketData stockEndingOn(LocalDate lastBar) {
+    /** A series ending on {@code lastBar} (null -> EMPTY, the Agora-outage/no-clock shape),
+     *  priced at {@code price} so the stock and market series are visibly distinct. */
+    private static List<OhlcBar> barsEndingOn(LocalDate lastBar, double price) {
+        if (lastBar == null) return List.of();
+        List<OhlcBar> out = new ArrayList<>();
+        BigDecimal c = BigDecimal.valueOf(price);
+        for (int i = 24; i >= 0; i--) out.add(new OhlcBar(lastBar.minusDays(i), c, c, c, c, 1_000L));
+        return out;
+    }
+
+    /** Independently controls the stock series' and the market (SPY) series' last bar — the
+     *  2026-10-02 fix-round shape, needed because the session clock is now the MARKET series,
+     *  with the stock's own series only used as a fallback (market empty) or to detect a stale/
+     *  halted stock (market fresh, stock stale). */
+    private AgoraMarketData seriesEndingOn(LocalDate stockLastBar, LocalDate marketLastBar) {
         return new AgoraMarketData(null) {
             @Override public MarketData resolve(String symbol) { throw new UnsupportedOperationException(); }
             @Override public List<OhlcBar> dailyOhlcHistory(String symbol, int days) {
-                if ("SPY".equals(symbol)) return spyBars();
-                List<OhlcBar> out = new ArrayList<>();
-                for (int i = 24; i >= 0; i--) {
-                    BigDecimal c = BigDecimal.valueOf(190.0);
-                    out.add(new OhlcBar(lastBar.minusDays(i), c, c, c, c, 1_000L));
-                }
-                return out;
+                return "SPY".equals(symbol)
+                        ? barsEndingOn(marketLastBar, 500.0)
+                        : barsEndingOn(stockLastBar, 190.0);
             }
         };
     }
 
+    /** A stock series whose last bar is {@code lastBar}; the market (SPY) stays "fresh" — its
+     *  last bar is today, far past any {@code REPORT} fixture used in this class. */
+    private AgoraMarketData stockEndingOn(LocalDate lastBar) {
+        return seriesEndingOn(lastBar, LocalDate.now());
+    }
+
+    // --- 2026-10-02 fix round: the MARKET series is the session clock, not the stock's own ---
+
     @Test
-    void candidateWhoseSeriesEndsOnTheReportDayIsDeferredAndCounted() {
-        var result = serviceWith(stockEndingOn(REPORT)).enrichCounted(List.of(cand("SYNDZ", 1.80)));
+    void marketEndingOnTheReportDayIsDeferredAndCountedEvenWithAFresherStock() {
+        // The stock itself already has a bar after the report date, but NO session anywhere has
+        // traded past the report date yet (the market proxy says so) -> still deferred.
+        var result = serviceWith(seriesEndingOn(REPORT.plusDays(3), REPORT))
+                .enrichCounted(List.of(cand("SYNMK", 1.80)));
 
         assertThat(result.candidates()).isEmpty();
         assertThat(result.skippedNoPostReportBar()).isEqualTo(1);
+        assertThat(result.staleStockSeries()).isZero();
     }
 
     @Test
@@ -362,7 +383,52 @@ class EchoEnrichmentServiceTest {
 
         assertThat(result.candidates()).hasSize(1);
         assertThat(result.skippedNoPostReportBar()).isZero();
+        assertThat(result.staleStockSeries()).isZero();
         assertThat(result.candidates().getFirst().preReportClose()).isNotNull();
+    }
+
+    @Test
+    void staleStockSeriesIsKeptAndCountedWhenTheMarketHasMovedOn() {
+        // Market (SPY) is fresh (last bar = today); the stock's own series ends exactly ON the
+        // report date -> a lagging/halted symbol, not a genuine day-0 candidate. Kept, flagged.
+        var result = serviceWith(stockEndingOn(REPORT)).enrichCounted(List.of(cand("SYNDZ", 1.80)));
+
+        assertThat(result.candidates()).hasSize(1);
+        assertThat(result.skippedNoPostReportBar()).isZero();
+        assertThat(result.staleStockSeries()).isEqualTo(1);
+    }
+
+    @Test
+    void staleStockSeriesStrictlyBeforeTheReportDateIsAlsoKeptAndCounted() {
+        var result = serviceWith(stockEndingOn(REPORT.minusDays(5)))
+                .enrichCounted(List.of(cand("SYNPR", 1.80)));
+
+        assertThat(result.candidates()).hasSize(1);
+        assertThat(result.skippedNoPostReportBar()).isZero();
+        assertThat(result.staleStockSeries()).isEqualTo(1);
+    }
+
+    @Test
+    void fallsBackToTheStockRuleWhenTheMarketSeriesIsEmpty() {
+        // No market clock available at all (not merely stale) -> fall back to the original,
+        // pre-fix rule: the stock's own series decides.
+        var result = serviceWith(seriesEndingOn(REPORT, null))
+                .enrichCounted(List.of(cand("SYNFB", 1.80)));
+
+        assertThat(result.candidates()).isEmpty();
+        assertThat(result.skippedNoPostReportBar()).isEqualTo(1);
+        assertThat(result.staleStockSeries()).isZero();
+    }
+
+    @Test
+    void keepsTheCandidateWhenBothSeriesAreEmpty() {
+        var result = serviceWith(seriesEndingOn(null, null))
+                .enrichCounted(List.of(cand("SYNBE", 1.80)));
+
+        assertThat(result.candidates()).hasSize(1);
+        assertThat(result.candidates().getFirst().carAvailable()).isFalse();
+        assertThat(result.skippedNoPostReportBar()).isZero();
+        assertThat(result.staleStockSeries()).isZero();
     }
 
     /** An OHLC outage must not masquerade as "market has not reacted": the candidate still reaches
@@ -388,6 +454,7 @@ class EchoEnrichmentServiceTest {
             assertThat(result.candidates()).hasSize(1);
             assertThat(result.candidates().getFirst().carAvailable()).isFalse();
             assertThat(result.skippedNoPostReportBar()).isZero();
+            assertThat(result.staleStockSeries()).isZero();
         }
     }
 }

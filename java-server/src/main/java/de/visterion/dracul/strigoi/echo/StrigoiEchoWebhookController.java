@@ -17,6 +17,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -70,10 +71,13 @@ public class StrigoiEchoWebhookController extends HuntController {
         var raw = earnings.recent(to.minusDays(lookback), to);
         var screened = screener.screen(raw.items());
         var enriched = enrichment.enrichCounted(screened.candidates());
-        log.info("echo enrichment: skipped_no_post_report_bar={} (deferred to a later run: no "
-                + "trading day after the report yet)", enriched.skippedNoPostReportBar());
+        log.info("echo enrichment: skipped_no_post_report_bar={} stale_stock_series={} (skipped: "
+                + "deferred to a later run, no trading session after the report yet; stale: kept "
+                + "but flagged, the stock lags a market that has moved on)",
+                enriched.skippedNoPostReportBar(), enriched.staleStockSeries());
         return new DataSourceResult<>(enriched.candidates(),
-                mergeHealth(raw.health(), screened, enriched.skippedNoPostReportBar()));
+                mergeHealth(raw.health(), screened, enriched.skippedNoPostReportBar(),
+                        enriched.staleStockSeries()));
     }
 
     /**
@@ -96,24 +100,36 @@ public class StrigoiEchoWebhookController extends HuntController {
     }
 
     /**
-     * {@link #mergeHealth(DataSourceHealth, ScreenResult)} plus the day-0 deferral count as an
-     * INFORMATIONAL note in {@code detail} ({@code skipped_no_post_report_bar=N}). It changes
-     * neither {@code status} nor {@code partial}/{@code truncated}: a deferred candidate is not
-     * lost data, it comes back on the next run. Zero adds nothing; an unavailable health is
-     * passed through untouched (same rule as {@link DataSourceHealth#degradedWith}).
+     * {@link #mergeHealth(DataSourceHealth, ScreenResult)} plus the day-0 deferral count and the
+     * stale/halted-stock count as INFORMATIONAL notes in {@code detail}
+     * ({@code skipped_no_post_report_bar=N}, {@code stale_stock_series=N}, joined with "; " when
+     * both are present). Neither note changes {@code status} nor {@code partial}/
+     * {@code truncated}: a deferred candidate is not lost data (it comes back on the next run)
+     * and a stale-stock candidate was never dropped at all. A zero count adds nothing; an
+     * unavailable health is passed through untouched (same rule as {@link
+     * DataSourceHealth#degradedWith}).
      */
     static DataSourceHealth mergeHealth(DataSourceHealth agora, ScreenResult screened,
-                                        int skippedNoPostReportBar) {
+                                        int skippedNoPostReportBar, int staleStockSeries) {
         DataSourceHealth merged = mergeHealth(agora, screened);
-        if (skippedNoPostReportBar <= 0 || !merged.isHealthy()) return merged;
-        String note = SKIPPED_NO_POST_REPORT_BAR + "=" + skippedNoPostReportBar;
+        if (!merged.isHealthy()) return merged;
+        List<String> notes = new ArrayList<>();
+        if (skippedNoPostReportBar > 0) {
+            notes.add(SKIPPED_NO_POST_REPORT_BAR + "=" + skippedNoPostReportBar);
+        }
+        if (staleStockSeries > 0) {
+            notes.add(STALE_STOCK_SERIES + "=" + staleStockSeries);
+        }
+        if (notes.isEmpty()) return merged;
+        String joined = String.join("; ", notes);
         String detail = merged.detail() == null || merged.detail().isBlank()
-                ? note : merged.detail() + "; " + note;
+                ? joined : merged.detail() + "; " + joined;
         return new DataSourceHealth(merged.status(), merged.source(), detail, merged.checkedAt(),
                 merged.partial(), merged.truncated());
     }
 
     static final String SKIPPED_NO_POST_REPORT_BAR = "skipped_no_post_report_bar";
+    static final String STALE_STOCK_SERIES = "stale_stock_series";
 
     private static final String CANDIDATE_CAP_DETAIL =
             "candidate list capped at dracul.strigoi.echo.max-candidates "

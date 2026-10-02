@@ -96,17 +96,38 @@ public class EchoEnrichmentService {
     }
 
     /** The enriched candidates plus how many were deferred because the market has not reacted
-     *  yet (see {@link #enrichCounted}). */
-    public record Enriched(List<EnrichedPeadCandidate> candidates, int skippedNoPostReportBar) {}
+     *  yet, and how many were kept despite a stale/halted own series (see {@link
+     *  #enrichCounted}). Both counters are informational — neither ever drops a candidate that
+     *  {@code skippedNoPostReportBar} does not already exclude. */
+    public record Enriched(List<EnrichedPeadCandidate> candidates, int skippedNoPostReportBar,
+                           int staleStockSeries) {}
 
     /**
-     * Enriches every candidate, except one whose daily series is non-empty and ends on or before
-     * its report date: echo runs at 22:00 UTC on the report day, and for an after-close reporter
-     * the market has not reacted yet — the report-day close is the PRE-announcement price, so
-     * flagging it would buy before the reaction (spec 2026-10-02 §3.7). Such a candidate is
-     * deferred to a later run (lookback is 7 days) and counted. An EMPTY series (OHLC failed or
-     * missing) is NOT skipped: it keeps today's behavior (reaches the LLM with
-     * {@code carAvailable=false}), so an Agora OHLC outage cannot turn into a silent quiet night.
+     * Enriches every candidate, except one deferred because NO trading session anywhere has
+     * happened since its report date yet: echo runs at 22:00 UTC on the report day, and for an
+     * after-close reporter the market has not reacted yet — the report-day close is the
+     * PRE-announcement price, so flagging it would buy before the reaction (spec 2026-10-02
+     * §3.7). Deferred candidates are retried on a later run (lookback is 7 days) and counted in
+     * {@code skippedNoPostReportBar}.
+     *
+     * <p>2026-10-02 fix round: the session clock is the MARKET proxy series ({@code marketBars},
+     * already fetched once for the whole batch), never the candidate's OWN stock series. Reading
+     * "my own last bar is on/before the report date" as "the market hasn't reacted" conflates a
+     * per-symbol provider lag or trading halt with a global day-0 condition — worst case, Agora
+     * serving stale bars for every symbol (no error, so health stays healthy) would silently
+     * defer the WHOLE batch, a quiet night nobody could see from the health payload. So:
+     * <ul>
+     *   <li>market series non-empty, last bar on/before the report date -> DEFER (counted).</li>
+     *   <li>market series non-empty and past the report date, but the STOCK's own series is
+     *       non-empty with its last bar on/before the report date -> the stock itself is
+     *       stale/halted, not the market: KEEP the candidate (today's behavior, reaches the LLM)
+     *       and count it in {@code staleStockSeries} instead.</li>
+     *   <li>market series empty/unavailable (no clock to consult at all) -> fall back to the
+     *       original rule: the stock's OWN series decides, same as before this fix round.</li>
+     * </ul>
+     * An EMPTY stock series (OHLC failed or missing) is NEVER skipped and NEVER counted as
+     * stale: it keeps today's behavior (reaches the LLM with {@code carAvailable=false}), so an
+     * Agora OHLC outage for one symbol cannot turn into a silent quiet night either.
      */
     public Enriched enrichCounted(List<PeadCandidate> candidates) {
         record Partial(PeadCandidate c, Sue sue, List<QuarterlyEps> hist) {}
@@ -131,15 +152,23 @@ public class EchoEnrichmentService {
 
         List<EnrichedPeadCandidate> out = new ArrayList<>();
         int skippedNoPostReportBar = 0;
+        int staleStockSeries = 0;
         for (Partial p : partials) {
             PeadCandidate c = p.c();
 
             List<OhlcBar> stockBars = ohlc(c.symbol());
-            if (noPostReportBar(stockBars, c.reportDate())) {
+            SessionDecision session = sessionDecision(stockBars, marketBars, c.reportDate());
+            if (session.deferred()) {
                 skippedNoPostReportBar++;
-                log.debug("echo: deferring {} — no trading day after its report date {} yet",
+                log.info("echo: deferring {} — no trading session after its report date {} yet",
                         c.symbol(), c.reportDate());
                 continue;
+            }
+            if (session.staleStock()) {
+                staleStockSeries++;
+                log.info("echo: {} stock series looks stale/halted (report {}, stock last bar "
+                                + "{}, market last bar {}) — keeping the candidate",
+                        c.symbol(), c.reportDate(), lastBarDate(stockBars), lastBarDate(marketBars));
             }
 
             Integer decile = null;
@@ -192,14 +221,37 @@ public class EchoEnrichmentService {
                     cov.coverage(), cov.available(), recentNews, scan.newsCount(),
                     ms.announcementCar2d(), ms.preReportClose()));
         }
-        return new Enriched(out, skippedNoPostReportBar);
+        return new Enriched(out, skippedNoPostReportBar, staleStockSeries);
     }
 
-    /** True only for a NON-EMPTY series whose last bar is dated on or before the report date. */
-    static boolean noPostReportBar(List<OhlcBar> bars, LocalDate reportDate) {
-        if (bars == null || bars.isEmpty() || reportDate == null) return false;
+    /** {@code deferred}: no trading session anywhere has happened since the report date yet (see
+     *  {@link #enrichCounted}). {@code staleStock}: the candidate is KEPT, but its own series is
+     *  stale/halted relative to a market that has already moved on — informational only. */
+    record SessionDecision(boolean deferred, boolean staleStock) {}
+
+    /** The 2026-10-02 fix-round session-clock decision: see {@link #enrichCounted}'s javadoc for
+     *  the full rationale. Package-private + static for direct unit coverage. */
+    static SessionDecision sessionDecision(List<OhlcBar> stockBars, List<OhlcBar> marketBars,
+                                           LocalDate reportDate) {
+        if (marketBars != null && !marketBars.isEmpty()) {
+            if (lastBarOnOrBefore(marketBars, reportDate)) {
+                return new SessionDecision(true, false);
+            }
+            return new SessionDecision(false, lastBarOnOrBefore(stockBars, reportDate));
+        }
+        // No market clock available at all: fall back to the stock's own series (pre-fix rule).
+        return new SessionDecision(lastBarOnOrBefore(stockBars, reportDate), false);
+    }
+
+    /** True only for a NON-EMPTY series whose last bar is dated on or before {@code date}. */
+    private static boolean lastBarOnOrBefore(List<OhlcBar> bars, LocalDate date) {
+        if (bars == null || bars.isEmpty() || date == null) return false;
         LocalDate last = bars.getLast().date();
-        return last != null && !last.isAfter(reportDate);
+        return last != null && !last.isAfter(date);
+    }
+
+    private static LocalDate lastBarDate(List<OhlcBar> bars) {
+        return (bars == null || bars.isEmpty()) ? null : bars.getLast().date();
     }
 
     private List<OhlcBar> ohlc(String symbol) {

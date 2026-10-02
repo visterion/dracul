@@ -102,14 +102,14 @@ class EchoHealthMergeTest {
     @Test
     void zeroSkipsLeavesTheHealthUntouched() {
         var agora = DataSourceHealth.healthy("agora");
-        assertThat(StrigoiEchoWebhookController.mergeHealth(agora, screened(false, false), 0))
+        assertThat(StrigoiEchoWebhookController.mergeHealth(agora, screened(false, false), 0, 0))
                 .isSameAs(agora);
     }
 
     @Test
     void skipsAreANoteInDetailThatDegradesNothing() {
         var merged = StrigoiEchoWebhookController.mergeHealth(
-                DataSourceHealth.healthy("agora"), screened(false, false), 3);
+                DataSourceHealth.healthy("agora"), screened(false, false), 3, 0);
         assertThat(merged.status()).isEqualTo("healthy");
         assertThat(merged.partial()).isFalse();
         assertThat(merged.truncated()).isFalse();
@@ -119,7 +119,7 @@ class EchoHealthMergeTest {
     @Test
     void skipNoteIsAppendedToAnExistingDetail() {
         var merged = StrigoiEchoWebhookController.mergeHealth(
-                DataSourceHealth.healthy("agora"), screened(true, false), 2);
+                DataSourceHealth.healthy("agora"), screened(true, false), 2, 0);
         assertThat(merged.truncated()).isTrue();
         assertThat(merged.detail()).endsWith("; skipped_no_post_report_bar=2");
     }
@@ -127,7 +127,42 @@ class EchoHealthMergeTest {
     @Test
     void anOutageIsNeverAnnotated() {
         var outage = DataSourceHealth.unavailable("agora", "down");
-        assertThat(StrigoiEchoWebhookController.mergeHealth(outage, screened(false, false), 5))
+        assertThat(StrigoiEchoWebhookController.mergeHealth(outage, screened(false, false), 5, 7))
                 .isSameAs(outage);
+    }
+
+    // --- 2026-10-02 fix round: stale/halted-stock count, same informational posture ---
+
+    @Test
+    void zeroStaleLeavesTheHealthUntouched() {
+        var agora = DataSourceHealth.healthy("agora");
+        assertThat(StrigoiEchoWebhookController.mergeHealth(agora, screened(false, false), 0, 0))
+                .isSameAs(agora);
+    }
+
+    @Test
+    void staleAloneIsANoteInDetailThatDegradesNothing() {
+        var merged = StrigoiEchoWebhookController.mergeHealth(
+                DataSourceHealth.healthy("agora"), screened(false, false), 0, 4);
+        assertThat(merged.status()).isEqualTo("healthy");
+        assertThat(merged.partial()).isFalse();
+        assertThat(merged.truncated()).isFalse();
+        assertThat(merged.detail()).isEqualTo("stale_stock_series=4");
+    }
+
+    @Test
+    void bothNotesAppearTogetherJoinedConsistently() {
+        var merged = StrigoiEchoWebhookController.mergeHealth(
+                DataSourceHealth.healthy("agora"), screened(false, false), 3, 2);
+        assertThat(merged.detail()).isEqualTo("skipped_no_post_report_bar=3; stale_stock_series=2");
+    }
+
+    @Test
+    void bothNotesAreAppendedToAnExistingDetail() {
+        var merged = StrigoiEchoWebhookController.mergeHealth(
+                DataSourceHealth.healthy("agora"), screened(true, false), 1, 1);
+        assertThat(merged.truncated()).isTrue();
+        assertThat(merged.detail())
+                .endsWith("; skipped_no_post_report_bar=1; stale_stock_series=1");
     }
 }
