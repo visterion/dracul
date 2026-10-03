@@ -360,7 +360,9 @@ class ExecutorWebhookControllerTest {
                 p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
                 p.trimCount(), p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
                 p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(),
-                p.stopLegsCollapsed(), null, entryFilledAt, p.killCloseBelow(), p.killCloseBelowDropped());
+                p.stopLegsCollapsed(), null, entryFilledAt, p.killCloseBelow(), p.killCloseBelowDropped(),
+                p.exitProfile(), p.catastropheReason(), p.catastropheFlaggedAt(),
+                p.pendingTrimOrderId(), p.brokerStopNarrow());
     }
 
     /** Same fixture as {@link #openPosition} but with an explicit {@code qty} and
@@ -3317,7 +3319,9 @@ class ExecutorWebhookControllerTest {
                 position.entryDayHigh(), position.tranche2OrderId(), position.tranche2StopOrderId(),
                 position.trimCount(), position.lowestPrice(), position.entryExpiresAt(),
                 position.submittedLimitPrice(), position.pendingExitReason(), position.exitOrderId(),
-                position.pendingExitFillPrice(), false, null, null, position.killCloseBelow(), position.killCloseBelowDropped());
+                position.pendingExitFillPrice(), false, null, null, position.killCloseBelow(), position.killCloseBelowDropped(),
+                position.exitProfile(), position.catastropheReason(), position.catastropheFlaggedAt(),
+                position.pendingTrimOrderId(), position.brokerStopNarrow());
         when(positionRepo.findById(1L)).thenReturn(ratcheted);
 
         ExecutorSignal signal = new ExecutorSignal("sig-42", "spin-hunter", "v1", "ACME", "BUY",

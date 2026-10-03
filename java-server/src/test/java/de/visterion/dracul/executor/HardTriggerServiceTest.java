@@ -516,7 +516,9 @@ class HardTriggerServiceTest {
                 p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
                 p.trimCount(), p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
                 p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(),
-                p.stopLegsCollapsed(), brokerStop, p.entryFilledAt(), p.killCloseBelow(), p.killCloseBelowDropped());
+                p.stopLegsCollapsed(), brokerStop, p.entryFilledAt(), p.killCloseBelow(), p.killCloseBelowDropped(),
+                p.exitProfile(), p.catastropheReason(), p.catastropheFlaggedAt(),
+                p.pendingTrimOrderId(), p.brokerStopNarrow());
     }
 
     /** Test 22. The hard trigger is the DECISION and it is close-based against active_stop; the

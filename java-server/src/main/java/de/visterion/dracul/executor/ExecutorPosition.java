@@ -95,5 +95,22 @@ public record ExecutorPosition(
         BigDecimal killCloseBelow,
         /** Why place-entry did not arm the signal's level: {@code too_tight} or
          *  {@code breached_at_adoption}; null when nothing was dropped (V51). */
-        String killCloseBelowDropped) {
+        String killCloseBelowDropped,
+        /** Exit lifecycle of this position (V52), derived at place-entry from the signal's
+         *  mechanism ({@link ExitProfile#fromMechanism}); STANDARD for every pre-V52 row and for
+         *  rows without a signal. Every copy site must forward it: a CONVICTION row rebuilt as
+         *  STANDARD gets the chandelier for one pass, and the monotonic ratchet guard then makes
+         *  that pass permanent (R1 Minor 8). */
+        ExitProfile exitProfile,
+        /** The thesis-destroying event the nightly strigoi-tech check flagged (V52); non-null
+         *  makes HardTriggerService flatten the position (HARD_CATASTROPHE). Never cleared by code. */
+        String catastropheReason,
+        /** When {@link #catastropheReason} was flagged (V52); null when not flagged. */
+        String catastropheFlaggedAt,
+        /** Broker order id of an accepted partial close whose fill price is not known yet (V52,
+         *  spec §5.7). Written by PartialExitService, resolved by ReconcileService. */
+        String pendingTrimOrderId,
+        /** True while the protective leg rests TIGHTER than the logical stop because the broker
+         *  rejects a bracket leg beyond its proximity band at entry (V52, spec §5.3). */
+        boolean brokerStopNarrow) {
 }

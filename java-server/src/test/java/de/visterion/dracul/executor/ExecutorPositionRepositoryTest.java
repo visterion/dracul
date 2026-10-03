@@ -689,4 +689,60 @@ class ExecutorPositionRepositoryTest {
                 null, null, null, null, false,
                 null, null);
     }
+
+    /** V52: the five exit-profile columns round-trip through insert + mapRow. */
+    @Test
+    void v52ColumnsRoundTrip() {
+        String symbol = "V52-" + UUID.randomUUID();
+        var base = ExecutorPositionFixtures.withoutKillLevel(null, "depot-1", symbol, "BUY",
+                new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("65.00"),
+                new BigDecimal("65.00"), 1, null, List.of("X"), "sig-v52", "strigoi-tech",
+                null, null, "OPEN", null, null, null, 0, null, null, null, null, null,
+                null, null, null, null, 0, null, null, null, null, null, null, false,
+                null, null);
+        long id = repo.insert(ExecutorPositionFixtures.withProfileFields(base,
+                ExitProfile.CONVICTION, "synthetic catastrophe", "2026-07-07T22:30:00Z",
+                "trim-ord-9", true));
+
+        ExecutorPosition read = repo.findById(id);
+        assertThat(read.exitProfile()).isEqualTo(ExitProfile.CONVICTION);
+        assertThat(read.catastropheReason()).isEqualTo("synthetic catastrophe");
+        assertThat(read.catastropheFlaggedAt()).isNotNull();
+        assertThat(read.pendingTrimOrderId()).isEqualTo("trim-ord-9");
+        assertThat(read.brokerStopNarrow()).isTrue();
+    }
+
+    /** V52: a row that names none of the new columns gets exactly what every pre-V52 row got. */
+    @Test
+    void v52DefaultsAreStandardAndNotNarrow() {
+        String symbol = "V52RAW-" + UUID.randomUUID();
+        jdbc.sql("""
+                INSERT INTO executor_position (connection, symbol, side, qty, entry_price,
+                                               initial_stop, active_stop, status)
+                VALUES ('depot-1', :s, 'BUY', 1, 10, 9, 9, 'CLOSED')
+                """).param("s", symbol).update();
+
+        var row = jdbc.sql("""
+                SELECT exit_profile, broker_stop_narrow, catastrophe_reason, pending_trim_order_id
+                FROM executor_position WHERE symbol = :s
+                """).param("s", symbol)
+                .query((rs, n) -> new Object[] {rs.getString(1), rs.getBoolean(2),
+                        rs.getString(3), rs.getString(4)})
+                .single();
+        assertThat(row[0]).isEqualTo("STANDARD");
+        assertThat(row[1]).isEqualTo(false);
+        assertThat(row[2]).isNull();
+        assertThat(row[3]).isNull();
+    }
+
+    /** V52: the CHECK constraint rejects any profile the enum does not know. */
+    @Test
+    void v52CheckRejectsAnUnknownProfile() {
+        assertThatThrownBy(() -> jdbc.sql("""
+                INSERT INTO executor_position (connection, symbol, side, qty, entry_price,
+                                               initial_stop, active_stop, status, exit_profile)
+                VALUES ('depot-1', :s, 'BUY', 1, 10, 9, 9, 'CLOSED', 'AGGRESSIVE')
+                """).param("s", "V52BAD-" + UUID.randomUUID()).update())
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+    }
 }

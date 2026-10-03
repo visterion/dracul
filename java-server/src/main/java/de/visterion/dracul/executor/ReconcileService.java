@@ -1428,7 +1428,9 @@ public class ReconcileService {
                 p.sector(), p.entryDayHigh(), p.tranche2OrderId(), tranche2StopOrderId,
                 trimCount, p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
                 p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(), collapsed,
-                p.brokerStop(), p.entryFilledAt(), p.killCloseBelow(), p.killCloseBelowDropped());
+                p.brokerStop(), p.entryFilledAt(), p.killCloseBelow(), p.killCloseBelowDropped(),
+                p.exitProfile(), p.catastropheReason(), p.catastropheFlaggedAt(),
+                p.pendingTrimOrderId(), p.brokerStopNarrow());
     }
 
     /**
@@ -1658,7 +1660,9 @@ public class ReconcileService {
                         p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
                         p.trimCount(), p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
                         p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(), p.stopLegsCollapsed(),
-                        p.brokerStop(), p.entryFilledAt(), p.killCloseBelow(), p.killCloseBelowDropped());
+                        p.brokerStop(), p.entryFilledAt(), p.killCloseBelow(), p.killCloseBelowDropped(),
+                p.exitProfile(), p.catastropheReason(), p.catastropheFlaggedAt(),
+                p.pendingTrimOrderId(), p.brokerStopNarrow());
                 exitPrice = match.closePrice();
                 exitPriceSource = "FILL";
                 rCalcOverride = realizedRAgainstPlannedRisk(p, match.openPrice(), match.closePrice());
@@ -1737,7 +1741,7 @@ public class ReconcileService {
                 && match.closePrice() != null && match.closePrice().signum() > 0;
     }
 
-    /** Copy of {@code p} with only {@code qty} replaced — the 41-component record has no wither. */
+    /** Copy of {@code p} with only {@code qty} replaced — the 46-component record has no wither. */
     private static ExecutorPosition withQty(ExecutorPosition p, BigDecimal qty) {
         return new ExecutorPosition(p.id(), p.connection(), p.symbol(), p.side(), qty,
                 p.entryPrice(), p.initialStop(), p.activeStop(), p.tranche(), p.rValue(),
@@ -1747,7 +1751,9 @@ public class ReconcileService {
                 p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
                 p.trimCount(), p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
                 p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(), p.stopLegsCollapsed(),
-                p.brokerStop(), p.entryFilledAt(), p.killCloseBelow(), p.killCloseBelowDropped());
+                p.brokerStop(), p.entryFilledAt(), p.killCloseBelow(), p.killCloseBelowDropped(),
+                p.exitProfile(), p.catastropheReason(), p.catastropheFlaggedAt(),
+                p.pendingTrimOrderId(), p.brokerStopNarrow());
     }
 
     private ExecutorPosition updateMaintenance(ExecutorPosition p, BrokerPosition bp, String runId) {
@@ -1794,7 +1800,9 @@ public class ReconcileService {
                     p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
                     p.trimCount(), p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
                     p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(), p.stopLegsCollapsed(),
-                    p.brokerStop(), p.entryFilledAt(), p.killCloseBelow(), p.killCloseBelowDropped());
+                    p.brokerStop(), p.entryFilledAt(), p.killCloseBelow(), p.killCloseBelowDropped(),
+                p.exitProfile(), p.catastropheReason(), p.catastropheFlaggedAt(),
+                p.pendingTrimOrderId(), p.brokerStopNarrow());
         }
 
         // Book = broker for QUANTITY too. `qty` means shares HELD (see ExecutorPosition), so the
@@ -1873,7 +1881,9 @@ public class ReconcileService {
                 p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
                 p.trimCount(), p.lowestPrice(), null, p.submittedLimitPrice(),
                 p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(), p.stopLegsCollapsed(),
-                p.brokerStop(), p.entryFilledAt(), p.killCloseBelow(), p.killCloseBelowDropped());
+                p.brokerStop(), p.entryFilledAt(), p.killCloseBelow(), p.killCloseBelowDropped(),
+                p.exitProfile(), p.catastropheReason(), p.catastropheFlaggedAt(),
+                p.pendingTrimOrderId(), p.brokerStopNarrow());
     }
 
     /**

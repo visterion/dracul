@@ -52,7 +52,8 @@ public class ExecutorPositionRepository {
                    tranche2_order_id, tranche2_stop_order_id, trim_count, lowest_price,
                    entry_expires_at, submitted_limit_price, pending_exit_reason, exit_order_id,
                    pending_exit_fill_price, stop_legs_collapsed, broker_stop, entry_filled_at,
-                   kill_close_below, kill_close_below_dropped)
+                   kill_close_below, kill_close_below_dropped, exit_profile, catastrophe_reason,
+                   catastrophe_flagged_at, pending_trim_order_id, broker_stop_narrow)
                 VALUES (:connection, :symbol, :side, :qty, :entryPrice, :initialStop, :activeStop,
                         :tranche, :rValue, CAST(:killCriteria AS jsonb), :sourceSignalId, :sourceAgent,
                         :mfe, :status, :brokerOrderId, :highestPrice, :mfeR, :softConfirmCount,
@@ -60,7 +61,9 @@ public class ExecutorPositionRepository {
                         :tranche2OrderId, :tranche2StopOrderId, :trimCount, :lowestPrice,
                         CAST(:entryExpiresAt AS timestamptz), :submittedLimitPrice, :pendingExitReason,
                         :exitOrderId, :pendingExitFillPrice, :stopLegsCollapsed, :brokerStop,
-                        CAST(:entryFilledAt AS timestamptz), :killCloseBelow, :killCloseBelowDropped)
+                        CAST(:entryFilledAt AS timestamptz), :killCloseBelow, :killCloseBelowDropped,
+                        :exitProfile, :catastropheReason, CAST(:catastropheFlaggedAt AS timestamptz),
+                        :pendingTrimOrderId, :brokerStopNarrow)
                 """)
                 .param("connection", p.connection())
                 .param("symbol", p.symbol())
@@ -100,6 +103,11 @@ public class ExecutorPositionRepository {
                 .param("entryFilledAt", p.entryFilledAt())
                 .param("killCloseBelow", p.killCloseBelow())
                 .param("killCloseBelowDropped", p.killCloseBelowDropped())
+                .param("exitProfile", (p.exitProfile() == null ? ExitProfile.STANDARD : p.exitProfile()).name())
+                .param("catastropheReason", p.catastropheReason())
+                .param("catastropheFlaggedAt", p.catastropheFlaggedAt())
+                .param("pendingTrimOrderId", p.pendingTrimOrderId())
+                .param("brokerStopNarrow", p.brokerStopNarrow())
                 .update(keyHolder, "id");
         return ((Number) keyHolder.getKeys().get("id")).longValue();
     }
@@ -657,7 +665,12 @@ public class ExecutorPositionRepository {
                 rs.getBigDecimal("broker_stop"),
                 entryFilledAtOrNull(rs),
                 rs.getBigDecimal("kill_close_below"),
-                rs.getString("kill_close_below_dropped"));
+                rs.getString("kill_close_below_dropped"),
+                ExitProfile.valueOf(rs.getString("exit_profile")),
+                rs.getString("catastrophe_reason"),
+                catastropheFlaggedAtOrNull(rs),
+                rs.getString("pending_trim_order_id"),
+                rs.getBoolean("broker_stop_narrow"));
     }
 
     private String entryExpiresAtOrNull(ResultSet rs) throws SQLException {
@@ -673,6 +686,11 @@ public class ExecutorPositionRepository {
     private String closedAtOrNull(ResultSet rs) throws SQLException {
         Object closedAtObj = rs.getObject("closed_at");
         return closedAtObj == null ? null : closedAtObj.toString();
+    }
+
+    private String catastropheFlaggedAtOrNull(ResultSet rs) throws SQLException {
+        Object flaggedAt = rs.getObject("catastrophe_flagged_at");
+        return flaggedAt == null ? null : flaggedAt.toString();
     }
 
     private String writeJson(List<String> v) {
