@@ -7657,4 +7657,32 @@ class ExecutorWebhookControllerTest {
         assertThat(dec.getAllValues()).anyMatch(d -> d.vetoTrace() != null
                 && d.vetoTrace().stream().anyMatch(t -> t.startsWith("HEAT_LIMIT:SKIPPED")));
     }
+
+    /** Review fix round 1: the end-to-end charge half of the carried requirement. The default
+     *  {@code controller} from {@code setUp()} is wired with {@code MechanismBudget.none()}, so
+     *  MECHANISM_BUDGET only ever prints "no cap for TECH_CONVICTION" there — it never exercises
+     *  the charge arithmetic. This test rewires a real {@code TECH_CONVICTION} cap and asserts
+     *  that BUDGET and MECHANISM_BUDGET both see the real end-to-end charge computed by
+     *  {@code VetoService.convictionCharge} (qty 3 x orderPriceRounded 100 x fx 1 = 300.00,
+     *  matching the qty asserted in {@code placeEntry_convictionUsesTheProfileStopNoTakeProfitAndNotionalSizing}),
+     *  not the STANDARD tranche (1000.00 at trancheCount=10/totalBudget=10000) and not
+     *  {@code ctx.trancheAmount()} either. */
+    @Test
+    void placeEntry_convictionChargesTheRealNotionalThroughTheControllerCapitalChecks() {
+        controller = controller(new MechanismBudget("TECH_CONVICTION:0.44"), 25);
+        when(signalRepo.findById("sig-1")).thenReturn(convictionSignal("sig-1"));
+        when(assembler.assemble(any())).thenReturn(
+                withConvictionNotional(happyContext(), new BigDecimal("363")));
+        stubFreshPlacement();
+
+        controller.placeEntry(BEARER, "run-c", json(BUY_BODY));
+
+        ArgumentCaptor<ExecutorDecision> dec = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo, atLeastOnce()).insert(dec.capture());
+        assertThat(dec.getAllValues()).anyMatch(d -> d.vetoTrace() != null
+                && d.vetoTrace().stream().anyMatch(t -> t.startsWith("BUDGET:") && t.contains("300.00")));
+        assertThat(dec.getAllValues()).anyMatch(d -> d.vetoTrace() != null
+                && d.vetoTrace().stream().anyMatch(t -> t.startsWith("MECHANISM_BUDGET:")
+                        && t.contains("300.00") && !t.contains("1000.00")));
+    }
 }
