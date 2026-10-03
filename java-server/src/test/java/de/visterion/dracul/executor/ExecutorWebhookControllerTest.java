@@ -7571,7 +7571,11 @@ class ExecutorWebhookControllerTest {
         assertThat(signalRow("REJECT").reasonCode()).isEqualTo("SIZE_TOO_SMALL");
     }
 
-    /** A null notional (no FX) is never guessed: it sizes to zero and is SIZE_TOO_SMALL. */
+    /** Defensive-only path: {@code convictionSizing} never guesses a quantity for a null notional
+     *  (sizes to zero and rejects SIZE_TOO_SMALL) even though in practice a missing FX rate is
+     *  already caught upstream by the DATA_UNAVAILABLE pre-veto before `convictionNotional` is
+     *  ever read — `happyContext()` carries a null `convictionNotional` here only because this
+     *  test deliberately skips `withConvictionNotional`, not because FX is unavailable. */
     @Test
     void placeEntry_convictionWithoutNotionalIsSizeTooSmall() {
         when(signalRepo.findById("sig-1")).thenReturn(convictionSignal("sig-1"));

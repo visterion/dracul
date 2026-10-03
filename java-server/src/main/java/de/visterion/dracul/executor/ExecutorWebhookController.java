@@ -825,9 +825,11 @@ public class ExecutorWebhookController {
 
     /** Exit profile CONVICTION sizing (spec 2026-10-03 §5.3): a fixed notional per basket name,
      *  NOT risk/stop distance — qty = floor(notional / entry). {@code notional} is already in
-     *  INSTRUMENT currency ({@link EntryContext#convictionNotional()}); null (no FX) sizes zero
-     *  shares and is rejected SIZE_TOO_SMALL rather than guessed. The risk figure is the audit
-     *  record only — HEAT_LIMIT is skipped for this profile. */
+     *  INSTRUMENT currency ({@link EntryContext#convictionNotional()}); a missing FX rate is
+     *  already caught upstream by the DATA_UNAVAILABLE pre-veto (`FxService` never returns null
+     *  for a non-null amount, it serves it unconverted on a cache miss) — the null branch here is
+     *  defensive only, sizing zero shares and rejecting SIZE_TOO_SMALL rather than guessing. The
+     *  risk figure is the audit record only — HEAT_LIMIT is skipped for this profile. */
     static Sizing convictionSizing(String side, BigDecimal entry, BigDecimal stop,
             BigDecimal notional, BigDecimal fxToAccount) {
         BigDecimal qty = notional == null || notional.signum() <= 0

@@ -48,7 +48,11 @@ public record EntryContext(
         Map<String, BigDecimal> openExposureByMechanism,
         /** Exit profile CONVICTION's fixed per-name notional in INSTRUMENT currency:
          *  total-budget x position-pct, converted from the account currency exactly like
-         *  {@link #trancheAmount()} (spec 2026-10-03 §5.3, R1 M5). Null when no FX rate exists —
-         *  place-entry then sizes zero shares and rejects SIZE_TOO_SMALL rather than guessing. */
+         *  {@link #trancheAmount()} (spec 2026-10-03 §5.3, R1 M5) — same
+         *  {@code FxService.convert} call, so a missing rate is already caught upstream:
+         *  {@code missing} gets "fx" and the DATA_UNAVAILABLE pre-veto rejects before this value
+         *  is ever read. {@code FxService.convert} itself never returns null for a non-null
+         *  amount (a cache miss serves the amount unconverted, per {@code trancheAmount}'s same
+         *  contract); only a null input could make this null, defensively. */
         BigDecimal convictionNotional) {
 }
