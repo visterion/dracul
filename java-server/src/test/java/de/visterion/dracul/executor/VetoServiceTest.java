@@ -1458,4 +1458,131 @@ class VetoServiceTest {
         assertThat(vetoService.evaluate(s, ctx().build(), sizing(), old).firstFailure()).isEqualTo(RejectReason.LOW_CONFIDENCE);
         assertThat(vetoService.evaluate(s, ctx().build(), sizing(), neu).passed()).isTrue();
     }
+
+    // ---- exit profile CONVICTION (spec 2026-10-03 §5.3) ----
+
+    private ExecutorSignal conviction() {
+        return signalBuilder().mechanism("TECH_CONVICTION").build();
+    }
+
+    /** qty 33 at 100 -> a 3 300 profile notional (fx 1). */
+    private Sizing convictionSizing() {
+        return ExecutorWebhookController.convictionSizing("BUY", new BigDecimal("100"),
+                new BigDecimal("65"), new BigDecimal("3300"), BigDecimal.ONE);
+    }
+
+    private VetoConfig techBudgetCfg() {
+        return new VetoConfig(0.6, 100, BigDecimal.valueOf(100000), 0.15, 100,
+                BigDecimal.valueOf(5), 20, 5, 2.0, 10, 25, 0.0, 3.0, "USD",
+                new MechanismBudget("TECH_CONVICTION:0.44"));
+    }
+
+    /** P1 #8: a CONVICTION signal skips CORRELATED with {skipped:"profile"}; an otherwise
+     *  identical STANDARD signal still fails it. */
+    @Test
+    void convictionSkipsCorrelatedWhileStandardStillFails() {
+        var book = ctx().candidateSector("Tech").openPositions(List.of(position("SYNB", "Tech")))
+                .openMechanisms(Map.of("SYNB", "TECH_CONVICTION"));
+
+        var conv = vetoService.evaluate(conviction(), book.build(), convictionSizing(), cfg(),
+                new BigDecimal("100"));
+        assertThat(named(conv, "CORRELATED").passed()).isTrue();
+        assertThat(named(conv, "CORRELATED").skipped()).isEqualTo("profile");
+
+        var std = vetoService.evaluate(signalBuilder().mechanism("tech_conviction_standard").build(),
+                book.openMechanisms(Map.of("SYNB", "tech_conviction_standard")).build(), sizing(),
+                cfg());
+        assertThat(named(std, "CORRELATED").passed()).isFalse();
+        assertThat(named(std, "CORRELATED").skipped()).isNull();
+    }
+
+    /** P1 #8: CONCENTRATION — CONVICTION signals skip it; STANDARD signals count STANDARD
+     *  positions only (three CONVICTION names in the sector do not block a STANDARD entry). */
+    @Test
+    void concentrationIsSplitByProfile() {
+        List<ExecutorPosition> threeConviction = List.of(
+                ExecutorPositionFixtures.conviction(position("SYNA", "Tech")),
+                ExecutorPositionFixtures.conviction(position("SYNB", "Tech")),
+                ExecutorPositionFixtures.conviction(position("SYNC", "Tech")));
+
+        var std = vetoService.evaluate(signal(), ctx().candidateSector("Tech")
+                .openPositions(threeConviction).build(), sizing(), cfg());
+        assertThat(named(std, "CONCENTRATION").passed()).isTrue();
+
+        var stdBlocked = vetoService.evaluate(signal(), ctx().candidateSector("Tech")
+                .openPositions(List.of(position("SYND", "Tech"), position("SYNE", "Tech"),
+                        position("SYNF", "Tech"))).build(), sizing(), cfg());
+        assertThat(named(stdBlocked, "CONCENTRATION").passed()).isFalse();
+
+        var conv = vetoService.evaluate(conviction(), ctx().candidateSector("Tech")
+                .openPositions(List.of(position("SYND", "Tech"), position("SYNE", "Tech"),
+                        position("SYNF", "Tech"))).build(), convictionSizing(), cfg(),
+                new BigDecimal("100"));
+        assertThat(named(conv, "CONCENTRATION").passed()).isTrue();
+        assertThat(named(conv, "CONCENTRATION").skipped()).isEqualTo("profile");
+    }
+
+    /** P1 #8: HEAT_LIMIT is skipped for CONVICTION signals even when the book is at the limit. */
+    @Test
+    void convictionSkipsHeat() {
+        var full = ctx().openHeat(BigDecimal.valueOf(600)); // cfg heat 0.06 x 10000 = 600
+        assertThat(named(vetoService.evaluate(signal(), full.build(), sizing(), cfg()),
+                "HEAT_LIMIT").passed()).isFalse();
+
+        var conv = vetoService.evaluate(conviction(), full.build(), convictionSizing(), cfg(),
+                new BigDecimal("100"));
+        assertThat(named(conv, "HEAT_LIMIT").passed()).isTrue();
+        assertThat(named(conv, "HEAT_LIMIT").skipped()).isEqualTo("profile");
+        assertThat(conv.results()).hasSize(18);
+    }
+
+    /** P1 #8 (R1 M6): BUDGET and MECHANISM_BUDGET charge the actual profile notional (3 300),
+     *  not total-budget / tranche-count (4 000). 40 100 held + 3 300 = 43 400 <= 44 000 passes;
+     *  a 4 000 charge (44 100) would fail — the discriminator. */
+    @Test
+    void convictionChargesTheProfileNotional() {
+        var out = vetoService.evaluate(conviction(), ctx()
+                        .openExposure(BigDecimal.valueOf(40100))
+                        .openExposureByMechanism(Map.of("TECH_CONVICTION", BigDecimal.valueOf(40100)))
+                        .build(),
+                convictionSizing(), techBudgetCfg(), new BigDecimal("100"));
+
+        assertThat(named(out, "MECHANISM_BUDGET").passed()).isTrue();
+        assertThat(named(out, "MECHANISM_BUDGET").measured()).contains("3300.00");
+        assertThat(named(out, "BUDGET").passed()).isTrue();
+    }
+
+    /** P1 #8 (R2 Minor 5): twelve names fit MECHANISM_BUDGET 0.44 including a 2 % adverse FX
+     *  drift of the eleven held names valued at today's rate (11 x 3 300 x 1.02 = 37 026). */
+    @Test
+    void twelveNamesFitTheTechBudgetWithTwoPercentFxDrift() {
+        BigDecimal held = new BigDecimal("37026.00");
+        var out = vetoService.evaluate(conviction(), ctx().openExposure(held)
+                        .openExposureByMechanism(Map.of("TECH_CONVICTION", held)).build(),
+                convictionSizing(), techBudgetCfg(), new BigDecimal("100"));
+        assertThat(named(out, "MECHANISM_BUDGET").passed()).isTrue();
+    }
+
+    /** STANDARD capital arithmetic is unchanged: it still charges the tranche. */
+    @Test
+    void standardStillChargesTheTranche() {
+        var out = vetoService.evaluate(signal(), ctx().openExposure(BigDecimal.valueOf(9500)).build(),
+                sizing(), cfg()); // tranche 10000/10 = 1000 -> 10500 > 10000
+        assertThat(named(out, "BUDGET").passed()).isFalse();
+    }
+
+    /** BELOW_ANCHOR uses the VALUE band (value-anchor-atr-mult) for TECH_CONVICTION. */
+    @Test
+    void convictionUsesTheValueAnchorBand() {
+        // reference 50, ATR 2: value band 3 x 2 = 6 -> an effective entry of 45 is inside
+        assertThat(belowAnchorPasses(conviction(), 45, 45, 2)).isTrue();
+        assertThat(belowAnchorPasses(conviction(), 43, 43, 2)).isFalse();
+    }
+
+    @Test
+    void skippedChecksSerialiseWithTheMarker() {
+        assertThat(VetoResult.skipped("HEAT_LIMIT", "x"))
+                .isEqualTo(new VetoResult("HEAT_LIMIT", true, "x", "profile"));
+        assertThat(new VetoResult("BUDGET", false, "y").skipped()).isNull();
+    }
 }

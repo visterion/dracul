@@ -166,7 +166,10 @@ public class EntryContextAssembler {
                 openExposure = openExposure.add(exposure);
                 openExposureByMechanism.merge(mechanism != null ? mechanism : "UNRESOLVED", exposure, BigDecimal::add);
             }
-            if (p.qty() != null && p.entryPrice() != null && p.activeStop() != null) {
+            if (p.exitProfile() != ExitProfile.CONVICTION
+                    && p.qty() != null && p.entryPrice() != null && p.activeStop() != null) {
+                // STANDARD heat exactly as before, incl. the negative contribution of a stop above
+                // entry; CONVICTION risk is capped by basket-size and MECHANISM_BUDGET instead.
                 BigDecimal heat = p.qty().multiply(p.entryPrice().subtract(p.activeStop()));
                 openHeat = openHeat.add(fx.convert(heat, instrumentCurrency, accountCurrency));
             }

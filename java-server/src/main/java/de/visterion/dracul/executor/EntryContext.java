@@ -29,7 +29,7 @@ public record EntryContext(
         BigDecimal trancheAmount,             // budget/tranche-count converted to instrument ccy
         BigDecimal totalBudget,               // account ccy (config)
         BigDecimal openExposure,              // sum qty*entryPrice converted to account ccy
-        BigDecimal openHeat,                  // sum qty*(entryPrice-activeStop) converted to account ccy
+        BigDecimal openHeat,                  // sum qty*(entryPrice-activeStop) over STANDARD positions, account ccy
         Map<String, String> openMechanisms,   // open-position symbol -> mechanism, via signalRepo.findById(p.sourceSignalId()); entries with unknown source signal omitted
         BigDecimal fxToAccount,               // multiplier instrument ccy -> account ccy; BigDecimal.ONE on cache miss (FxService identity fallback)
         List<String> missing,                 // names of absent MANDATORY data

@@ -32,4 +32,9 @@ class PayoffFamilyTest {
     void mappingIsCaseSensitiveToTheExactEmittedStrings() {
         assertThat(PayoffFamily.of("pead")).isEqualTo(PayoffFamily.UNKNOWN);
     }
+
+    @Test
+    void techConvictionIsADriftSetup() {
+        assertThat(PayoffFamily.of("TECH_CONVICTION")).isEqualTo(PayoffFamily.DRIFT);
+    }
 }

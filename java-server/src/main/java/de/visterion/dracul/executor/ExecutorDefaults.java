@@ -27,7 +27,7 @@ class ExecutorDefaults {
      *  (audit params) so the key is read exactly once and the two cannot drift. */
     @Bean
     MechanismBudget mechanismBudget(
-            @Value("${dracul.executor.mechanism-budget-pct:MERGER_ARB:0.20,QUALITY_52W_LOW:0.15}") String spec) {
+            @Value("${dracul.executor.mechanism-budget-pct:MERGER_ARB:0.20,QUALITY_52W_LOW:0.15,TECH_CONVICTION:0.44}") String spec) {
         return new MechanismBudget(spec);
     }
 

@@ -732,6 +732,7 @@ public class ExecutorWebhookController {
             n.put("check", r.check());
             n.put("passed", r.passed());
             n.put("measured", r.measured());
+            if (r.skipped() != null) n.put("skipped", r.skipped());
             arr.add(n);
         }
         return arr;
@@ -1169,7 +1170,7 @@ public class ExecutorWebhookController {
                 patternRepo.findEnforced());
         List<String> vetoTrace = new ArrayList<>();
         for (VetoResult r : veto.results()) {
-            vetoTrace.add(r.check() + ":" + (r.passed() ? "PASS" : "FAIL") + " (" + r.measured() + ")");
+            vetoTrace.add(r.check() + ":" + (r.skipped() != null ? "SKIPPED" : r.passed() ? "PASS" : "FAIL") + " (" + r.measured() + ")");
         }
 
         if (!veto.passed()) {

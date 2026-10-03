@@ -175,10 +175,21 @@ public class VetoService {
         results.add(new VetoResult("MAX_POSITIONS", capacityOk, maxPositionsMeasured));
         if (!capacityOk && firstFailure == null) firstFailure = RejectReason.MAX_POSITIONS;
 
+        // Exit profile of THIS signal, derived from its mechanism (spec 2026-10-03 §5.3).
+        boolean conviction = ExitProfile.fromMechanism(signal == null ? null : signal.mechanism())
+                == ExitProfile.CONVICTION;
+
         // Shared capital arithmetic for 5b, 6 and 7 (hoisted: 5b needs the same tranche as BUDGET).
-        CapitalBounds.Result bounds = CapitalBounds.check(ctx.account(), ctx.openExposure(),
-                ctx.openHeat(), sizing.newRiskAccountCcy(), cfg.totalBudget(), cfg.trancheCount(),
-                cfg.heatPct());
+        // BUDGET and MECHANISM_BUDGET charge what the entry really buys: a CONVICTION entry is a
+        // fixed profile notional (qty x order price x fx, account ccy). Charging the STANDARD
+        // tranche instead would leave the 12th basket name PENDING until SIGNAL_EXPIRED (R1 M6).
+        CapitalBounds.Result bounds = conviction
+                ? CapitalBounds.checkCharge(ctx.account(), ctx.openExposure(), ctx.openHeat(),
+                        sizing.newRiskAccountCcy(), cfg.totalBudget(),
+                        convictionCharge(sizing, orderPrice, ctx), cfg.heatPct())
+                : CapitalBounds.check(ctx.account(), ctx.openExposure(), ctx.openHeat(),
+                        sizing.newRiskAccountCcy(), cfg.totalBudget(), cfg.trancheCount(),
+                        cfg.heatPct());
 
         // 5b MECHANISM_BUDGET — new-entry exposure per mechanism, account ccy. Entry cap only:
         // add_tranche is deliberately not gated (SP1's R_CONFIRMED rule). Transient like
@@ -226,43 +237,62 @@ public class VetoService {
         results.add(new VetoResult("BUDGET", budgetOk, budgetMeasured));
         if (!budgetOk && firstFailure == null) firstFailure = RejectReason.BUDGET;
 
-        // 7 HEAT_LIMIT
-        boolean heatOk = bounds.heatOk();
-        BigDecimal heatUsed = ctx.openHeat().add(sizing.newRiskAccountCcy());
+        // 7 HEAT_LIMIT — skipped for CONVICTION signals: the basket is capped by basket-size and
+        // MECHANISM_BUDGET, and openHeat (EntryContextAssembler) counts STANDARD positions only.
+        boolean heatOk = conviction || bounds.heatOk();
+        BigDecimal heatUsed = conviction ? ctx.openHeat() : ctx.openHeat().add(sizing.newRiskAccountCcy());
         double heatBeforePct = cfg.totalBudget().signum() == 0 ? 0.0
                 : ctx.openHeat().divide(cfg.totalBudget(), 6, RoundingMode.HALF_UP).doubleValue() * 100;
         double usedPct = cfg.totalBudget().signum() == 0 ? 0.0
                 : heatUsed.divide(cfg.totalBudget(), 6, RoundingMode.HALF_UP).doubleValue() * 100;
         double limitPct = cfg.heatPct() * 100;
-        String heatMeasured = String.format("%.1f%% %s %.1f%%", usedPct, heatOk ? "<=" : ">", limitPct);
-        results.add(new VetoResult("HEAT_LIMIT", heatOk, heatMeasured));
-        if (!heatOk && firstFailure == null) firstFailure = RejectReason.HEAT_LIMIT;
+        if (conviction) {
+            results.add(VetoResult.skipped("HEAT_LIMIT", String.format(
+                    "skipped (exit profile CONVICTION); STANDARD heat %.1f%% of %.1f%%", usedPct, limitPct)));
+        } else {
+            String heatMeasured = String.format("%.1f%% %s %.1f%%", usedPct, heatOk ? "<=" : ">", limitPct);
+            results.add(new VetoResult("HEAT_LIMIT", heatOk, heatMeasured));
+            if (!heatOk && firstFailure == null) firstFailure = RejectReason.HEAT_LIMIT;
+        }
 
-        // 8 CONCENTRATION — case-insensitive sector match
+        // 8 CONCENTRATION — case-insensitive sector match over STANDARD positions only; CONVICTION
+        // signals skip it (capped by basket-size and MECHANISM_BUDGET).
         long sameSectorCount = ctx.openPositions().stream()
+                .filter(p -> p.exitProfile() != ExitProfile.CONVICTION)
                 .filter(p -> p.sector() != null
                         && p.sector().equalsIgnoreCase(ctx.candidateSector()))
                 .count();
-        boolean concentrationOk = sameSectorCount < cfg.maxPerSector();
-        String concentrationMeasured = sameSectorCount + (concentrationOk ? " < " : " >= ") + cfg.maxPerSector()
-                + " in sector " + ctx.candidateSector();
-        results.add(new VetoResult("CONCENTRATION", concentrationOk, concentrationMeasured));
-        if (!concentrationOk && firstFailure == null) firstFailure = RejectReason.CONCENTRATION;
+        if (conviction) {
+            results.add(VetoResult.skipped("CONCENTRATION",
+                    "skipped (exit profile CONVICTION); " + sameSectorCount
+                            + " STANDARD in sector " + ctx.candidateSector()));
+        } else {
+            boolean concentrationOk = sameSectorCount < cfg.maxPerSector();
+            String concentrationMeasured = sameSectorCount + (concentrationOk ? " < " : " >= ")
+                    + cfg.maxPerSector() + " in sector " + ctx.candidateSector();
+            results.add(new VetoResult("CONCENTRATION", concentrationOk, concentrationMeasured));
+            if (!concentrationOk && firstFailure == null) firstFailure = RejectReason.CONCENTRATION;
+        }
 
-        // 9 CORRELATED — same sector AND same mechanism as an existing open position
-        String candSector = ctx.candidateSector();
-        String mech = signal == null ? null : signal.mechanism();
-        ExecutorPosition correlatedMatch = (candSector == null || mech == null) ? null
-                : ctx.openPositions().stream()
-                        .filter(p -> candSector.equalsIgnoreCase(p.sector())
-                                && mech.equalsIgnoreCase(ctx.openMechanisms().getOrDefault(p.symbol(), "")))
-                        .findFirst().orElse(null);
-        boolean uncorrelated = correlatedMatch == null;
-        String correlatedMeasured = uncorrelated
-                ? "no open position shares sector+mechanism"
-                : "matches " + correlatedMatch.symbol() + " in sector " + candSector;
-        results.add(new VetoResult("CORRELATED", uncorrelated, correlatedMeasured));
-        if (!uncorrelated && firstFailure == null) firstFailure = RejectReason.CORRELATED;
+        // 9 CORRELATED — skipped for CONVICTION signals: a basket is correlated by design.
+        if (conviction) {
+            results.add(VetoResult.skipped("CORRELATED", "skipped (exit profile CONVICTION)"));
+        } else {
+            // same sector AND same mechanism as an existing open position
+            String candSector = ctx.candidateSector();
+            String mech = signal == null ? null : signal.mechanism();
+            ExecutorPosition correlatedMatch = (candSector == null || mech == null) ? null
+                    : ctx.openPositions().stream()
+                            .filter(p -> candSector.equalsIgnoreCase(p.sector())
+                                    && mech.equalsIgnoreCase(ctx.openMechanisms().getOrDefault(p.symbol(), "")))
+                            .findFirst().orElse(null);
+            boolean uncorrelated = correlatedMatch == null;
+            String correlatedMeasured = uncorrelated
+                    ? "no open position shares sector+mechanism"
+                    : "matches " + correlatedMatch.symbol() + " in sector " + candSector;
+            results.add(new VetoResult("CORRELATED", uncorrelated, correlatedMeasured));
+            if (!uncorrelated && firstFailure == null) firstFailure = RejectReason.CORRELATED;
+        }
 
         // 10 CONTRADICTION — MERGER_ARB vs {PEAD, SPINOFF, INSIDER_CLUSTER, INDEX_INCLUSION,
         // QUALITY_52W_LOW}, both directions, same symbol. Checked against other pending signals
@@ -471,6 +501,14 @@ public class VetoService {
         Snapshot snapshot = new Snapshot(heatBeforePct, usedPct, budgetFree, ctx.entriesThisWeek(),
                 (int) sameSectorCount, cooldownMeasured);
         return new Outcome(passed, firstFailure, results, contradictingSignalId, snapshot);
+    }
+
+    /** Exit profile CONVICTION's capital charge: the actual profile notional in account ccy. */
+    private static BigDecimal convictionCharge(Sizing sizing, BigDecimal orderPrice, EntryContext ctx) {
+        BigDecimal price = orderPrice != null ? orderPrice : ctx.price();
+        BigDecimal qty = sizing.qty() == null ? BigDecimal.ZERO : sizing.qty();
+        BigDecimal fx = ctx.fxToAccount() == null ? BigDecimal.ONE : ctx.fxToAccount();
+        return qty.multiply(price).multiply(fx).setScale(2, RoundingMode.HALF_UP);
     }
 
     /** Two-decimal formatting for measured-string amounts (account/instrument ccy). */

@@ -7637,4 +7637,24 @@ class ExecutorWebhookControllerTest {
         assertThat(signals).extracting(s -> (String) ((Map<?, ?>) s).get("exit_profile"))
                 .containsExactlyInAnyOrder("CONVICTION", "STANDARD");
     }
+
+    /** The skip marker reaches decision_log.veto_results and the executor_decision veto trace. */
+    @Test
+    void placeEntry_convictionWritesSkippedVetosIntoTheAuditTrail() {
+        when(signalRepo.findById("sig-1")).thenReturn(convictionSignal("sig-1"));
+        when(assembler.assemble(any())).thenReturn(
+                withConvictionNotional(happyContext(), new BigDecimal("363")));
+        stubFreshPlacement();
+
+        controller.placeEntry(BEARER, "run-c", json(BUY_BODY));
+
+        JsonNode vetos = enterLog().vetoResults();
+        List<String> skipped = new java.util.ArrayList<>();
+        vetos.forEach(v -> { if ("profile".equals(v.path("skipped").asString(""))) skipped.add(v.path("check").asString()); });
+        assertThat(skipped).containsExactlyInAnyOrder("HEAT_LIMIT", "CONCENTRATION", "CORRELATED");
+        ArgumentCaptor<ExecutorDecision> dec = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo, atLeastOnce()).insert(dec.capture());
+        assertThat(dec.getAllValues()).anyMatch(d -> d.vetoTrace() != null
+                && d.vetoTrace().stream().anyMatch(t -> t.startsWith("HEAT_LIMIT:SKIPPED")));
+    }
 }

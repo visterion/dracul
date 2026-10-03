@@ -1384,6 +1384,12 @@ call is made:
   count at or above `dracul.executor.max-positions`), and `MECHANISM_BUDGET`
   (the signal's mechanism already at its share of `dracul.executor.
   total-budget`).
+- **Exit profile CONVICTION (exec-v1.0).** For a `TECH_CONVICTION` signal
+  CORRELATED, CONCENTRATION and HEAT_LIMIT are skipped (`veto_results`
+  entries carry `"skipped":"profile"`, the trace prints `SKIPPED`); BUDGET
+  and MECHANISM_BUDGET charge the actual profile notional; `openHeat` and
+  CONCENTRATION count STANDARD positions only, so the basket never consumes
+  other strategies' heat or sector slots.
 - **`OrderGuard`** (pure, deterministic) is the final check on the LLM's own
   `place_entry` request: it requires a valid protective stop on the correct
   side of the reference price, a strictly positive quantity, and that the

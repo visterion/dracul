@@ -543,4 +543,29 @@ class EntryContextAssemblerTest {
         // 10000 EUR x 0.033 = 330 EUR -> 363 USD
         assertThat(ctx.convictionNotional()).isEqualByComparingTo("363");
     }
+
+    /** Spec 2026-10-03 §5.3 (R2 Minor 8): openHeat sums STANDARD positions only — the basket's
+     *  ~14 % risk never consumes the heat of other strategies — and a STANDARD stop above entry
+     *  still contributes its NEGATIVE heat exactly as before. */
+    @Test
+    void openHeatCountsStandardPositionsOnly() {
+        when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
+                new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
+                new BigDecimal("101.00"), new BigDecimal("100.00")));
+        when(sectorCascade.resolve("ACME")).thenReturn("Technology");
+        when(positionRepo.findOpen()).thenReturn(List.of(
+                ExecutorPositionFixtures.conviction(openPosition("SYNA", new BigDecimal("10"),
+                        new BigDecimal("100"), new BigDecimal("65"), null)),   // 350, excluded
+                openPosition("SYNB", new BigDecimal("10"), new BigDecimal("50"),
+                        new BigDecimal("45"), null),                           // +50
+                openPosition("SYNC", new BigDecimal("10"), new BigDecimal("50"),
+                        new BigDecimal("55"), null)));                         // -50
+
+        EntryContext ctx = assembler.assemble(
+                signal("ACME", new BigDecimal("100.00"), "2026-07-10T00:00:00Z"));
+
+        assertThat(ctx.openHeat()).isEqualByComparingTo("0");
+        // exposure still counts every position (MECHANISM_BUDGET/BUDGET need the basket)
+        assertThat(ctx.openExposure()).isEqualByComparingTo("2000");
+    }
 }
