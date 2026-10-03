@@ -163,4 +163,17 @@ class DecisionLogRepositoryTest {
             assertThat(r.vetoResults()).isNotNull();
         });
     }
+
+    @Test
+    void trimSubmittedAtFindsTheTrimRowByOrderId() {
+        String orderId = "trim-" + java.util.UUID.randomUUID();
+        var oj = mapper.createObjectNode();
+        oj.put("order_id", orderId);
+        oj.put("position_id", 4242L);
+        repo.insert(new DecisionLog(null, "run-t", "exec-test", "HARD_TRIGGER", null, null, null,
+                "SYNT", null, null, "TRIM", "HARD_TARGET_HALF", oj, null, null, null, null));
+
+        assertThat(repo.trimSubmittedAt(orderId)).isNotNull();
+        assertThat(repo.trimSubmittedAt("trim-unknown-" + orderId)).isNull();
+    }
 }

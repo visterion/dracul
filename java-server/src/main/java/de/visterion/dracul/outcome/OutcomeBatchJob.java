@@ -51,6 +51,7 @@ public class OutcomeBatchJob {
     /** Exit actions that close a position for good (a partial TRIM is not one of these). */
     private static final List<String> EXIT_ACTIONS = List.of("EXIT_FULL", "LOG_HARD_EXIT", "RECONCILE_CLOSE");
     private static final List<String> TRIM_ACTIONS = List.of("TRIM");
+    private static final List<String> TRIM_FILL_ACTIONS = List.of("TRIM_FILL");
     private static final List<String> ENTER_ACTIONS = List.of("ENTER");
 
     private static final int DEFAULT_HORIZON_TRADING_DAYS = 60;
@@ -162,12 +163,18 @@ public class OutcomeBatchJob {
         List<DecisionLog> trims = ownedByPosition(windowFrom != null
                 ? decisionLog.findBySymbolAndActionsBetween(p.symbol(), TRIM_ACTIONS, windowFrom, windowTo)
                 : List.of(), p.id());
+        // Fills of trims whose broker answer carried no price (spec 2026-10-03 §5.7): joined by
+        // order_id. Window end is NOW, not the close date — the fill row can be written by a
+        // reconcile pass after the close (trim followed by a full exit).
+        List<DecisionLog> trimFills = ownedByPosition(windowFrom != null
+                ? decisionLog.findBySymbolAndActionsBetween(p.symbol(), TRIM_FILL_ACTIONS, windowFrom, Instant.now())
+                : List.of(), p.id());
         List<DecisionLog> exits = ownedByPosition(windowFrom != null
                 ? decisionLog.findBySymbolAndActionsBetween(p.symbol(), EXIT_ACTIONS, windowFrom, windowTo)
                 : List.of(), p.id());
         DecisionLog finalExit = exits.isEmpty() ? null : exits.get(exits.size() - 1);
 
-        WeightedR weighted = weightedRealizedR(p, trims, rPerShare);
+        WeightedR weighted = weightedRealizedR(p, trims, trimFills, rPerShare);
 
         BigDecimal maeR = maeR(p, rPerShare);
         BigDecimal limitPrice = bigDecimalOrNull(enter.orderJson(), "limit_price");
@@ -253,7 +260,14 @@ public class OutcomeBatchJob {
     /** Quantity-weighted realized R across every TRIM leg plus the final exit leg. Falls back to
      *  the position's own {@code realized_r} (the final leg only) when any leg's quantity/price
      *  is missing — never fabricates a weighted figure from incomplete data. */
-    private WeightedR weightedRealizedR(ExecutorPosition p, List<DecisionLog> trims, BigDecimal rPerShare) {
+    private WeightedR weightedRealizedR(ExecutorPosition p, List<DecisionLog> trims,
+            List<DecisionLog> trimFills, BigDecimal rPerShare) {
+        java.util.Map<String, JsonNode> fillByOrderId = new java.util.HashMap<>();
+        for (DecisionLog f : trimFills) {
+            JsonNode foj = f.orderJson();
+            String oid = foj == null ? null : foj.path("order_id").asString(null);
+            if (oid != null) fillByOrderId.putIfAbsent(oid, foj);
+        }
         ArrayNode partialExits = mapper.createArrayNode();
         BigDecimal weightedSum = BigDecimal.ZERO;
         BigDecimal totalQty = BigDecimal.ZERO;
@@ -263,6 +277,13 @@ public class OutcomeBatchJob {
             JsonNode oj = t.orderJson();
             BigDecimal qtyClosed = bigDecimalOrNull(oj, "qty_closed");
             BigDecimal price = bigDecimalOrNull(oj, "price");
+            String orderId = oj == null ? null : oj.path("order_id").asString(null);
+            if (price == null && orderId != null && fillByOrderId.containsKey(orderId)) {
+                JsonNode foj = fillByOrderId.get(orderId);
+                price = bigDecimalOrNull(foj, "price");
+                BigDecimal fillQty = bigDecimalOrNull(foj, "qty");
+                if (fillQty != null) qtyClosed = fillQty;
+            }
             Double fraction = (oj != null && oj.path("fraction").isNumber()) ? oj.path("fraction").asDouble() : null;
 
             ObjectNode pe = mapper.createObjectNode();

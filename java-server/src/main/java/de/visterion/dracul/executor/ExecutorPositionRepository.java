@@ -226,6 +226,40 @@ public class ExecutorPositionRepository {
                 .update();
     }
 
+    public void clearPendingTrim(long id) {
+        jdbc.sql("UPDATE executor_position SET pending_trim_order_id = NULL WHERE id = :id")
+                .param("id", id)
+                .update();
+    }
+
+    /** TRIM_ORDER_LOST (spec 2026-10-03 §5.7): the partial close died without executing — the
+     *  book goes back to what the broker holds and the trim count is undone so the target-half
+     *  can retry. */
+    public void restoreLostTrim(long id, BigDecimal brokerQty, int trimCount) {
+        jdbc.sql("""
+                UPDATE executor_position
+                SET qty = :qty, trim_count = :tc, pending_trim_order_id = NULL
+                WHERE id = :id
+                """)
+                .param("qty", brokerQty)
+                .param("tc", trimCount)
+                .param("id", id)
+                .update();
+    }
+
+    /** CLOSED rows of {@code connection} still carrying a pending trim (a trim followed by a full
+     *  exit before reconcile saw the fill — R2 Minor 4). */
+    public List<ExecutorPosition> findClosedWithPendingTrim(String connection) {
+        return jdbc.sql("""
+                SELECT * FROM executor_position
+                WHERE status = 'CLOSED' AND connection = :conn AND pending_trim_order_id IS NOT NULL
+                ORDER BY id
+                """)
+                .param("conn", connection)
+                .query(this::mapRow)
+                .list();
+    }
+
     /** Returns the {@code exit_submitted_at} timestamp stamped by {@link #markPendingExit} for a
      *  pending-exit row, or {@code null} if never stamped (or the row has no such column value).
      *  Not an {@link ExecutorPosition} record component — {@code ReconcileService} needs this only

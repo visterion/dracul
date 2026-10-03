@@ -759,4 +759,28 @@ class ExecutorPositionRepositoryTest {
 
         assertThat(repo.findById(id).pendingTrimOrderId()).isEqualTo("trim-ord-77");
     }
+
+    @Test
+    void pendingTrimLifecycleQueries() {
+        String symbol = "PTL-" + UUID.randomUUID();
+        long id = repo.insert(ExecutorPositionFixtures.withoutKillLevel(null, "ptl-conn", symbol,
+                "BUY", new BigDecimal("5"), new BigDecimal("100.00"), new BigDecimal("65.00"),
+                new BigDecimal("65.00"), 1, null, List.of("X"), "sig-ptl", "strigoi-tech", null,
+                null, "OPEN", null, null, null, 0, null, null, null, null, null, null, null, null,
+                null, 1, null, null, null, null, null, null, false, null, null));
+        repo.markPendingTrim(id, "trim-ptl");
+
+        repo.restoreLostTrim(id, new BigDecimal("10"), 0);
+        ExecutorPosition restored = repo.findById(id);
+        assertThat(restored.qty()).isEqualByComparingTo("10");
+        assertThat(restored.trimCount()).isZero();
+        assertThat(restored.pendingTrimOrderId()).isNull();
+
+        repo.markPendingTrim(id, "trim-ptl-2");
+        repo.close(id, new BigDecimal("90"), null, "HARD_STOP", null);
+        assertThat(repo.findClosedWithPendingTrim("ptl-conn")).extracting(ExecutorPosition::id)
+                .containsExactly(id);
+        repo.clearPendingTrim(id);
+        assertThat(repo.findClosedWithPendingTrim("ptl-conn")).isEmpty();
+    }
 }

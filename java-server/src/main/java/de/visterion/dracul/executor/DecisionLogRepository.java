@@ -168,6 +168,23 @@ public class DecisionLogRepository {
                 .single();
     }
 
+    /** {@code created_at} of the TRIM row carrying {@code order_json.order_id = orderId} — the
+     *  submission time of a pending trim (spec 2026-10-03 §5.7); null when there is none. */
+    public Instant trimSubmittedAt(String orderId) {
+        if (orderId == null) return null;
+        return jdbc.sql("""
+                SELECT min(created_at) FROM decision_log
+                WHERE action = 'TRIM' AND order_json->>'order_id' = :oid
+                """)
+                .param("oid", orderId)
+                .query((rs, n) -> {
+                    Timestamp ts = rs.getTimestamp(1);
+                    return ts == null ? null : ts.toInstant();
+                })
+                .optional()
+                .orElse(null);
+    }
+
     private DecisionLog mapRow(ResultSet rs, int n) throws SQLException {
         Object confidenceObj = rs.getObject("confidence_in_decision");
         Object createdAtObj = rs.getObject("created_at");

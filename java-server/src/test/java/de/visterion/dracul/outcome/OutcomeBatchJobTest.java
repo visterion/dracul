@@ -1303,4 +1303,49 @@ class OutcomeBatchJobTest {
 
         verify(decisionLog).findSignalRowsByAction("REJECT");
     }
+
+    /** P1 #9: a TRIM row without a price (Saxo) is priced from its TRIM_FILL row, joined by
+     *  order_id, so the weighted realized R includes the half. Entry 100, stop 95 (R = 5):
+     *  5 shares at 131 (+6.2 R) and 5 at 104 (+0.8 R) -> (5 x 6.2 + 5 x 0.8) / 10 = 3.5. */
+    @Test
+    void tradeRecord_pricesAPendingTrimFromItsTrimFillRow() {
+        String symbol = "TRDF";
+        String signalId = "sig-f";
+        DecisionLog enter = decisionRow("enter-log-f", signalId, symbol, "ENTER", null, null,
+                mapper.createObjectNode(), "strigoi-tech", "v1");
+
+        var trimOj = mapper.createObjectNode();
+        trimOj.put("fraction", 0.5);
+        trimOj.put("qty_closed", bd("5"));
+        trimOj.put("qty_remaining", bd("5"));
+        trimOj.putNull("price");
+        trimOj.put("position_id", 7L);
+        trimOj.put("order_id", "trim-f");
+        DecisionLog trim = decisionRow("trim-log-f", null, symbol, "TRIM", "HARD_TARGET_HALF",
+                null, trimOj, null, null);
+
+        var fillOj = mapper.createObjectNode();
+        fillOj.put("position_id", 7L);
+        fillOj.put("order_id", "trim-f");
+        fillOj.put("qty", bd("5"));
+        fillOj.put("price", bd("131"));
+        DecisionLog fill = decisionRow("fill-log-f", null, symbol, "TRIM_FILL", "TRIM_FILL",
+                null, fillOj, null, null);
+
+        ExecutorPosition closed = closedPosition(symbol, signalId, bd("5"), bd("104"), bd("0.8"), bd("93"));
+        when(positions.findClosed()).thenReturn(List.of(closed));
+        when(decisionLog.findBySignalIdAndAction(signalId, "ENTER")).thenReturn(enter);
+        when(outcomeLog.isComplete("enter-log-f")).thenReturn(false);
+        when(decisionLog.findBySymbolAndActionsBetween(eq(symbol), eq(List.of("TRIM")), any(), any()))
+                .thenReturn(List.of(trim));
+        when(decisionLog.findBySymbolAndActionsBetween(eq(symbol), eq(List.of("TRIM_FILL")), any(), any()))
+                .thenReturn(List.of(fill));
+        when(decisionLog.findSignalRowsByAction("REJECT")).thenReturn(List.of());
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog).upsert(captor.capture());
+        assertThat(captor.getValue().realizedR()).isEqualByComparingTo("3.5");
+    }
 }

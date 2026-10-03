@@ -1465,7 +1465,17 @@ replace none of the recorded legs the rows are left alone and
 `TRIM_LEGS_UNMATCHED` is escalated); when the broker reports no fill price the
 order id is stored in `executor_position.pending_trim_order_id` and the TRIM
 row's `order_json.order_id`, and reconcile writes a `TRIM_FILL` row once the
-fill is visible. A CONVICTION position (mechanism `TECH_CONVICTION`) is
+fill is visible.
+
+A pending trim (`executor_position.pending_trim_order_id`) is settled at the
+top of every reconcile pass: WORKING → the broker/legs gap is tolerated (no
+`LEG_QTY_DESYNC`, no `QTY_SYNC`); filled → `TRIM_FILL` row, marker cleared;
+neither, broker still holding the pre-trim size → `TRIM_ORDER_LOST`
+(CRITICAL, book restored, `trim_count` − 1); neither, shares gone, older than
+72 h → `TRIM_FILL_UNRESOLVED`. CLOSED rows still carrying the marker are swept
+the same way. Without a fill history in that pass nothing is decided.
+
+A CONVICTION position (mechanism `TECH_CONVICTION`) is
 code-managed: `exit_position` answers `PROFILE_MANAGED` without a broker call
 and writes a `SOFT_TRIGGER/REJECT/PROFILE_MANAGED` decision row.
 

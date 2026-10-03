@@ -54,6 +54,7 @@ class ExecutorPositionCopySiteContractTest {
     @BeforeEach
     void setUp() {
         when(ruleVersions.active()).thenReturn("exec-test");
+        when(decisionRepo.trimSubmittedAt("trim-ord-1")).thenReturn(NOW);
         service = new ReconcileService(gateway, positionRepo, decisionRepo, cooldownRepo,
                 ruleVersions, new ObjectMapper(), telegram, executorNotifier, 10, 24, legRepo,
                 new BigDecimal("0.50"), Clock.fixed(NOW, ZoneOffset.UTC));
