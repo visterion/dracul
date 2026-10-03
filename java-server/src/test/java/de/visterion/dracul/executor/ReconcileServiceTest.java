@@ -3155,6 +3155,11 @@ class ReconcileServiceTest {
                 new BigDecimal("5"), BigDecimal.ZERO, null, null);
     }
 
+    /** The TRIM row of an earlier run that booked out 5 of the 10 shares. */
+    private static DecisionLogRepository.TrimSubmission submittedBefore(Instant at) {
+        return new DecisionLogRepository.TrimSubmission(at, "run-prev", new BigDecimal("5"));
+    }
+
     private DecisionLog rowWithAction(String action) {
         ArgumentCaptor<DecisionLog> c = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionRepo, atLeastOnce()).insert(c.capture());
@@ -3227,7 +3232,7 @@ class ReconcileServiceTest {
     void lostTrimOrderRestoresTheBookAndEscalatesCritical() {
         ExecutorPosition p = trimmedRow(83L, null);
         when(positionRepo.findOpen()).thenReturn(List.of(p));
-        when(decisionRepo.trimSubmittedAt("trim-1")).thenReturn(NOW.minus(Duration.ofHours(20)));
+        when(decisionRepo.trimSubmission("trim-1")).thenReturn(submittedBefore(NOW.minus(Duration.ofHours(20))));
         gateway.seedPosition(new BrokerPosition("SYNT", "BUY", new BigDecimal("10"),
                 new BigDecimal("100"), new BigDecimal("131"), 0));
 
@@ -3244,7 +3249,7 @@ class ReconcileServiceTest {
     void unresolvedTrimAfterSeventyTwoHoursEscalatesOnce() {
         ExecutorPosition p = trimmedRow(84L, null);
         when(positionRepo.findOpen()).thenReturn(List.of(p));
-        when(decisionRepo.trimSubmittedAt("trim-1")).thenReturn(NOW.minus(Duration.ofHours(73)));
+        when(decisionRepo.trimSubmission("trim-1")).thenReturn(submittedBefore(NOW.minus(Duration.ofHours(73))));
         gateway.seedPosition(new BrokerPosition("SYNT", "BUY", new BigDecimal("5"),
                 new BigDecimal("100"), new BigDecimal("131"), 0));
 
@@ -3260,7 +3265,7 @@ class ReconcileServiceTest {
     void unresolvedTrimInsideTheWindowWaits() {
         ExecutorPosition p = trimmedRow(85L, null);
         when(positionRepo.findOpen()).thenReturn(List.of(p));
-        when(decisionRepo.trimSubmittedAt("trim-1")).thenReturn(NOW.minus(Duration.ofHours(10)));
+        when(decisionRepo.trimSubmission("trim-1")).thenReturn(submittedBefore(NOW.minus(Duration.ofHours(10))));
         gateway.seedPosition(new BrokerPosition("SYNT", "BUY", new BigDecimal("5"),
                 new BigDecimal("100"), new BigDecimal("131"), 0));
 
@@ -3298,5 +3303,87 @@ class ReconcileServiceTest {
 
         assertThat(rowWithAction("TRIM_FILL").orderJson().path("position_id").asLong()).isEqualTo(87L);
         verify(positionRepo).clearPendingTrim(87L);
+    }
+
+    // Fix round 1 ruling: TRIM_ORDER_LOST needs an aged TRIM row from an earlier run, and the
+    // restore needs broker == pre-trim qty; anything else above the book is TRIM_ORDER_PARTIAL.
+
+    /** A fill can leave the open-orders view before it shows up in the history or the position
+     *  feed: inside the 1 h floor nothing is decided and the gap is tolerated (no QTY_SYNC up). */
+    @Test
+    void lostTrimIsNotDecidedWithinTheAgeFloor() {
+        ExecutorPosition p = trimmedRow(88L, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(decisionRepo.trimSubmission("trim-1")).thenReturn(
+                submittedBefore(NOW.minus(Duration.ofMinutes(30))));
+        gateway.seedPosition(new BrokerPosition("SYNT", "BUY", new BigDecimal("10"),
+                new BigDecimal("100"), new BigDecimal("131"), 0));
+
+        service.reconcile("c", "run1");
+
+        verify(positionRepo, never()).restoreLostTrim(anyLong(), any(), anyInt());
+        verify(positionRepo, never()).clearPendingTrim(anyLong());
+        verify(positionRepo, never()).syncQty(anyLong(), any());
+        assertThat(reasonCodes()).doesNotContain("TRIM_ORDER_LOST", "TRIM_ORDER_PARTIAL",
+                "QTY_SYNC");
+        verify(telegram, never()).notifyAlert(any(), any(), any(), any());
+    }
+
+    /** A TRIM row written by THIS run is never declared lost, however old its timestamp looks. */
+    @Test
+    void lostTrimIsNotDecidedForATrimRowFromTheCurrentRun() {
+        ExecutorPosition p = trimmedRow(89L, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(decisionRepo.trimSubmission("trim-1")).thenReturn(new DecisionLogRepository.TrimSubmission(
+                NOW.minus(Duration.ofHours(5)), "run1", new BigDecimal("5")));
+        gateway.seedPosition(new BrokerPosition("SYNT", "BUY", new BigDecimal("10"),
+                new BigDecimal("100"), new BigDecimal("131"), 0));
+
+        service.reconcile("c", "run1");
+
+        verify(positionRepo, never()).restoreLostTrim(anyLong(), any(), anyInt());
+        verify(positionRepo, never()).clearPendingTrim(anyLong());
+        assertThat(reasonCodes()).doesNotContain("TRIM_ORDER_LOST", "TRIM_ORDER_PARTIAL");
+    }
+
+    /** Old enough, from an earlier run, broker == book + qty_closed (nothing sold): full restore. */
+    @Test
+    void lostTrimRestoresOnlyWhenTheBrokerHoldsExactlyThePreTrimQty() {
+        ExecutorPosition p = trimmedRow(90L, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(decisionRepo.trimSubmission("trim-1")).thenReturn(
+                submittedBefore(NOW.minus(Duration.ofHours(2))));
+        gateway.seedPosition(new BrokerPosition("SYNT", "BUY", new BigDecimal("10"),
+                new BigDecimal("100"), new BigDecimal("131"), 0));
+
+        service.reconcile("c", "run1");
+
+        verify(positionRepo).restoreLostTrim(eq(90L), argThatComparesTo("10"), eq(0));
+        assertThat(reasonCodes()).contains("TRIM_ORDER_LOST").doesNotContain("TRIM_ORDER_PARTIAL");
+    }
+
+    /** Broker above the book but below the pre-trim size (3 of 5 sold, remainder cancelled):
+     *  TRIM_ORDER_PARTIAL — no restore, trim_count untouched, marker cleared, the book follows the
+     *  broker through the ordinary QTY_SYNC. */
+    @Test
+    void partiallyExecutedTrimEscalatesPartialWithoutRestoring() {
+        ExecutorPosition p = trimmedRow(91L, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(decisionRepo.trimSubmission("trim-1")).thenReturn(
+                submittedBefore(NOW.minus(Duration.ofHours(2))));
+        gateway.seedPosition(new BrokerPosition("SYNT", "BUY", new BigDecimal("7"),
+                new BigDecimal("100"), new BigDecimal("131"), 0));
+
+        service.reconcile("c", "run1");
+
+        verify(positionRepo, never()).restoreLostTrim(anyLong(), any(), anyInt());
+        verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt());
+        verify(positionRepo).clearPendingTrim(91L);
+        DecisionLog partial = rowWithAction("ESCALATE");
+        assertThat(partial.reasonCode()).isEqualTo("TRIM_ORDER_PARTIAL");
+        assertThat(partial.reasoning()).doesNotContain("neither working nor filled");
+        assertThat(reasonCodes()).doesNotContain("TRIM_ORDER_LOST");
+        verify(telegram).notifyAlert(eq("SYNT"), eq("TRIM_ORDER_PARTIAL"), eq("CRITICAL"), any());
+        verify(positionRepo).syncQty(eq(91L), argThatComparesTo("7"));
     }
 }

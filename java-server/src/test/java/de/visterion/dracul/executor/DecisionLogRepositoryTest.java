@@ -165,15 +165,20 @@ class DecisionLogRepositoryTest {
     }
 
     @Test
-    void trimSubmittedAtFindsTheTrimRowByOrderId() {
+    void trimSubmissionFindsTheTrimRowByOrderId() {
         String orderId = "trim-" + java.util.UUID.randomUUID();
         var oj = mapper.createObjectNode();
         oj.put("order_id", orderId);
         oj.put("position_id", 4242L);
+        oj.put("qty_closed", new java.math.BigDecimal("5"));
         repo.insert(new DecisionLog(null, "run-t", "exec-test", "HARD_TRIGGER", null, null, null,
                 "SYNT", null, null, "TRIM", "HARD_TARGET_HALF", oj, null, null, null, null));
 
-        assertThat(repo.trimSubmittedAt(orderId)).isNotNull();
-        assertThat(repo.trimSubmittedAt("trim-unknown-" + orderId)).isNull();
+        DecisionLogRepository.TrimSubmission sub = repo.trimSubmission(orderId);
+        assertThat(sub).isNotNull();
+        assertThat(sub.submittedAt()).isNotNull();
+        assertThat(sub.runId()).isEqualTo("run-t");
+        assertThat(sub.qtyClosed()).isEqualByComparingTo("5");
+        assertThat(repo.trimSubmission("trim-unknown-" + orderId)).isNull();
     }
 }

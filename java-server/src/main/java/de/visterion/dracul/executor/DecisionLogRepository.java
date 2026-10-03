@@ -8,6 +8,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
@@ -168,18 +169,35 @@ public class DecisionLogRepository {
                 .single();
     }
 
-    /** {@code created_at} of the TRIM row carrying {@code order_json.order_id = orderId} — the
-     *  submission time of a pending trim (spec 2026-10-03 §5.7); null when there is none. */
-    public Instant trimSubmittedAt(String orderId) {
+    /** The submission of a pending trim (spec 2026-10-03 §5.7): when and in which run the TRIM row
+     *  carrying {@code order_json.order_id = orderId} was written, and how many shares it booked
+     *  out ({@code qty_closed}, null when absent). */
+    public record TrimSubmission(Instant submittedAt, String runId, BigDecimal qtyClosed) {}
+
+    /** The earliest TRIM row with {@code order_json.order_id = orderId}; null when there is none. */
+    public TrimSubmission trimSubmission(String orderId) {
         if (orderId == null) return null;
         return jdbc.sql("""
-                SELECT min(created_at) FROM decision_log
+                SELECT created_at, run_id, order_json->>'qty_closed' AS qty_closed
+                FROM decision_log
                 WHERE action = 'TRIM' AND order_json->>'order_id' = :oid
+                ORDER BY created_at, log_id
+                LIMIT 1
                 """)
                 .param("oid", orderId)
                 .query((rs, n) -> {
-                    Timestamp ts = rs.getTimestamp(1);
-                    return ts == null ? null : ts.toInstant();
+                    Timestamp ts = rs.getTimestamp("created_at");
+                    String qc = rs.getString("qty_closed");
+                    BigDecimal qtyClosed = null;
+                    if (qc != null) {
+                        try {
+                            qtyClosed = new BigDecimal(qc);
+                        } catch (NumberFormatException e) {
+                            qtyClosed = null;
+                        }
+                    }
+                    return new TrimSubmission(ts == null ? null : ts.toInstant(),
+                            rs.getString("run_id"), qtyClosed);
                 })
                 .optional()
                 .orElse(null);

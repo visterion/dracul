@@ -144,6 +144,13 @@ public class ReconcileService {
      *  TRIM_FILL_UNRESOLVED (the fill history only reaches back FILL_LOOKBACK_HOURS). */
     static final int TRIM_FILL_RESOLVE_HOURS = FILL_LOOKBACK_HOURS;
 
+    /** TRIM_ORDER_LOST / TRIM_ORDER_PARTIAL are decided only once the TRIM row is at least this
+     *  old AND was written by an earlier run: right after a fill the open-orders view can already
+     *  have dropped the order while neither the fill history nor the position feed shows the sale
+     *  yet. Restoring the book on that would undo a real sale and let TARGET_HALF sell a second
+     *  half (fix round 1 ruling: "never a second unintended sale" outranks "immediately"). */
+    static final Duration TRIM_ORDER_LOST_MIN_AGE = Duration.ofHours(1);
+
     private final ExecutionGateway gateway;
     private final ExecutorPositionRepository positionRepo;
     private final DecisionLogRepository decisionRepo;
@@ -302,11 +309,13 @@ public class ReconcileService {
             // Spec 2026-10-03 §5.7: settle a pending trim FIRST — before the pending-exit branch,
             // which `continue`s — so a trim followed by a hard exit still gets its TRIM_FILL row.
             // A settled row is re-read; everything below works on that state.
-            ExecutorPosition p = settlePendingTrim(loaded, bp, orders, filledOrders,
+            SettledTrim settled = settlePendingTrim(loaded, bp, orders, filledOrders,
                     fillHistoryAvailable, runId);
-            // While the trim's close order is WORKING the broker still holds the pre-trim size and
-            // the restored legs hold the remainder. ONLY then is that gap tolerated (R2 Major 2).
-            boolean trimWorking = trimOrderWorking(p, orders);
+            ExecutorPosition p = settled.position();
+            // While the pending trim is undecided (its close order WORKING, or not yet old enough /
+            // no evidence to call it lost) the broker may still hold the pre-trim size while the
+            // book and legs hold the remainder. ONLY then is that gap tolerated (R2 Major 2).
+            boolean trimPending = settled.stillPending();
 
             // Fill state, written once. The conjunction matters in both directions:
             //   bp != null alone is SYMBOL-level evidence — a foreign or orphaned holding in the
@@ -338,7 +347,7 @@ public class ReconcileService {
             List<ExecutorPositionLeg> legs = legRepo.findOpenByPosition(p.id());
             if (!legs.isEmpty()) {
                 reconcileByLegs(p, legs, bp, orders, filledOrders, connection, runId,
-                        survivors, unfilledIds, fillHistoryAvailable, trimWorking);
+                        survivors, unfilledIds, fillHistoryAvailable, trimPending);
                 continue;
             }
 
@@ -385,7 +394,7 @@ public class ReconcileService {
                         "QTY_SYNC_SHORTFALL", p.qty(), null, bp.qty());
                 survivors.add(p);
             } else {
-                survivors.add(updateMaintenance(p, bp, runId, trimWorking));
+                survivors.add(updateMaintenance(p, bp, runId, trimPending));
             }
         }
 
@@ -469,27 +478,39 @@ public class ReconcileService {
         return brokerQty.compareTo(legsQty) > 0;
     }
 
+    /** Outcome of {@link #settlePendingTrim}: the row to continue with, and whether the trim is
+     *  still undecided (marker kept), which makes the caller tolerate a broker &gt; book gap. */
+    private record SettledTrim(ExecutorPosition position, boolean stillPending) {}
+
     /**
-     * Resolves {@code pending_trim_order_id} (spec 2026-10-03 §5.7). Returns the row to continue
-     * with: {@code p} unchanged when nothing was decided, otherwise the re-read row (falling back
-     * to {@code p} when the re-read finds nothing).
+     * Resolves {@code pending_trim_order_id} (spec 2026-10-03 §5.7, fix round 1 ruling). Returns
+     * the row to continue with — {@code p} unchanged when nothing was decided, otherwise the
+     * re-read row (falling back to {@code p} when the re-read finds nothing) — and whether the
+     * trim is still pending.
      *
      * <ul>
      *   <li>WORKING → wait (the caller tolerates the gap).</li>
      *   <li>FILLED in the history → append a {@code TRIM_FILL} row, clear the marker.</li>
      *   <li>no history this pass → decide nothing (missing evidence is not evidence).</li>
-     *   <li>neither, and the broker still holds MORE than the book → the order died:
-     *       {@code TRIM_ORDER_LOST} (CRITICAL), book restored, trim_count − 1.</li>
+     *   <li>neither, the broker holds MORE than the book, but the TRIM row is younger than
+     *       {@link #TRIM_ORDER_LOST_MIN_AGE} or from this run → wait (a fresh fill may not be
+     *       visible anywhere yet).</li>
+     *   <li>neither, old enough, broker == book + the TRIM row's {@code qty_closed} (nothing was
+     *       sold) → {@code TRIM_ORDER_LOST} (CRITICAL), book restored, trim_count − 1.</li>
+     *   <li>neither, old enough, broker &gt; book but NOT the pre-trim size (partially executed,
+     *       or the TRIM row's qty is unknown) → {@code TRIM_ORDER_PARTIAL} (CRITICAL), marker
+     *       cleared, trim_count unchanged; the ordinary QTY_SYNC / leg sync converges the book.</li>
      *   <li>neither, shares gone, TRIM row older than {@link #TRIM_FILL_RESOLVE_HOURS} (or missing)
      *       → {@code TRIM_FILL_UNRESOLVED}, marker cleared (fires once).</li>
      * </ul>
      * {@code bp} is null for the CLOSED sweep, which never restores anything.
      */
-    private ExecutorPosition settlePendingTrim(ExecutorPosition p, BrokerPosition bp,
+    private SettledTrim settlePendingTrim(ExecutorPosition p, BrokerPosition bp,
             List<BrokerOrder> openOrders, List<BrokerOrder> filledOrders,
             boolean fillHistoryAvailable, String runId) {
         String id = p.pendingTrimOrderId();
-        if (id == null || trimOrderWorking(p, openOrders)) return p;
+        if (id == null) return new SettledTrim(p, false);
+        if (trimOrderWorking(p, openOrders)) return new SettledTrim(p, true);
 
         BrokerOrder fill = filledOrders.stream()
                 .filter(o -> o.status() == OrderStatus.FILLED && id.equals(o.orderId()))
@@ -497,27 +518,54 @@ public class ReconcileService {
         if (fill != null) {
             recordTrimFill(p, fill, runId);
             positionRepo.clearPendingTrim(p.id());
-            return reread(p);
+            return new SettledTrim(reread(p), false);
         }
-        if (!fillHistoryAvailable) return p;
+        if (!fillHistoryAvailable) return new SettledTrim(p, true);
+
+        DecisionLogRepository.TrimSubmission submission = decisionRepo.trimSubmission(id);
+        Instant submittedAt = submission == null ? null : submission.submittedAt();
 
         boolean open = "OPEN".equals(p.status());
         if (open && bp != null && bp.qty() != null && p.qty() != null
                 && bp.qty().abs().compareTo(p.qty()) > 0) {
-            int restoredTrimCount = Math.max(0, p.trimCount() - 1);
-            positionRepo.restoreLostTrim(p.id(), bp.qty().abs(), restoredTrimCount);
-            escalateTrim(p, runId, "TRIM_ORDER_LOST", "partial-close order " + id + " on "
-                    + p.symbol() + " is neither working nor filled and the broker still holds "
-                    + bp.qty().abs() + " (book " + p.qty() + ") — book restored to the broker "
-                    + "quantity, trim_count " + p.trimCount() + " -> " + restoredTrimCount, id);
-            telegram.notifyAlert(p.symbol(), "TRIM_ORDER_LOST", "CRITICAL",
-                    "partial close " + id + " on " + p.symbol() + " was lost — the book was "
-                            + "restored to " + bp.qty().abs() + " shares; check the protective "
-                            + "legs, they may be sized to the remainder only");
-            return reread(p);
+            BigDecimal brokerQty = bp.qty().abs();
+            boolean youngOrThisRun = submission != null && (runId.equals(submission.runId())
+                    || submittedAt == null
+                    || Duration.between(submittedAt, clock.instant())
+                            .compareTo(TRIM_ORDER_LOST_MIN_AGE) < 0);
+            if (youngOrThisRun) return new SettledTrim(p, true);
+
+            BigDecimal preTrimQty = (submission == null || submission.qtyClosed() == null)
+                    ? null : p.qty().add(submission.qtyClosed());
+            if (preTrimQty != null && brokerQty.compareTo(preTrimQty) == 0) {
+                int restoredTrimCount = Math.max(0, p.trimCount() - 1);
+                positionRepo.restoreLostTrim(p.id(), brokerQty, restoredTrimCount);
+                escalateTrim(p, runId, "TRIM_ORDER_LOST", "partial-close order " + id + " on "
+                        + p.symbol() + " is neither working nor filled and the broker still holds "
+                        + "the pre-trim " + brokerQty + " (book " + p.qty() + ") — book restored "
+                        + "to the broker quantity, trim_count " + p.trimCount() + " -> "
+                        + restoredTrimCount, id);
+                telegram.notifyAlert(p.symbol(), "TRIM_ORDER_LOST", "CRITICAL",
+                        "partial close " + id + " on " + p.symbol() + " was lost — the book was "
+                                + "restored to " + brokerQty + " shares; check the protective "
+                                + "legs, they may be sized to the remainder only");
+                return new SettledTrim(reread(p), false);
+            }
+            escalateTrim(p, runId, "TRIM_ORDER_PARTIAL", "partial-close order " + id + " on "
+                    + p.symbol() + ": the broker holds " + brokerQty + ", more than the book's "
+                    + p.qty() + " but not the pre-trim "
+                    + (preTrimQty == null ? "size (TRIM row qty unknown)" : preTrimQty.toPlainString())
+                    + " — the close is not fully accounted for; no fill record, book left to "
+                    + "converge to the broker, trim_count stays " + p.trimCount(), id);
+            telegram.notifyAlert(p.symbol(), "TRIM_ORDER_PARTIAL", "CRITICAL",
+                    "partial close " + id + " on " + p.symbol() + " is not fully accounted for — "
+                            + "broker " + brokerQty + " vs book " + p.qty() + "; the book follows "
+                            + "the broker, the sold shares have no fill record; check the "
+                            + "protective legs");
+            positionRepo.clearPendingTrim(p.id());
+            return new SettledTrim(reread(p), false);
         }
 
-        Instant submittedAt = decisionRepo.trimSubmittedAt(id);
         if (submittedAt == null || Duration.between(submittedAt, clock.instant())
                 .compareTo(Duration.ofHours(TRIM_FILL_RESOLVE_HOURS)) > 0) {
             escalateTrim(p, runId, "TRIM_FILL_UNRESOLVED", "partial-close order " + id + " on "
@@ -525,9 +573,9 @@ public class ReconcileService {
                     + TRIM_FILL_RESOLVE_HOURS + " h after the TRIM row — its price is unknown, "
                     + "the weighted realized R falls back to the final leg", id);
             positionRepo.clearPendingTrim(p.id());
-            return reread(p);
+            return new SettledTrim(reread(p), false);
         }
-        return p;
+        return new SettledTrim(p, true);
     }
 
     private ExecutorPosition reread(ExecutorPosition p) {
@@ -681,7 +729,7 @@ public class ReconcileService {
     private void reconcileByLegs(ExecutorPosition p, List<ExecutorPositionLeg> legs,
             BrokerPosition bp, List<BrokerOrder> openOrders, List<BrokerOrder> filledOrders,
             String connection, String runId, List<ExecutorPosition> survivors,
-            Set<Long> unfilledIds, boolean fillHistoryAvailable, boolean trimWorking) {
+            Set<Long> unfilledIds, boolean fillHistoryAvailable, boolean trimPending) {
         legs = syncLegQuantities(p, legs, openOrders, runId, fillHistoryAvailable);
         List<LegFill> fills = matchLegFills(legs, filledOrders);
         BigDecimal legsQty = legs.stream().map(ExecutorPositionLeg::qty)
@@ -730,10 +778,11 @@ public class ReconcileService {
             // rewritten on evidence that has just been contradicted. Leave the row exactly as it
             // is; the escalation above is already recorded.
             survivors.add(p);
-        } else if (trimWorking && brokerHoldsMoreThanLegs(legs, bp)) {
-            // The pending trim's close order is still WORKING: the broker holds the pre-trim size,
-            // the restored legs the remainder. Not a desync, and the book qty must not be copied
-            // back (that would undo the trim) — maintenance only.
+        } else if (trimPending && brokerHoldsMoreThanLegs(legs, bp)) {
+            // The pending trim is undecided (close order WORKING, or too young / no evidence to
+            // call it lost): the broker may still hold the pre-trim size, the restored legs the
+            // remainder. Not a desync, and the book qty must not be copied back up (that would
+            // undo the trim) — maintenance only.
             survivors.add(updateMaintenance(p, bp, runId, true));
         } else if (!fillHistoryAvailable && brokerShortfallAttributableToOneLeg(legs, bp)) {
             // The one-leg-shortfall fallback below exists precisely because a smaller broker
@@ -754,7 +803,7 @@ public class ReconcileService {
             escalateLegQtyDesync(p, legs, bp, runId);
             survivors.add(p);
         } else {
-            survivors.add(updateMaintenance(p, bp, runId, trimWorking));
+            survivors.add(updateMaintenance(p, bp, runId, trimPending));
         }
     }
 
@@ -1953,9 +2002,12 @@ public class ReconcileService {
         // inputs — computed on the phantom half. Idempotent, logs only on an actual change; a
         // null/non-positive broker qty is ignored rather than blanking a good book value.
         BigDecimal brokerQty = bp.qty();
-        // Never while a pending trim's close order is WORKING: the broker still reports the
-        // pre-trim size and copying it back would undo the trim (spec 2026-10-03 §5.7).
-        if (!holdQtyForPendingTrim && brokerQty != null && brokerQty.signum() > 0
+        // Never UP while a pending trim is undecided: the broker may still report the pre-trim
+        // size and copying it back would undo the trim (spec 2026-10-03 §5.7). A smaller broker
+        // qty still syncs down as usual.
+        boolean holdUp = holdQtyForPendingTrim && brokerQty != null && p.qty() != null
+                && brokerQty.compareTo(p.qty()) > 0;
+        if (!holdUp && brokerQty != null && brokerQty.signum() > 0
                 && p.qty() != null && p.qty().compareTo(brokerQty) != 0) {
             positionRepo.syncQty(p.id(), brokerQty);
             ObjectNode inputs = mapper.createObjectNode();

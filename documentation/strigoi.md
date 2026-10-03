@@ -1470,10 +1470,16 @@ fill is visible.
 A pending trim (`executor_position.pending_trim_order_id`) is settled at the
 top of every reconcile pass: WORKING → the broker/legs gap is tolerated (no
 `LEG_QTY_DESYNC`, no `QTY_SYNC`); filled → `TRIM_FILL` row, marker cleared;
-neither, broker still holding the pre-trim size → `TRIM_ORDER_LOST`
-(CRITICAL, book restored, `trim_count` − 1); neither, shares gone, older than
-72 h → `TRIM_FILL_UNRESOLVED`. CLOSED rows still carrying the marker are swept
-the same way. Without a fill history in that pass nothing is decided.
+neither, and the broker holds more than the book → decided only once the
+TRIM row is at least 1 h old and from an earlier run (until then the gap is
+tolerated, so a fill that is not yet visible anywhere can never cause a second
+sale): broker exactly at the pre-trim size (book + the TRIM row's
+`qty_closed`) → `TRIM_ORDER_LOST` (CRITICAL, book restored, `trim_count` − 1);
+any other size above the book → `TRIM_ORDER_PARTIAL` (CRITICAL, marker
+cleared, `trim_count` unchanged, the book converges to the broker through the
+ordinary `QTY_SYNC`/leg sync); neither, shares gone, older than 72 h →
+`TRIM_FILL_UNRESOLVED`. CLOSED rows still carrying the marker are swept the
+same way. Without a fill history in that pass nothing is decided.
 
 A CONVICTION position (mechanism `TECH_CONVICTION`) is
 code-managed: `exit_position` answers `PROFILE_MANAGED` without a broker call
