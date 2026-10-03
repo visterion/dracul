@@ -217,6 +217,15 @@ public class ExecutorPositionRepository {
                 .update();
     }
 
+    /** Stamps the broker order id of an accepted partial close whose fill price is not known yet
+     *  (spec 2026-10-03 §5.7). {@code ReconcileService} resolves it. */
+    public void markPendingTrim(long id, String orderId) {
+        jdbc.sql("UPDATE executor_position SET pending_trim_order_id = :oid WHERE id = :id")
+                .param("oid", orderId)
+                .param("id", id)
+                .update();
+    }
+
     /** Returns the {@code exit_submitted_at} timestamp stamped by {@link #markPendingExit} for a
      *  pending-exit row, or {@code null} if never stamped (or the row has no such column value).
      *  Not an {@link ExecutorPosition} record component — {@code ReconcileService} needs this only

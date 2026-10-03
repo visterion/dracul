@@ -1457,6 +1457,18 @@ the ladder floor server-side, the LLM may only exit more aggressively, never
 less. See `documentation/api.md`'s "Scale-out / trim ladder" section for the
 full floor table and rejection shape.
 
+Every partial exit goes through `PartialExitService`, shared by the LLM
+scale-out and the CONVICTION target-half. An accepted partial exit repoints
+the `executor_position_leg` rows to the broker's restored stop ids (a leg no
+restored leg replaces is CLOSED with `exit_reason = TRIM`; if the restored legs
+replace none of the recorded legs the rows are left alone and
+`TRIM_LEGS_UNMATCHED` is escalated); when the broker reports no fill price the
+order id is stored in `executor_position.pending_trim_order_id` and the TRIM
+row's `order_json.order_id`, and reconcile writes a `TRIM_FILL` row once the
+fill is visible. A CONVICTION position (mechanism `TECH_CONVICTION`) is
+code-managed: `exit_position` answers `PROFILE_MANAGED` without a broker call
+and writes a `SOFT_TRIGGER/REJECT/PROFILE_MANAGED` decision row.
+
 **MAE (adverse-excursion) tracking.** Every maintenance pass also updates
 `executor_position.lowest_price` for BUY positions: the new floor is
 `min(previous lowest_price (or entry price if never set), current close)`,

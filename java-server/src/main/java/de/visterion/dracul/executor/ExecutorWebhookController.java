@@ -10,7 +10,6 @@ import de.visterion.dracul.executor.broker.CloseResult;
 import de.visterion.dracul.executor.broker.ExecutionGateway;
 import de.visterion.dracul.executor.broker.OrderStatus;
 import de.visterion.dracul.executor.broker.PlacedBracket;
-import de.visterion.dracul.executor.broker.RestoredLeg;
 import de.visterion.dracul.notify.TelegramNotifier;
 import de.visterion.dracul.pattern.PatternRepository;
 import de.visterion.dracul.position.PositionContextRepository;
@@ -65,29 +64,6 @@ public class ExecutorWebhookController {
 
     private static final Logger log = LoggerFactory.getLogger(ExecutorWebhookController.class);
 
-    /** Agora's reject code for the definite "there is no open position to flatten" verdict —
-     *  the same typed field {@code AgoraExecutionGateway.requireAccepted} threads through for
-     *  {@code LEG_NOT_FOUND} (see {@code StopRatchetService}). Structural, not transient: no
-     *  retry brings a gone position back, and it must not be filed as
-     *  {@code BROKER_UNAVAILABLE} — that is exactly the 2026-08-24 RGNX incident, where the
-     *  broker had long stopped the position out but the book still held it OPEN.
-     *
-     *  <p>Deliberately NOT {@code "NOT_FOUND"} (fix round 2): Agora's {@code FlattenTool} emits
-     *  the generic {@code NOT_FOUND} for an HTTP 404 reached elsewhere inside a flatten call (a
-     *  related-orders lookup, the closing POST itself on a partial close) — that says nothing
-     *  about whether the position exists. {@code NO_POSITION} is the narrower code Agora reserves
-     *  for the one definite determination. A plain {@code NOT_FOUND} rejection still falls
-     *  through to the generic branch below, named by its own raw reject code — a verdict,
-     *  honestly not claimed to mean the position is gone.
-     *
-     *  <p>Named {@code AGORA_NO_POSITION}, not just {@code NO_POSITION}: {@link RejectReason}
-     *  already declares a {@code NO_POSITION} value in this very class (see
-     *  {@link RejectReason#NO_POSITION}, used a few hundred lines below), meaning DRACUL's own
-     *  book has no matching open position (the entry/add-tranche path) — a completely different
-     *  check, on a completely different data source, from this field's agora wire code. One
-     *  literal spelling, two meanings, must not share one name in the same file. */
-    private static final String AGORA_NO_POSITION = "NO_POSITION";
-
     private final BearerTokenVerifier verifier;
     private final ExecutorSignalRepository signalRepo;
     private final ExecutorPositionRepository positionRepo;
@@ -135,6 +111,7 @@ public class ExecutorWebhookController {
     /** Period of the short ATR window, for the {@code stop_basis} audit label. */
     private final int atrShortPeriod;
     private final ConvictionProfile convictionProfile;
+    private final PartialExitService partialExit;
 
     @Autowired
     public ExecutorWebhookController(
@@ -188,7 +165,8 @@ public class ExecutorWebhookController {
             @Value("${dracul.executor.risk-pct:0.005}") double riskPct,
             @Value("${dracul.executor.atr-short-period:5}") int atrShortPeriod,
             MechanismBudget mechanismBudget,
-            ConvictionProfile convictionProfile) {
+            ConvictionProfile convictionProfile,
+            PartialExitService partialExit) {
         this(signalRepo, positionRepo, legRepo, decisionRepo, vetoService, orderGuard, gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper, assembler, sizer, ranker,
                 tranche2Detector, telegram, executorNotifier, positionContextRepo, patternRepo, webhookToken, connection, minConfidence,
@@ -197,7 +175,7 @@ public class ExecutorWebhookController {
                 entryGtdDays, maxBrokerAttempts, brokerAttemptWindowHours, maxBrokerCallsPerRun,
                 driftAnchorAtrMult, valueAnchorAtrMult, instrumentCurrency,
                 brokerStopBufferAtr, maxBrokerStopPct, riskPct, atrShortPeriod, mechanismBudget,
-                convictionProfile, Clock.systemUTC());
+                convictionProfile, partialExit, Clock.systemUTC());
     }
 
     /** Package-private overload with an injectable {@link Clock}, so tests can assert
@@ -254,6 +232,7 @@ public class ExecutorWebhookController {
             int atrShortPeriod,
             MechanismBudget mechanismBudget,
             ConvictionProfile convictionProfile,
+            PartialExitService partialExit,
             Clock clock) {
 
         this.signalRepo = signalRepo;
@@ -285,6 +264,7 @@ public class ExecutorWebhookController {
         this.maxBrokerStopPct = maxBrokerStopPct;
         this.riskPct = riskPct;
         this.atrShortPeriod = atrShortPeriod;
+        this.partialExit = partialExit;
         this.convictionProfile = convictionProfile;
         this.verifier = new BearerTokenVerifier(webhookToken);
         this.assembler = assembler;
@@ -2034,6 +2014,19 @@ public class ExecutorWebhookController {
                     Map.of("exited", false, "reason", "NO_OPEN_POSITION")));
         }
 
+        // Exit profile CONVICTION is code-managed end to end — emergency stop, target-half, trail,
+        // catastrophe (spec 2026-10-03 §5.6). Terminal for this call, logged, no gateway call.
+        if (position.exitProfile() == ExitProfile.CONVICTION) {
+            decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                    "SOFT_TRIGGER", null, null, null, symbol, null, null,
+                    "REJECT", "PROFILE_MANAGED", null,
+                    "exit_position on CONVICTION position " + position.id()
+                            + " — exits of this profile are code-managed",
+                    confidence, null, null));
+            return ResponseEntity.ok(Map.of("output",
+                    Map.of("exited", false, "reason", "PROFILE_MANAGED")));
+        }
+
         // A position whose GTD entry has no confirmed fill holds nothing at the broker — an
         // LLM exit would flatten zero holdings and book a fabricated close (+ cooldown).
         // `entry_expires_at` doubles as the persisted unfilled marker: set at placement,
@@ -2078,161 +2071,42 @@ public class ExecutorWebhookController {
                 .setScale(0, RoundingMode.FLOOR);
         boolean fullExit = fraction == 1.0 || remaining.signum() <= 0;
 
-        // The broker fraction must follow the BOOK's exit semantics, not the raw request:
-        // whenever the book treats this as a full exit (explicit fraction 1.0 OR a small-qty
-        // trim whose remainder floors to 0 shares), the broker must be flattened fully too --
-        // otherwise the book would close (+ cooldown) while the broker keeps an unmanaged
+        if (!fullExit) {
+            // The partial exit — the shared implementation that also repoints the leg rows
+            // (spec 2026-10-03 §5.7; the old inline path left them on cancelled stop ids).
+            PartialExitService.Result r = partialExit.execute(position, BigDecimal.valueOf(fraction),
+                    "SOFT_TRIGGER", null, "soft-exit flatten", reasoning, confidence, runId);
+            if (!r.trimmed()) {
+                return ResponseEntity.ok(Map.of("output",
+                        Map.of("exited", false, "reason", "BROKER_ERROR")));
+            }
+            return ResponseEntity.ok(Map.of("output", Map.of(
+                    "exited", false, "trimmed", true, "fraction", fraction,
+                    "qty_closed", r.qtyClosed(), "qty_remaining", r.qtyRemaining())));
+        }
+
+        // Full exit. The broker fraction must follow the BOOK's exit semantics, not the raw
+        // request: whenever the book treats this as a full exit (explicit fraction 1.0 OR a
+        // small-qty trim whose remainder floors to 0 shares), the broker must be flattened fully
+        // too -- otherwise the book would close (+ cooldown) while the broker keeps an unmanaged
         // remainder. BigDecimal.ONE (scale 0, not BigDecimal.valueOf(1.0) with scale 1) is the
         // canonical full-flatten value callers (gateway adapters, tests) expect.
-        BigDecimal gatewayFraction = fullExit ? BigDecimal.ONE : BigDecimal.valueOf(fraction);
-
         CloseResult cr;
         try {
-            cr = gateway.flatten(connection, symbol, gatewayFraction);
+            cr = gateway.flatten(connection, symbol, BigDecimal.ONE);
         } catch (BrokerRejectedException e) {
-            // A rejection can still change broker state: Agora rolls protection back and may
-            // issue NEW leg ids before reporting the rejection. The trim itself did not happen,
-            // so qty, trim_count AND soft_confirm_count must stay untouched — reusing recordTrim
-            // here (fix round 1 finding) would wrongly reset both the soft-confirm ladder and the
-            // stop_legs_collapsed flag, since recordTrim always zeroes/recomputes them for an
-            // actual trim. repointStopLegs touches ONLY the stop-leg id columns.
-            //
-            // Any currently-recorded stop-leg id that is not named (as a `replaces` target) in
-            // e.protectiveLegs() is nulled rather than left stale: Agora's own rollback
-            // (SaxoBrokerProvider.interleaveRollback) can break at the first failure and report
-            // fewer live legs than were cancelled — precisely the LEG_RESTORE_FAILED_UNPROTECTED
-            // case. Keeping an unmatched id would point Dracul at an order that was cancelled and
-            // never replaced; the next ratchet run would fail with LEG_NOT_FOUND forever.
-            // LEG_CANCEL_INCOMPLETE does not have this gap (Agora self-maps every uncancelled leg
-            // back to its own id), so this is safe there too.
-            //
-            // BUT repointStopLegs must NOT run unconditionally: several Saxo reject codes fire
-            // BEFORE the leg-cancel loop ever runs (INVALID_FRACTION, SYMBOL,
-            // QTY_EXCEEDS_POSITION, QTY_ROUNDED_TO_ZERO, CLOSE_ALREADY_PENDING — see
-            // SaxoBrokerProvider.flatten) and every Alpaca flatten rejection never touches a leg
-            // at all. On those, e.protectiveLegs() is legitimately empty, and repointStopLegs
-            // treats "not named" as "dead" — it would null BOTH live stop columns for a broker
-            // rejection that never changed broker state, permanently orphaning working stop
-            // orders (nothing restores them: updateMaintenance's stop_order_id is a COALESCE that
-            // never overwrites with NULL). Repoint only when Agora actually touched a leg
-            // (non-empty protectiveLegs) or the reject code is one of the three leg-restore codes
-            // — the third, LEG_RESTORE_FAILED_UNPROTECTED, can legitimately carry an EMPTY list in
-            // the worst case (interleaveRollback stops with nothing live), and that is exactly the
-            // one case where nulling both columns is truthful.
-            boolean legCancelWasAttempted = (e.protectiveLegs() != null && !e.protectiveLegs().isEmpty())
-                    || "LEG_CANCEL_INCOMPLETE".equals(e.rejectCode())
-                    || "LEG_RESTORE_FAILED".equals(e.rejectCode())
-                    || "LEG_RESTORE_FAILED_UNPROTECTED".equals(e.rejectCode());
-            if (legCancelWasAttempted) {
-                List<RestoredLeg> restored = e.protectiveLegs() != null ? e.protectiveLegs() : List.of();
-                positionRepo.repointStopLegs(position.id(), restored);
-                // The leg rows carry the ids the stop ratchet actually addresses, so they need the
-                // same repoint the columns just got. Without it the ratchet keeps patching orders
-                // the rollback replaced and fails LEG_NOT_FOUND on every run.
-                repointLegStops(position.id(), restored);
-            }
-            // Agora's NO_POSITION reject code is named separately from every other reject code:
-            // it is the structural case where the position is simply gone at the broker, not a
-            // business rejection whose detail (LEG_RESTORE_FAILED_UNPROTECTED etc.) is worth
-            // surfacing verbatim. A null reject code (Agora omitted the field) falls back to a
-            // defined name rather than a null reason_code -- an escalation row nothing can query
-            // for is as good as lost.
-            // One vocabulary with HardTriggerService.flattenOrEscalate, which files the SAME
-            // rejections as BROKER_REJECTED. Writing Agora's wire code straight into reason_code
-            // here meant a query for BROKER_REJECTED found the hard-trigger half and missed this
-            // one, for the identical broker event. Two names, one condition.
-            //
-            // It also retires a string that had come to mean two opposite things: historical
-            // production rows with reason_code = 'NOT_FOUND' meant "the position is gone", while a
-            // generic 404 inside flatten says nothing about whether it exists. That case is now
-            // reason_code = BROKER_REJECTED with reject_code = NOT_FOUND in inputs_snapshot, so
-            // the old string is never written again and every surviving 'NOT_FOUND' row is
-            // unambiguously historical.
-            //
-            // The wire code is not lost, it moves to a queryable field (the pattern
-            // FILL_HISTORY_UNAVAILABLE's `withheld` established) and is named in the reasoning,
-            // exactly as the hard-trigger path already does. It stays load-bearing in Java where
-            // it always was -- the CRITICAL alert below still branches on
-            // LEG_RESTORE_FAILED_UNPROTECTED, and repointStopLegs on the three leg-restore codes.
-            boolean positionAlreadyGone = AGORA_NO_POSITION.equals(e.rejectCode());
-            String flattenReasonCode = positionAlreadyGone ? "POSITION_ALREADY_GONE" : "BROKER_REJECTED";
-            String flattenReasoning = positionAlreadyGone
-                    ? "position already gone during soft-exit flatten: " + e.getMessage()
-                    : "broker rejected soft-exit flatten ["
-                            + (e.rejectCode() == null ? "no reject code" : e.rejectCode())
-                            + "]: " + e.getMessage();
-            ObjectNode rejectInputs = mapper.createObjectNode();
-            rejectInputs.put("reject_code", e.rejectCode());
-            decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
-                    "SOFT_TRIGGER", null, null, null, symbol, rejectInputs, null,
-                    "ESCALATE", flattenReasonCode, null, flattenReasoning,
-                    confidence, null, null));
-            // Alert only on the unprotected case — a plain LEG_CANCEL_INCOMPLETE / restored-but-
-            // rejected trim keeps today's quiet escalation, or the alert loses meaning.
-            if ("LEG_RESTORE_FAILED_UNPROTECTED".equals(e.rejectCode())) {
-                telegram.notifyAlert(symbol, e.rejectCode(), "CRITICAL",
-                        "partial close on " + symbol + " was rejected and left the remaining "
-                                + "position unprotected: " + e.getMessage());
-            }
+            // Rejection handling (repoint/null what Agora's rollback touched, BROKER_REJECTED vs
+            // POSITION_ALREADY_GONE, CRITICAL page on LEG_RESTORE_FAILED_UNPROTECTED) is shared
+            // with the partial path so one broker event is named identically on every path.
+            partialExit.escalateRejected(position, e, "SOFT_TRIGGER", "soft-exit flatten",
+                    confidence, runId);
             return ResponseEntity.ok(Map.of("output",
                     Map.of("exited", false, "reason", "BROKER_ERROR")));
         } catch (BrokerUnavailableException e) {
-            decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
-                    "SOFT_TRIGGER", null, null, null, symbol, null, null,
-                    "ESCALATE", "BROKER_UNAVAILABLE", null,
-                    "broker unavailable during soft-exit flatten: " + e.getMessage(),
-                    confidence, null, null));
+            partialExit.escalateUnavailable(position, e, "SOFT_TRIGGER", "soft-exit flatten",
+                    confidence, runId);
             return ResponseEntity.ok(Map.of("output",
                     Map.of("exited", false, "reason", "BROKER_ERROR")));
-        }
-
-        if (!fullExit) {
-            // Quantities come from the BROKER, never from our own arithmetic: Dracul floors
-            // qty × (1−fraction) while the broker floors qty × fraction and subtracts, which
-            // differ by one share on four of five live positions. Falling back to the local
-            // arithmetic only covers a provider that does not report closed/remaining qty — and
-            // it is all-or-nothing: trusting one broker-reported field while falling back on the
-            // other could yield qtyClosed + qtyRemaining != position.qty(), exactly the
-            // OutcomeBatchJob weighted-R inflation this change removes. Not reachable through
-            // today's gateway (it always reports both or neither), but kept safe against a future
-            // provider that reports only one.
-            boolean brokerReportedBoth = cr.closedQty() != null && cr.remainingQty() != null;
-            BigDecimal qtyClosed = brokerReportedBoth ? cr.closedQty() : position.qty().subtract(remaining);
-            BigDecimal qtyRemaining = brokerReportedBoth ? cr.remainingQty() : remaining;
-
-            positionRepo.recordTrim(position.id(), qtyRemaining, position.trimCount() + 1,
-                    cr.protectiveLegs(), cr.legsCollapsed());
-            // The leg rows keep their pre-trim quantities here, deliberately. A partial close is
-            // spread across the broker's tranches by the broker itself, and this response says
-            // only how much was closed in total -- so any per-leg split written here would be our
-            // arithmetic, not the broker's, which is exactly the defect the V45 backfill was
-            // rewritten to avoid. The legs are stale until the next reconcile pass, where
-            // ReconcileService.syncLegQuantities converges each one to its own WORKING stop's
-            // reported qty (the broker's own number). Judged acceptable because nothing between
-            // the two reads a leg quantity: StopRatchetService reads leg IDs and moves a price
-            // level, never a quantity, and every quantity-based veto sizes off
-            // executor_position.qty, which recordTrim just wrote from the broker's own
-            // remainingQty. A leg that the trim drove to zero is likewise left to reconcile,
-            // which CLOSES it -- executor_position_leg carries CHECK (qty > 0), so a zero leg is
-            // unwritable by construction and must never be "updated" to nothing.
-
-            ObjectNode orderJson = mapper.createObjectNode();
-            orderJson.put("fraction", fraction);
-            orderJson.put("qty_closed", qtyClosed);
-            orderJson.put("qty_remaining", qtyRemaining);
-            orderJson.put("price", cr.avgFillPrice());
-            // Exact position linkage for the outcome batch job (decision_log has no position_id
-            // column; order_json carries it) — without it, a same-day close+reentry on the same
-            // symbol could leak another lifecycle's TRIM into the weighted-R math.
-            orderJson.put("position_id", position.id());
-
-            decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
-                    "SOFT_TRIGGER", null, null, null, symbol, null, null,
-                    "TRIM", null, orderJson, reasoning, confidence, null, null));
-
-            return ResponseEntity.ok(Map.of("output", Map.of(
-                    "exited", false, "trimmed", true, "fraction", fraction,
-                    "qty_closed", qtyClosed, "qty_remaining", qtyRemaining)));
         }
 
         BigDecimal exitPrice = cr.avgFillPrice();
@@ -2342,33 +2216,6 @@ public class ExecutorWebhookController {
     // -------------------------------------------------------------------
     // add-tranche — code-verified tranche-2 adds to an open tranche-1 position
     // -------------------------------------------------------------------
-
-    /**
-     * Applies a flatten rollback's restored protective legs to the leg rows, mirroring
-     * {@link ExecutorPositionRepository#repointStopLegs} one table over.
-     *
-     * <p>Matching is by {@code replaces}: a restored leg names the id it took over from. An OPEN
-     * leg whose recorded stop id no restored leg claims has its id nulled rather than left alone —
-     * Agora's rollback can stop at the first failure and report fewer live legs than it cancelled,
-     * so an unclaimed id is dead, not stale. A null id is a visible protection gap that
-     * {@link StopRatchetService} reports; a stale one looks live and silently patches an order
-     * that no longer exists.
-     *
-     * <p>Only OPEN legs are touched: a CLOSED or CANCELLED leg's stop id is history, and the
-     * rollback has nothing to say about it.
-     */
-    private void repointLegStops(long positionId, List<RestoredLeg> restored) {
-        for (ExecutorPositionLeg leg : legRepo.findOpenByPosition(positionId)) {
-            if (leg.stopOrderId() == null) continue;
-            String replacement = restored.stream()
-                    .filter(r -> leg.stopOrderId().equals(r.replaces()))
-                    .map(RestoredLeg::orderId)
-                    .findFirst().orElse(null);
-            if (!leg.stopOrderId().equals(replacement)) {
-                legRepo.repointLegStop(leg.id(), replacement);
-            }
-        }
-    }
 
     @PostMapping("/tools/add-tranche")
     public ResponseEntity<Map<String, Object>> addTranche(

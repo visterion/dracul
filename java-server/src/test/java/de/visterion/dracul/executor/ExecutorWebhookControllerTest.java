@@ -67,6 +67,7 @@ class ExecutorWebhookControllerTest {
     private static final Instant FIXED_NOW = Instant.parse("2026-07-01T00:00:42Z");
     private final Clock fixedClock = Clock.fixed(FIXED_NOW, ZoneOffset.UTC);
 
+    private PartialExitService partialExit;
     private ExecutorWebhookController controller;
 
     @BeforeEach
@@ -98,6 +99,8 @@ class ExecutorWebhookControllerTest {
         when(assembler.assemble(any())).thenReturn(happyContext());
         when(assembler.assembleForSymbol(any())).thenReturn(happyContext());
 
+        partialExit = new PartialExitService(gateway, positionRepo, legRepo, decisionLogRepo,
+                ruleVersions, mapper, telegram, fixedClock);
         controller = controllerWith(BUFFER_ONE, sizer, tranche2Detector);
     }
 
@@ -122,7 +125,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
                 2, 3, 72, 2, 0.0, 3.0, "USD",
                 BUFFER_ONE, MAX_BROKER_STOP_PCT, 0.01, 5, mechanismBudget,
-                ConvictionProfile.defaults(), fixedClock);
+                ConvictionProfile.defaults(), partialExit, fixedClock);
     }
 
     /** The identity wiring (buffer 0): the bracket then carries the logical stop VERBATIM, so a
@@ -148,7 +151,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("10000"), 10, heatPct, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
                 2, 3, 72, 2, 0.0, 3.0, "USD",
                 bufferAtr, MAX_BROKER_STOP_PCT, riskPct, 5, MechanismBudget.none(),
-                ConvictionProfile.defaults(), fixedClock);
+                ConvictionProfile.defaults(), partialExit, fixedClock);
     }
 
     /** EntryContext with an explicit short ATR, so atrEff = max(atr, atrShort) differs from atr. */
@@ -447,7 +450,7 @@ class ExecutorWebhookControllerTest {
                 "tkn", "depot-1", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
                 2, 3, 72, 2, 0.0, 3.0, "USD",
-                BUFFER_ONE, MAX_BROKER_STOP_PCT, 0.01, 5, MechanismBudget.none(), ConvictionProfile.defaults(), fixedClock);
+                BUFFER_ONE, MAX_BROKER_STOP_PCT, 0.01, 5, MechanismBudget.none(), ConvictionProfile.defaults(), partialExit, fixedClock);
     }
 
     /** Builds a controller identical to {@link #controller} but with a lower LIQUIDITY min-price
@@ -463,7 +466,7 @@ class ExecutorWebhookControllerTest {
                 "tkn", "depot-1", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 10, 0.06, 2, minPrice, 200, 5, 1.0, 2, 2,
                 2, 3, 72, 2, 0.0, 3.0, "USD",
-                BUFFER_ONE, MAX_BROKER_STOP_PCT, 0.01, 5, MechanismBudget.none(), ConvictionProfile.defaults(), fixedClock);
+                BUFFER_ONE, MAX_BROKER_STOP_PCT, 0.01, 5, MechanismBudget.none(), ConvictionProfile.defaults(), partialExit, fixedClock);
     }
 
     /** Builds a controller identical to {@link #controller} but wired with the REAL
@@ -479,7 +482,7 @@ class ExecutorWebhookControllerTest {
                 "tkn", "depot-1", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
                 2, 3, 72, 2, 0.0, 3.0, "USD",
-                BUFFER_ONE, MAX_BROKER_STOP_PCT, 0.01, 5, MechanismBudget.none(), ConvictionProfile.defaults(), fixedClock);
+                BUFFER_ONE, MAX_BROKER_STOP_PCT, 0.01, 5, MechanismBudget.none(), ConvictionProfile.defaults(), partialExit, fixedClock);
     }
 
     /** Builds a controller identical to {@link #controller} but with a caller-supplied
@@ -7684,5 +7687,51 @@ class ExecutorWebhookControllerTest {
         assertThat(dec.getAllValues()).anyMatch(d -> d.vetoTrace() != null
                 && d.vetoTrace().stream().anyMatch(t -> t.startsWith("MECHANISM_BUDGET:")
                         && t.contains("300.00") && !t.contains("1000.00")));
+    }
+
+    // -------------------------------------------------------------------
+    // exit_position through PartialExitService (spec 2026-10-03 §5.6/§5.7)
+    // -------------------------------------------------------------------
+
+    /** P1 #1 (†) on the LLM soft-exit path: an accepted 0.5 trim repoints the leg rows. */
+    @Test
+    void exitPosition_acceptedTrimRepointsTheLegRows() {
+        ExecutorPosition open = openPosition(50L, "SYNA", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("10"), 0);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(legRepo.findOpenByPosition(50L)).thenReturn(List.of(new ExecutorPositionLeg(500L, 50L,
+                1, "brk-1", "stop-old", new BigDecimal("10"), ExecutorPositionLeg.OPEN, null, null, null)));
+        when(gateway.flatten(eq("depot-1"), eq("SYNA"), any())).thenReturn(new CloseResult(
+                new BigDecimal("5"), new BigDecimal("5"), null, "trim-ord-9",
+                List.of(new RestoredLeg("stop-old", "stop-new", new BigDecimal("5"), new BigDecimal("95"))),
+                false));
+
+        Map<String, Object> output = outputOf(controller.exitPosition(BEARER, "run-1", json("""
+                {"symbol":"SYNA","fraction":0.5,"reason":"SOFT_EXIT"}
+                """)));
+
+        assertThat(output.get("trimmed")).isEqualTo(true);
+        verify(legRepo).repointLegStop(500L, "stop-new");
+        verify(positionRepo).markPendingTrim(50L, "trim-ord-9");
+    }
+
+    /** P1 #10: exit_position on a CONVICTION position -> PROFILE_MANAGED, logged, no gateway call. */
+    @Test
+    void exitPosition_onConvictionIsProfileManaged() {
+        ExecutorPosition open = ExecutorPositionFixtures.conviction(openPosition(51L, "SYNB", "BUY",
+                new BigDecimal("100"), new BigDecimal("65"), new BigDecimal("10"), 0));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+
+        Map<String, Object> output = outputOf(controller.exitPosition(BEARER, "run-1", json("""
+                {"symbol":"SYNB","fraction":1.0,"reason":"SOFT_EXIT"}
+                """)));
+
+        assertThat(output.get("exited")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("PROFILE_MANAGED");
+        verify(gateway, never()).flatten(any(), any(), any());
+        ArgumentCaptor<DecisionLog> row = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(row.capture());
+        assertThat(row.getValue().action()).isEqualTo("REJECT");
+        assertThat(row.getValue().reasonCode()).isEqualTo("PROFILE_MANAGED");
     }
 }

@@ -2729,15 +2729,33 @@ rejected with `{ "output": { "exited": false, "reason": "SCHEMA_INVALID",
 "reasoning": "ladder floor is <floor> (trim_count=<n>); fraction <f> would
 undercut it" } }`, no broker call.
 
+A CONVICTION position (mechanism `TECH_CONVICTION`) is code-managed: the call
+answers `{"exited": false, "reason": "PROFILE_MANAGED"}` without a broker call
+and writes a `SOFT_TRIGGER/REJECT/PROFILE_MANAGED` decision row.
+
 For a valid partial trim: looks up the open `executor_position` for `symbol`
-on the configured connection, flattens `fraction` of it via `AgoraTrading`'s
-broker gateway, computes the remaining quantity as `qty × (1 − fraction)`
-floored to whole shares, and persists it via
-`ExecutorPositionRepository.recordTrim` (bumps `trim_count`, resets
+on the configured connection and hands it to `PartialExitService` (the one
+partial-exit implementation, shared with the CONVICTION target-half), which
+flattens `fraction` of it via `AgoraTrading`'s broker gateway and books the
+broker's own `closed_qty`/`remaining_qty` (falling back to `qty × (1 −
+fraction)` floored to whole shares only when the provider reports neither)
+via `ExecutorPositionRepository.recordTrim` (bumps `trim_count`, resets
 `soft_confirm_count` to 0). The position **stays OPEN** — no cooldown row is
 added. Writes one `decision_log` row (`trigger_type=SOFT_TRIGGER`,
 `action=TRIM`, `reason_code=null`, `order_json={fraction, qty_closed,
-qty_remaining}`). Response:
+qty_remaining, price, position_id, order_id}`).
+
+An accepted partial exit repoints the `executor_position_leg` rows to the
+broker's restored stop ids (a leg no restored leg replaces is CLOSED with
+`exit_reason = TRIM`); when the broker reports no fill price the order id is
+stored in `executor_position.pending_trim_order_id` and the TRIM row's
+`order_json.order_id`, and reconcile writes a `TRIM_FILL` row once the fill is
+visible. An empty restored-leg list leaves the leg rows untouched. If the
+restored legs replace **none** of the recorded legs, nothing is closed (closing
+every leg would make the next reconcile book the whole position CLOSED while
+the broker still holds the remainder): the rows stay as they are, an
+`ESCALATE/TRIM_LEGS_UNMATCHED` row is written and a CRITICAL Telegram alert
+asks the operator to repoint them. Response:
 
 ```json
 { "output": { "exited": false, "trimmed": true, "fraction": 0.33,

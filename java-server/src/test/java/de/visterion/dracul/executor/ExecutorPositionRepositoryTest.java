@@ -745,4 +745,18 @@ class ExecutorPositionRepositoryTest {
                 """).param("s", "V52BAD-" + UUID.randomUUID()).update())
                 .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
     }
+
+    @Test
+    void markPendingTrimRoundTrips() {
+        String symbol = "PTRIM-" + UUID.randomUUID();
+        long id = repo.insert(ExecutorPositionFixtures.withoutKillLevel(null, "depot-1", symbol,
+                "BUY", new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("65.00"),
+                new BigDecimal("65.00"), 1, null, List.of("X"), "sig-pt", "strigoi-tech", null,
+                null, "OPEN", null, null, null, 0, null, null, null, null, null, null, null, null,
+                null, 0, null, null, null, null, null, null, false, null, null));
+
+        repo.markPendingTrim(id, "trim-ord-77");
+
+        assertThat(repo.findById(id).pendingTrimOrderId()).isEqualTo("trim-ord-77");
+    }
 }
