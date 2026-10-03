@@ -529,7 +529,12 @@ public class ReconcileService {
         if (open && bp != null && bp.qty() != null && p.qty() != null
                 && bp.qty().abs().compareTo(p.qty()) > 0) {
             BigDecimal brokerQty = bp.qty().abs();
-            boolean youngOrThisRun = submission != null && (runId.equals(submission.runId())
+            // runId may be null (X-Vistierie-Run-Id is optional). Never Objects.equals: a TRIM
+            // row also written under a null run would then count as "this run" on every pass and
+            // the trim would never be decided.
+            boolean thisRun = runId != null && runId.equals(submission == null ? null
+                    : submission.runId());
+            boolean youngOrThisRun = submission != null && (thisRun
                     || submittedAt == null
                     || Duration.between(submittedAt, clock.instant())
                             .compareTo(TRIM_ORDER_LOST_MIN_AGE) < 0);

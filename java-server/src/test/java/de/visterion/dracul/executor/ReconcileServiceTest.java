@@ -3386,4 +3386,21 @@ class ReconcileServiceTest {
         verify(telegram).notifyAlert(eq("SYNT"), eq("TRIM_ORDER_PARTIAL"), eq("CRITICAL"), any());
         verify(positionRepo).syncQty(eq(91L), argThatComparesTo("7"));
     }
+
+    /** Fix round 2: the run-id header is optional, so reconcile can run with a null runId. That
+     *  must neither NPE nor make a TRIM row written under a null run count as "this run". */
+    @Test
+    void lostTrimIsDecidedWithANullRunIdAndANullRunTrimRow() {
+        ExecutorPosition p = trimmedRow(92L, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(decisionRepo.trimSubmission("trim-1")).thenReturn(new DecisionLogRepository.TrimSubmission(
+                NOW.minus(Duration.ofHours(2)), null, new BigDecimal("5")));
+        gateway.seedPosition(new BrokerPosition("SYNT", "BUY", new BigDecimal("10"),
+                new BigDecimal("100"), new BigDecimal("131"), 0));
+
+        service.reconcile("c", null);
+
+        verify(positionRepo).restoreLostTrim(eq(92L), argThatComparesTo("10"), eq(0));
+        assertThat(reasonCodes()).contains("TRIM_ORDER_LOST");
+    }
 }
