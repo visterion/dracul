@@ -237,10 +237,14 @@ public class MaintenancePipeline {
             BigDecimal atrShort, Tranche2Detector.Tranche2Status t2, boolean entryFilled) {
         boolean sell = "SELL".equals(p.side());
 
+        // Exit profile CONVICTION has no soft trigger (spec 2026-10-03 §5.6): its exits are the
+        // emergency stop, the target-half, the profile trail and the catastrophe flag — all code.
+        boolean conviction = p.exitProfile() == ExitProfile.CONVICTION;
+
         // ATR22, deliberately NOT atrEff. The soft trigger is meant to fire EARLIER than the hard
         // stop; widening it with a post-report window would silence it.
         BigDecimal chandelierLevel = null;
-        if (currentPrice != null && atr != null && p.highestPrice() != null) {
+        if (!conviction && currentPrice != null && atr != null && p.highestPrice() != null) {
             BigDecimal offset = atr.multiply(BigDecimal.valueOf(chandelierMult));
             chandelierLevel = sell ? p.highestPrice().add(offset) : p.highestPrice().subtract(offset);
         }
@@ -250,15 +254,18 @@ public class MaintenancePipeline {
         // Soft-confirm accumulation only makes sense on real holdings: an unfilled entry has
         // nothing to soft-exit, so its confirm count must not creep up while the order waits
         // for its fill (it would prime an immediate soft exit the moment the entry fills).
-        SoftConditionEvaluator.SoftState ss = entryFilled
+        SoftConditionEvaluator.SoftState ss = entryFilled && !conviction
                 ? softEval.evaluate(currentPrice, chandelierLevel,
                         null, null, p.side(), p.softConfirmCount())
-                : new SoftConditionEvaluator.SoftState(false, false, p.softConfirmCount());
+                : new SoftConditionEvaluator.SoftState(false, false,
+                        conviction ? 0 : p.softConfirmCount());
 
         // Context only: the structured kill level, never a parse of the free-text kill_criteria.
         // For a FILLED position a breach is flattened by HardTriggerService earlier in this same
         // pass, so this is mostly visible on unfilled / pending-exit / failed-flatten rows.
-        String killBreach = HardTriggerService.killLevelBreach(p, currentPrice);
+        // Kill levels are STANDARD only (spec 2026-10-03 §5.4 #3), so a CONVICTION row never
+        // carries one here either.
+        String killBreach = conviction ? null : HardTriggerService.killLevelBreach(p, currentPrice);
         List<String> killCriteriaBreached = killBreach == null ? List.of() : List.of(killBreach);
 
         positionRepo.updateMaintenance(p.id(), p.highestPrice(), p.mfeR(), ss.confirmCount(),
@@ -281,7 +288,8 @@ public class MaintenancePipeline {
                 p.mfeR(), daysHeld(p.entryDate()), p.killCriteria(), killCriteriaBreached,
                 ss.chandelierBreach(), ss.maBreak(), ss.confirmCount(), t2.eligible(), t2.reason(),
                 p.sourceSignalId(), p.trimCount(), ExecutorWebhookController.ladderFloor(p.trimCount()),
-                entryFilled, atrShort, p.brokerStop(), p.killCloseBelow(), p.killCloseBelowDropped());
+                entryFilled, atrShort, p.brokerStop(), p.killCloseBelow(), p.killCloseBelowDropped(),
+                p.exitProfile());
     }
 
     private String resolveMechanism(String sourceSignalId) {

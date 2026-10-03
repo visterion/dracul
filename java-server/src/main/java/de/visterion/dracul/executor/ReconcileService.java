@@ -131,7 +131,8 @@ public class ReconcileService {
      *  origin keeps the same action as its submit-time decision row, anything else (e.g. a
      *  webhook soft/LLM exit reason) is a RECONCILE_CLOSE. */
     private static final Set<String> HARD_REASONS =
-            Set.of("HARD_STOP", "HARD_KILL_CRITERIA", "GIVEBACK_BREACH");
+            Set.of("HARD_STOP", "HARD_KILL_CRITERIA", "GIVEBACK_BREACH", "HARD_CATASTROPHE",
+                    "HARD_TARGET_HALF");
 
     private static final Logger log = LoggerFactory.getLogger(ReconcileService.class);
 

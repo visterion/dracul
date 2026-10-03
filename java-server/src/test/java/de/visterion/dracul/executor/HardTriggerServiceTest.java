@@ -16,6 +16,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -30,6 +31,7 @@ class HardTriggerServiceTest {
     private final DecisionLogRepository decisionRepo = mock(DecisionLogRepository.class);
     private final CooldownRepository cooldownRepo = mock(CooldownRepository.class);
     private final RuleVersionProvider ruleVersions = mock(RuleVersionProvider.class);
+    private final PartialExitService partialExit = mock(PartialExitService.class);
     private final ObjectMapper mapper = new ObjectMapper();
     private final Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
 
@@ -39,7 +41,7 @@ class HardTriggerServiceTest {
     void setUp() {
         when(ruleVersions.active()).thenReturn("exec-v0.2");
         service = new HardTriggerService(gateway, positionRepo, decisionRepo, cooldownRepo,
-                ruleVersions, mapper, 0.35, 1.5, 10, clock);
+                ruleVersions, mapper, 0.35, 1.5, 10, partialExit, ConvictionProfile.defaults(), clock);
     }
 
     private ExecutorPosition openPosition(long id, String symbol, String side, BigDecimal entry,
@@ -275,7 +277,7 @@ class HardTriggerServiceTest {
                         "BRCH", new BigDecimal("39.50"), "HOLD", new BigDecimal("50"),
                         "NOLV", new BigDecimal("50")), "run1"));
 
-        assertThat(infos).containsExactly("kill levels evaluated: 2 of 3 filled positions (breached: 1)");
+        assertThat(infos).containsExactly("kill levels evaluated: 2 of 3 filled positions (breached: 1); catastrophe flagged: 0, targets hit: 0");
     }
 
     private List<String> linesWhile(Class<?> loggerClass, ch.qos.logback.classic.Level level,
@@ -326,7 +328,7 @@ class HardTriggerServiceTest {
         };
         HardTriggerService slowService = new HardTriggerService(slowGateway, positionRepo,
                 decisionRepo, cooldownRepo, ruleVersions, mapper,
-                0.35, 1.5, 10, steppingClock);
+                0.35, 1.5, 10, partialExit, ConvictionProfile.defaults(), steppingClock);
 
         ExecutorPosition p = openPosition(10L, "ACME", "BUY", new BigDecimal("100"),
                 new BigDecimal("95"), new BigDecimal("95"), null);
@@ -564,5 +566,167 @@ class HardTriggerServiceTest {
 
         assertThat(survivors).hasSize(1);
         assertThat(gateway.flattenedSymbols).isEmpty();
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Exit profile CONVICTION (spec 2026-10-03 §5.4)
+    // ---------------------------------------------------------------------------------------
+
+    /** CONVICTION BUY, entry 100, emergency stop 65, qty 10. */
+    private ExecutorPosition conviction(long id, String symbol, int trimCount, String catastrophe,
+            String pendingTrim, BigDecimal mfeR) {
+        ExecutorPosition base = ExecutorPositionFixtures.withoutKillLevel(id, "c", symbol, "BUY",
+                BigDecimal.TEN, new BigDecimal("100"), new BigDecimal("65"), new BigDecimal("65"),
+                1, null, List.of(), "sig-" + id, "strigoi-tech", "2026-07-01", null, "OPEN",
+                "brk-" + id, null, mfeR, 0, null, null, null, null, "stop-" + id, null, null, null,
+                null, trimCount, null, null, null, null, null, null, false, new BigDecimal("80"),
+                "2026-07-01T09:00:00Z");
+        return ExecutorPositionFixtures.withProfileFields(base, ExitProfile.CONVICTION,
+                catastrophe, catastrophe == null ? null : "2026-07-07 22:30:00+00", pendingTrim, false);
+    }
+
+    private DecisionLog onlyRow() {
+        ArgumentCaptor<DecisionLog> c = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(c.capture());
+        return c.getValue();
+    }
+
+    /** P1 #5 (†): CATASTROPHE needs no price — a halt/delisting (no close) is exactly its case.
+     *  Full flatten, close and current_r recorded as null, no computeR. */
+    @Test
+    void catastropheWithoutACloseFlattensFully() {
+        ExecutorPosition p = conviction(30L, "SYNA", 0, "synthetic fraud finding", null, null);
+
+        List<ExecutorPosition> survivors = service.apply(List.of(p), Map.of(), "run1");
+
+        assertThat(survivors).isEmpty();
+        assertThat(gateway.flattenedSymbols).containsExactly("SYNA");
+        assertThat(gateway.flattenFractions).containsExactly(BigDecimal.ONE);
+        verify(positionRepo).markPendingExit(org.mockito.ArgumentMatchers.eq(30L),
+                org.mockito.ArgumentMatchers.eq("HARD_CATASTROPHE"), any(), any(),
+                org.mockito.ArgumentMatchers.eq(NOW));
+        DecisionLog row = onlyRow();
+        assertThat(row.reasonCode()).isEqualTo("HARD_CATASTROPHE");
+        assertThat(row.inputsSnapshot().path("close").isNull()).isTrue();
+        assertThat(row.inputsSnapshot().path("current_r").isNull()).isTrue();
+        assertThat(row.vetoResults().get(0).path("check").asString()).isEqualTo("CATASTROPHE");
+        assertThat(row.vetoResults().get(0).path("measured").asString())
+                .isEqualTo("CATASTROPHE: synthetic fraud finding");
+    }
+
+    /** P1 #4: catastrophe + stop breach the same night -> HARD_CATASTROPHE only. */
+    @Test
+    void catastropheWinsOverTheStop() {
+        ExecutorPosition p = conviction(31L, "SYNB", 0, "synthetic export ban", null, null);
+
+        service.apply(List.of(p), Map.of("SYNB", new BigDecimal("60")), "run1");
+
+        assertThat(gateway.flattenedSymbols).containsExactly("SYNB");
+        assertThat(onlyRow().reasonCode()).isEqualTo("HARD_CATASTROPHE");
+    }
+
+    /** P1 #4: a pending trim does not shield a catastrophe — full flatten. */
+    @Test
+    void catastropheWithAPendingTrimFlattensFully() {
+        ExecutorPosition p = conviction(32L, "SYNC", 1, "synthetic restatement", "trim-1", null);
+
+        service.apply(List.of(p), Map.of("SYNC", new BigDecimal("120")), "run1");
+
+        assertThat(gateway.flattenFractions).containsExactly(BigDecimal.ONE);
+        verify(partialExit, never()).execute(any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    /** P1 #3: close exactly entry x 1.30 fires TARGET_HALF (fraction 0.5 via PartialExitService);
+     *  the position stays a survivor. */
+    @Test
+    void targetHalfFiresAtExactlyThirtyPercent() {
+        ExecutorPosition p = conviction(33L, "SYND", 0, null, null, null);
+
+        List<ExecutorPosition> survivors = service.apply(List.of(p),
+                Map.of("SYND", new BigDecimal("130.00")), "run1");
+
+        assertThat(survivors).containsExactly(p);
+        assertThat(gateway.flattenedSymbols).isEmpty();
+        verify(partialExit).execute(org.mockito.ArgumentMatchers.eq(p),
+                org.mockito.ArgumentMatchers.argThat(f -> f.compareTo(new BigDecimal("0.5")) == 0),
+                org.mockito.ArgumentMatchers.eq("HARD_TRIGGER"),
+                org.mockito.ArgumentMatchers.eq("HARD_TARGET_HALF"),
+                org.mockito.ArgumentMatchers.eq("target-half flatten"), any(), isNull(),
+                org.mockito.ArgumentMatchers.eq("run1"));
+    }
+
+    /** P1 #3: one tick below the target does not fire. */
+    @Test
+    void oneTickBelowTheTargetDoesNotFire() {
+        ExecutorPosition p = conviction(34L, "SYNE", 0, null, null, null);
+
+        service.apply(List.of(p), Map.of("SYNE", new BigDecimal("129.99")), "run1");
+
+        verify(partialExit, never()).execute(any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    /** P1 #3/#4: exactly once — trim_count 1 (night 2, or the second maintenance pass of the same
+     *  run, which re-reads the trimmed row) and a pending trim both block a second half-sale. */
+    @Test
+    void targetHalfFiresExactlyOnce() {
+        ExecutorPosition halfSold = conviction(35L, "SYNF", 1, null, null, null);
+        ExecutorPosition pending = conviction(36L, "SYNG", 0, null, "trim-36", null);
+
+        service.apply(List.of(halfSold, pending), Map.of("SYNF", new BigDecimal("150"),
+                "SYNG", new BigDecimal("150")), "run1");
+
+        verify(partialExit, never()).execute(any(), any(), any(), any(), any(), any(), any(), any());
+        assertThat(gateway.flattenedSymbols).isEmpty();
+    }
+
+    /** P1 #4 precedence: the stop still wins over the target for a CONVICTION row (a stop breach
+     *  and a target cannot both hold for one close, but the order is pinned). */
+    @Test
+    void convictionStopBreachFlattensWithHardStop() {
+        ExecutorPosition p = conviction(37L, "SYNH", 0, null, null, null);
+
+        service.apply(List.of(p), Map.of("SYNH", new BigDecimal("64.99")), "run1");
+
+        assertThat(onlyRow().reasonCode()).isEqualTo("HARD_STOP");
+    }
+
+    /** Spec §5.4 #3: kill level and giveback are STANDARD only. */
+    @Test
+    void convictionIgnoresKillLevelAndGiveback() {
+        ExecutorPosition p = ExecutorPositionFixtures.withKillLevel(
+                conviction(38L, "SYNI", 1, null, null, new BigDecimal("2.0")), new BigDecimal("110"), null);
+
+        service.apply(List.of(p), Map.of("SYNI", new BigDecimal("101")), "run1");
+
+        assertThat(gateway.flattenedSymbols).isEmpty();
+        verify(decisionRepo, never()).insert(any());
+    }
+
+    /** STANDARD regression: +30 % never triggers a half-sale; giveback still fires. */
+    @Test
+    void standardHasNoTargetHalfAndKeepsGiveback() {
+        ExecutorPosition runner = openPosition(39L, "SYNJ", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("95"), null);
+        ExecutorPosition givingBack = openPosition(40L, "SYNK", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("95"), new BigDecimal("2.0"));
+
+        service.apply(List.of(runner, givingBack), Map.of("SYNJ", new BigDecimal("130"),
+                "SYNK", new BigDecimal("106")), "run1");
+
+        verify(partialExit, never()).execute(any(), any(), any(), any(), any(), any(), any(), any());
+        assertThat(gateway.flattenedSymbols).containsExactly("SYNK");
+    }
+
+    @Test
+    void infoLineCountsCatastrophesAndTargets() {
+        ExecutorPosition flagged = conviction(41L, "SYNL", 0, "synthetic delisting", null, null);
+        ExecutorPosition target = conviction(42L, "SYNM", 0, null, null, null);
+
+        var infos = linesWhile(HardTriggerService.class, ch.qos.logback.classic.Level.INFO,
+                () -> service.apply(List.of(flagged, target), Map.of("SYNL", new BigDecimal("90"),
+                        "SYNM", new BigDecimal("131")), "run1"));
+
+        assertThat(infos).containsExactly("kill levels evaluated: 0 of 2 filled positions "
+                + "(breached: 0); catastrophe flagged: 1, targets hit: 1");
     }
 }

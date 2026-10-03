@@ -35,6 +35,10 @@ import java.util.Map;
  * criterion (German wording, decimal comma) and a naive German one fires falsely on offer prices,
  * dated, multi-day and negated criteria (spec 2026-10-02 §1). They stay LLM context.
  *
+ * <p>For exit profile CONVICTION (spec 2026-10-03 §5.4) the order is: a flagged catastrophe
+ * (evaluated before the close-null skip), the stop, then the target-half (a 0.5 partial exit
+ * through {@link PartialExitService}); kill level and giveback are STANDARD only.
+ *
  * <p>On {@link BrokerUnavailableException} while flattening, this deliberately does nothing
  * to the book — a transient broker outage must never be mistaken for a closed position — and
  * escalates via the decision log instead. That includes a {@link BrokerRejectedException}: a
@@ -82,6 +86,8 @@ public class HardTriggerService {
     private final double givebackPct;
     private final double givebackActiveFromR;
     private final int cooldownDays;
+    private final PartialExitService partialExit;
+    private final ConvictionProfile convictionProfile;
     private final Clock clock;
 
     @Autowired
@@ -94,9 +100,12 @@ public class HardTriggerService {
             ObjectMapper mapper,
             @Value("${dracul.executor.giveback-pct:0.35}") double givebackPct,
             @Value("${dracul.executor.giveback-active-from-r:1.5}") double givebackActiveFromR,
-            @Value("${dracul.executor.cooldown-days:3}") int cooldownDays) {
+            @Value("${dracul.executor.cooldown-days:3}") int cooldownDays,
+            PartialExitService partialExit,
+            ConvictionProfile convictionProfile) {
         this(gateway, positionRepo, decisionRepo, cooldownRepo, ruleVersions, mapper,
-                givebackPct, givebackActiveFromR, cooldownDays, Clock.systemUTC());
+                givebackPct, givebackActiveFromR, cooldownDays, partialExit, convictionProfile,
+                Clock.systemUTC());
     }
 
     HardTriggerService(
@@ -109,6 +118,8 @@ public class HardTriggerService {
             double givebackPct,
             double givebackActiveFromR,
             int cooldownDays,
+            PartialExitService partialExit,
+            ConvictionProfile convictionProfile,
             Clock clock) {
         this.gateway = gateway;
         this.positionRepo = positionRepo;
@@ -119,6 +130,8 @@ public class HardTriggerService {
         this.givebackPct = givebackPct;
         this.givebackActiveFromR = givebackActiveFromR;
         this.cooldownDays = cooldownDays;
+        this.partialExit = partialExit;
+        this.convictionProfile = convictionProfile;
         this.clock = clock;
     }
 
@@ -127,8 +140,29 @@ public class HardTriggerService {
         List<ExecutorPosition> survivors = new ArrayList<>();
         int levelsEvaluated = 0;
         int levelsBreached = 0;
+        int catastrophesFlagged = 0;
+        int targetsHit = 0;
         for (ExecutorPosition p : openPositions) {
             BigDecimal close = currentCloseBySymbol.get(p.symbol());
+
+            // 0. CATASTROPHE (spec 2026-10-03 §5.4, R1 M2) — BEFORE the close-null skip: it needs
+            // no price, and a halt or delisting (no close at all) is exactly its case. A pending
+            // trim does not shield it: full flatten.
+            if (p.catastropheReason() != null) {
+                catastrophesFlagged++;
+                Trigger catastrophe = new Trigger("HARD_CATASTROPHE", "CATASTROPHE",
+                        "CATASTROPHE: " + p.catastropheReason());
+                Instant detectedAt = clock.instant();
+                CloseResult cr = flattenOrEscalate(p, catastrophe, runId);
+                if (cr == null) {
+                    survivors.add(p);
+                    continue;
+                }
+                recordHardExit(p, close, close == null ? null : computeR(p, close), catastrophe,
+                        runId, detectedAt, cr);
+                continue;
+            }
+
             if (close == null) {
                 // Deliberately UNCHANGED behaviour: the position survives. But it survives
                 // WITHOUT its stop breach and kill criteria having been evaluated, on the
@@ -144,14 +178,27 @@ public class HardTriggerService {
             }
 
             boolean sell = "SELL".equals(p.side());
+            boolean conviction = p.exitProfile() == ExitProfile.CONVICTION;
             BigDecimal currentR = computeR(p, close);
 
-            if (isBuy(p) && p.killCloseBelow() != null) {
+            if (!conviction && isBuy(p) && p.killCloseBelow() != null) {
                 levelsEvaluated++;
                 if (close.compareTo(p.killCloseBelow()) < 0) levelsBreached++;
             }
 
+            // 1. stop breach — for CONVICTION the active stop is the emergency stop or the trail.
             Trigger trigger = detectStopBreach(p, close, sell);
+            if (trigger == null && conviction) {
+                // 2. TARGET_HALF — exactly once: never after the half-sale, never while a trim is
+                // still pending (a second maintenance pass in the same run re-reads the trimmed
+                // row and stops here). 3. kill level and giveback do not apply to this profile.
+                if (targetHalfDue(p, close)) {
+                    targetsHit++;
+                    sellHalf(p, close, runId);
+                }
+                survivors.add(p);
+                continue;
+            }
             if (trigger == null) {
                 trigger = detectKillCriteria(p, close);
             }
@@ -180,9 +227,32 @@ public class HardTriggerService {
         // One line per run, always — also when no position carries a level, so "the code-enforced
         // kill path saw nothing to enforce" is distinguishable from "the path did not run". Breached
         // counts every close below its level, including one where HARD_STOP took precedence.
-        log.info("kill levels evaluated: {} of {} filled positions (breached: {})",
-                levelsEvaluated, openPositions.size(), levelsBreached);
+        log.info("kill levels evaluated: {} of {} filled positions (breached: {}); "
+                        + "catastrophe flagged: {}, targets hit: {}",
+                levelsEvaluated, openPositions.size(), levelsBreached, catastrophesFlagged,
+                targetsHit);
         return survivors;
+    }
+
+    /** Spec §5.4 #2: CONVICTION, no half-sale yet, no trim pending, close >= entry x (1 + target-pct). */
+    private boolean targetHalfDue(ExecutorPosition p, BigDecimal close) {
+        return isBuy(p) && p.trimCount() == 0 && p.pendingTrimOrderId() == null
+                && close.compareTo(convictionProfile.targetPrice(p.entryPrice())) >= 0;
+    }
+
+    private void sellHalf(ExecutorPosition p, BigDecimal close, String runId) {
+        BigDecimal fraction = convictionProfile.targetFraction();
+        if (p.qty() == null || p.qty().multiply(fraction).setScale(0, RoundingMode.FLOOR).signum() == 0) {
+            // Only reachable after a 1-share partial fill: min-entry-qty keeps entries >= 2.
+            log.warn("target-half due for position {} ({}) but qty {} cannot be halved — skipped",
+                    p.id(), p.symbol(), p.qty());
+            return;
+        }
+        String reasoning = "TARGET_HALF: close " + plain(close) + " >= target "
+                + plain(convictionProfile.targetPrice(p.entryPrice())) + " (entry "
+                + plain(p.entryPrice()) + " x (1 + " + plain(convictionProfile.targetPct()) + "))";
+        partialExit.execute(p, fraction, "HARD_TRIGGER", "HARD_TARGET_HALF",
+                "target-half flatten", reasoning, null, runId);
     }
 
     /**
@@ -258,6 +328,7 @@ public class HardTriggerService {
                 cr.avgFillPrice(), clock.instant());
 
         ObjectNode inputs = mapper.createObjectNode();
+        // close/current_r are null for a CATASTROPHE without a price (halt/delisting) — never computed.
         inputs.put("close", close);
         inputs.put("active_stop", p.activeStop());
         inputs.put("mfe_r", p.mfeR());
@@ -285,8 +356,9 @@ public class HardTriggerService {
                 "LOG_HARD_EXIT", trigger.reasonCode(), orderJson, null, null, latency, null));
     }
 
-    // Reason codes produced below ("HARD_STOP", "HARD_KILL_CRITERIA", "GIVEBACK_BREACH") are
-    // duplicated in ReconcileService#HARD_REASONS — keep both in sync.
+    // Reason codes produced here ("HARD_STOP", "HARD_KILL_CRITERIA", "GIVEBACK_BREACH",
+    // "HARD_CATASTROPHE", "HARD_TARGET_HALF") are duplicated in ReconcileService#HARD_REASONS —
+    // keep both in sync.
     private Trigger detectStopBreach(ExecutorPosition p, BigDecimal close, boolean sell) {
         boolean breached = sell
                 ? close.compareTo(p.activeStop()) > 0

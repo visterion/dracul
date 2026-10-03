@@ -338,7 +338,7 @@ class MaintenancePipelineTest {
         when(ruleVersions.active()).thenReturn("exec-v0.4");
         HardTriggerService realHardTrigger = new HardTriggerService(fakeGateway, positionRepo,
                 decisionRepo, cooldownRepo, ruleVersions, new tools.jackson.databind.ObjectMapper(),
-                0.35, 1.5, 10,
+                0.35, 1.5, 10, mock(PartialExitService.class), ConvictionProfile.defaults(),
                 java.time.Clock.fixed(java.time.Instant.parse("2026-07-08T12:00:00Z"),
                         java.time.ZoneOffset.UTC));
         MaintenancePipeline gatedPipeline = new MaintenancePipeline(reconcile, entryExpiry, sweeper,
@@ -381,7 +381,7 @@ class MaintenancePipelineTest {
         when(ruleVersions.active()).thenReturn("exec-v0.9");
         HardTriggerService realHardTrigger = new HardTriggerService(fakeGateway, positionRepo,
                 decisionRepo, mock(CooldownRepository.class), ruleVersions,
-                new tools.jackson.databind.ObjectMapper(), 0.35, 1.5, 3,
+                new tools.jackson.databind.ObjectMapper(), 0.35, 1.5, 3, mock(PartialExitService.class), ConvictionProfile.defaults(),
                 java.time.Clock.fixed(java.time.Instant.parse("2026-07-08T12:00:00Z"),
                         java.time.ZoneOffset.UTC));
         MaintenancePipeline realPipeline = new MaintenancePipeline(reconcile, entryExpiry, sweeper,
@@ -416,7 +416,7 @@ class MaintenancePipelineTest {
         when(ruleVersions.active()).thenReturn("exec-v0.9");
         HardTriggerService realHardTrigger = new HardTriggerService(fakeGateway, positionRepo,
                 mock(DecisionLogRepository.class), mock(CooldownRepository.class), ruleVersions,
-                new tools.jackson.databind.ObjectMapper(), 0.35, 1.5, 3,
+                new tools.jackson.databind.ObjectMapper(), 0.35, 1.5, 3, mock(PartialExitService.class), ConvictionProfile.defaults(),
                 java.time.Clock.fixed(java.time.Instant.parse("2026-07-08T12:00:00Z"),
                         java.time.ZoneOffset.UTC));
         MaintenancePipeline realPipeline = new MaintenancePipeline(reconcile, entryExpiry, sweeper,
@@ -849,5 +849,36 @@ class MaintenancePipelineTest {
 
         assertThat(result).hasSize(1);
         assertThat(result.get(0).symbol()).isEqualTo("BBB");
+    }
+
+    /** Spec 2026-10-03 §5.6: no soft trigger for CONVICTION — no chandelier level, no confirm
+     *  creep, whatever the close does. */
+    @Test
+    void convictionPositionsCarryNoSoftTrigger() {
+        // A kill level 110 above the close 103 would put a STANDARD row's breach into the soft
+        // trigger context; CONVICTION ignores kill levels, so it must stay empty too.
+        ExecutorPosition p = ExecutorPositionFixtures.withKillLevel(
+                ExecutorPositionFixtures.conviction(openPosition(1L, "BBB",
+                        new BigDecimal("65"), new BigDecimal("110"), new BigDecimal("1.6"), 1)),
+                new BigDecimal("110"), null);
+        List<ExecutorPosition> survivors = List.of(p);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(survivors, Set.of()));
+        when(indicators.levels("BBB", 22, 20))
+                .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
+                        new BigDecimal("103"), null));
+        when(hardTrigger.apply(eq(survivors), any(), eq("r1"))).thenReturn(survivors);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        List<EnrichedPosition> result = pipeline.run("c", "r1");
+
+        assertThat(result).singleElement().satisfies(e -> {
+            assertThat(e.exitProfile()).isEqualTo(ExitProfile.CONVICTION);
+            assertThat(e.chandelierLevel()).isNull();
+            assertThat(e.chandelierBreach()).isFalse();
+            assertThat(e.softConfirmCount()).isZero();
+            assertThat(e.killCriteriaBreached()).isEmpty();
+            assertThat(e.tranche2Eligible()).isFalse();
+        });
+        verify(positionRepo).updateMaintenance(eq(1L), any(), any(), eq(0), any(), any(), any());
     }
 }

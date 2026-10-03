@@ -1430,8 +1430,15 @@ the LLM, which owns only the soft judgment call. Every call to
    `executor_position.kill_close_below`), then giveback (`GIVEBACK_BREACH`) —
    the first match names the `decision_log` reason code and no later check
    runs. Free-text `kill_criteria` are never parsed here (since exec-v0.9);
-   they stay LLM context. Each run logs one INFO line
-   `kill levels evaluated: n of m filled positions (breached: k)`.
+   they stay LLM context. For exit profile CONVICTION (`exec-v1.0`) the order
+   is: a flagged catastrophe first — evaluated before the missing-close skip,
+   full flatten, `HARD_CATASTROPHE`, `close`/`current_r` null when there is no
+   price — then the stop (emergency stop or trail), then the target-half
+   (`HARD_TARGET_HALF`: no half-sale yet, no trim pending, close ≥ entry × 1.30
+   → a 0.5 partial exit through `PartialExitService`, the position stays
+   open). Kill level and giveback are STANDARD only; CONVICTION rows carry no
+   soft trigger. Each run logs one INFO line
+   `kill levels evaluated: n of m filled positions (breached: k); catastrophe flagged: c, targets hit: t`.
 3. **`StopRatchetService`** — ratchets the active stop up to the chandelier
    level (`dracul.executor.chandelier-mult` × ATR below the highest price
    reached), never down. The broker confirms the modify before the book is

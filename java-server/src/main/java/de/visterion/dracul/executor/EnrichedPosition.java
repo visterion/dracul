@@ -43,5 +43,8 @@ public record EnrichedPosition(
         BigDecimal killCloseBelow,
         /** Why place-entry did not arm the hunter's level: {@code too_tight} or
          *  {@code breached_at_adoption}; null when nothing was dropped. */
-        String killCloseBelowDropped) {
+        String killCloseBelowDropped,
+        /** Exit lifecycle (V52). CONVICTION rows are code-managed: no soft trigger, no tranche 2,
+         *  exit_position answers PROFILE_MANAGED. */
+        ExitProfile exitProfile) {
 }

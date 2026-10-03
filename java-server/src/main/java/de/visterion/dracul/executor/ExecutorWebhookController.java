@@ -1887,6 +1887,10 @@ public class ExecutorWebhookController {
                 node.put("kill_close_below_dropped", p.killCloseBelowDropped());
             }
             node.put("trim_count", p.trimCount());
+            // Exit profile (spec 2026-10-03 §5.1). A CONVICTION row is code-managed: never call
+            // exit_position or add_tranche for it.
+            node.put("exit_profile", p.exitProfile() == null
+                    ? ExitProfile.STANDARD.name() : p.exitProfile().name());
             node.put("suggested_fraction", p.suggestedFraction());
 
             Map<String, Object> softTrigger = new LinkedHashMap<>();

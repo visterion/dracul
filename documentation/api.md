@@ -2593,7 +2593,7 @@ pipeline. Response:
     "atr_short": 5.1,
     "chandelier_level": 138.90, "r_current": 1.98, "mfe_r": 2.30,
     "days_held": 6, "kill_criteria": ["..."], "kill_close_below": 136.50,
-    "trim_count": 0, "suggested_fraction": 0.33,
+    "trim_count": 0, "suggested_fraction": 0.33, "exit_profile": "STANDARD",
     "soft_trigger": { "chandelier_breach": false, "ma_break": false, "confirm_count": 1,
       "kill_criteria_breached": [] },
     "tranche2": { "eligible": true, "reason": "R_CONFIRMED" } }
@@ -2616,6 +2616,10 @@ expiry.
 ladder (see below): `suggested_fraction` is the code-computed ladder floor
 for the position's current `trim_count` (0 → 0.33, 1 → 0.5, ≥2 → 1.0) — the
 minimum `fraction` `exit-position` will accept for a partial exit right now.
+
+`exit_profile` (`STANDARD` | `CONVICTION`): CONVICTION rows are code-managed —
+`exit-position` answers `PROFILE_MANAGED`, `tranche2.eligible` is always false
+and the soft trigger stays empty.
 
 `soft_trigger.confirm_count` is the number of consecutive runs a soft-exit
 condition (`chandelier_breach` or `ma_break`) has held; the LLM is expected
