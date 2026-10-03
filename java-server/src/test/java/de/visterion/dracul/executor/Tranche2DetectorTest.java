@@ -219,4 +219,22 @@ class Tranche2DetectorTest {
 
         assertThat(status.eligible()).isFalse();
     }
+
+    /** Spec 2026-10-03 §5.6 (R1 Minor 2): one gate for the prompt path AND /tools/add-tranche —
+     *  a CONVICTION position is never tranche-2 eligible, neither at +40 % (R_CONFIRMED would
+     *  fire at +35 % with a 35 % stop) nor with a reinforcing signal of another mechanism. */
+    @Test
+    void convictionIsNeverEligible() {
+        ExecutorPosition p = ExecutorPositionFixtures.conviction(position(1, "BUY",
+                new BigDecimal("100"), new BigDecimal("65"), new BigDecimal("101"), "SYNA", "OPEN"));
+
+        assertThat(detector.detect(p, new BigDecimal("140"), List.of(), "TECH_CONVICTION")
+                .eligible()).isFalse();
+        assertThat(detector.detect(p, new BigDecimal("101"),
+                List.of(signal("SYNA", "BUY", "PEAD")), "TECH_CONVICTION").eligible()).isFalse();
+        // control: the same row as STANDARD is R_CONFIRMED at +40 %
+        assertThat(detector.detect(ExecutorPositionFixtures.withProfileFields(p,
+                ExitProfile.STANDARD, null, null, null, false), new BigDecimal("140"), List.of(),
+                "TECH_CONVICTION").eligible()).isTrue();
+    }
 }

@@ -45,5 +45,10 @@ public record EntryContext(
          *  signal (key upper-cased), plus {@code "UNRESOLVED"} for positions whose source signal or
          *  mechanism is missing. Same per-position FX rounding as {@link #openExposure()}, so the two
          *  agree at every cap boundary. Read by the MECHANISM_BUDGET veto (5b). */
-        Map<String, BigDecimal> openExposureByMechanism) {
+        Map<String, BigDecimal> openExposureByMechanism,
+        /** Exit profile CONVICTION's fixed per-name notional in INSTRUMENT currency:
+         *  total-budget x position-pct, converted from the account currency exactly like
+         *  {@link #trancheAmount()} (spec 2026-10-03 §5.3, R1 M5). Null when no FX rate exists —
+         *  place-entry then sizes zero shares and rejects SIZE_TOO_SMALL rather than guessing. */
+        BigDecimal convictionNotional) {
 }

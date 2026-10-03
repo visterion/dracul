@@ -73,7 +73,10 @@ public enum RejectReason {
      *  {@link KillLevelGuard} inside place-entry, after the adoption decision and before the
      *  broker call — never on an adopted working order or fill, where it drops the level instead.
      *  TERMINAL: waiting a run does not move a level the hunter authored. */
-    KILL_LEVEL_BREACHED;
+    KILL_LEVEL_BREACHED,
+    /** Exit profile CONVICTION: the fixed notional buys fewer than min-entry-qty shares — a
+     *  position that can never be half-sold. Terminal. */
+    SIZE_TOO_SMALL;
 
     /**
      * Transient = temporary rate/capacity caps, plus the data outage. Transient means: <b>this

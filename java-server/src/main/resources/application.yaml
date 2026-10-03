@@ -371,6 +371,18 @@ dracul:
     ratchet-retry-backoff-ms: ${DRACUL_EXECUTOR_RATCHET_RETRY_BACKOFF_MS:500}
     ratchet-retry-budget-ms: ${DRACUL_EXECUTOR_RATCHET_RETRY_BUDGET_MS:20000}
     notify-enabled: ${DRACUL_EXECUTOR_NOTIFY_ENABLED:true}
+    # Exit profile CONVICTION (strigoi-tech basket, spec 2026-10-03 §5.2). The per-name size is
+    # dracul.strigoi.tech.position-pct (one key, read by executor and hunter).
+    profiles:
+      conviction:
+        emergency-stop-pct: ${DRACUL_EXECUTOR_CONVICTION_EMERGENCY_STOP_PCT:0.35}
+        target-pct: ${DRACUL_EXECUTOR_CONVICTION_TARGET_PCT:0.30}
+        target-fraction: ${DRACUL_EXECUTOR_CONVICTION_TARGET_FRACTION:0.5}
+        trail-pct: ${DRACUL_EXECUTOR_CONVICTION_TRAIL_PCT:0.30}
+        min-entry-qty: ${DRACUL_EXECUTOR_CONVICTION_MIN_ENTRY_QTY:2}
+        # Saxo rejects a bracket leg beyond its proximity band at entry (SIM 2026-10-03: -20 %
+        # accepted, -25 % rejected); the leg starts here and is widened after the fill.
+        entry-broker-stop-pct: ${DRACUL_EXECUTOR_CONVICTION_ENTRY_BROKER_STOP_PCT:0.20}
   depots:
     agora-base-url: ${DRACUL_DEPOTS_AGORA_BASE_URL:http://agora:8080}
     agora-readonly-token: ${DRACUL_DEPOTS_AGORA_READONLY_TOKEN:}

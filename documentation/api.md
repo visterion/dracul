@@ -2321,10 +2321,13 @@ Response:
 ```json
 { "output": { "signals": [
   { "signal_id": "...", "symbol": "ACME", "direction": "LONG",
-    "mechanism": "...", "kill_criteria": ["..."], "kill_close_below": 131.00, "horizon": "3m",
+    "mechanism": "...", "exit_profile": "STANDARD", "kill_criteria": ["..."],
+    "kill_close_below": 131.00, "horizon": "3m",
     "atr": 4.2, "swing_low": 138.00, "reference_price": 142.50 }
 ] } }
 ```
+
+`exit_profile` is derived from `mechanism` (`TECH_CONVICTION` ⇒ `CONVICTION`).
 
 ### `POST /api/executor/tools/get-account`
 
@@ -2373,6 +2376,13 @@ it is passed through unchanged. Agora's `place_bracket` accepts a bracket of
 entry + stop alone. The strategy's real exits are the trailing chandelier /
 giveback stops, not a fixed target.
 
+For a signal whose mechanism is `TECH_CONVICTION` (exit profile CONVICTION)
+the server ignores `stop_price` and `take_profit`: the logical stop is entry
+× (1 − `emergency-stop-pct`), there is never a take-profit leg, the broker
+leg starts at entry × (1 − `entry-broker-stop-pct`), and qty is the profile
+notional / entry. `order_json` records `exit_profile`, `stop_source`,
+`broker_stop_narrow`, `profile_notional`.
+
 The **order-price basis** used throughout (sizing, stop-window check,
 position booking) is a single value: `limit_price` when the LLM supplies one,
 otherwise the freshly assembled current close (`EntryContext.price()`) — never
@@ -2417,6 +2427,7 @@ and for order-guard rejections it is the veto trace plus an
 | `TRANCHE_TOO_SMALL` | `ExecutorWebhookController` | `PositionSizer` computed a zero quantity (tranche amount doesn't buy even one share at the order price) |
 | `RISK_TOO_WIDE` | `ExecutorWebhookController` | The protective stop distance in account currency exceeds the per-trade risk budget (`dracul.executor.total-budget` × `dracul.executor.risk-pct`), so `PositionSizer` computed a zero risk-capped quantity. Terminal — a fresh signal with a tighter stop is a new signal |
 | `KILL_LEVEL_BREACHED` | `ExecutorWebhookController` (`KillLevelGuard`) | The signal's `kill_close_below` is at or above the fresh entry's order price — the thesis would be dead on arrival. Evaluated after the adoption decision and before the broker call; never on an adopted working order or fill (there the level is dropped as `breached_at_adoption`). Terminal |
+| `SIZE_TOO_SMALL` | `ExecutorWebhookController` | Exit profile CONVICTION: the fixed profile notional buys fewer than `min-entry-qty` shares (a position that can never be half-sold). Terminal |
 | `NO_STOP` | `OrderGuard` | `stop_price` missing/non-positive, on the wrong side of the order price for `side`, or outside the sizer-computed stop window |
 | `NON_SIM_CONNECTION` | `OrderGuard` | The configured connection is not the allowed (paper) connection — not reachable through this controller today since `place-entry` always trades on the server-fixed `dracul.executor.connection`, but enforced defensively |
 | `DUPLICATE` | `ExecutorWebhookController` | Four distinct uses, all idempotency: (a) the signal is no longer `PENDING` — checked before vetos/order guard, no broker call, no signal-status change; (b) a **working** broker order already exists under the signal's clientRef and is adopted instead of re-placed; (c) a **filled** broker order under the clientRef is adopted as a position (see the adoption decision table below); (d) the book already carries this signal's OPEN row and only its statuses are repaired |

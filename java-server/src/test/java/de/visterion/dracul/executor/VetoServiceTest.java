@@ -163,7 +163,7 @@ class VetoServiceTest {
                     candidateSector, openPositions, activeCooldowns, pendingSignals,
                     entriesThisWeek, signalAgeTradingDays, trancheAmount, totalBudget,
                     openExposure, openHeat, openMechanisms, fxToAccount, missing, quoteCurrency,
-                    null, atr, openExposureByMechanism);
+                    null, atr, openExposureByMechanism, null);
         }
     }
 

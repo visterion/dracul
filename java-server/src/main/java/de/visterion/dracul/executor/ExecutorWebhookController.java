@@ -134,6 +134,7 @@ public class ExecutorWebhookController {
     private final double riskPct;
     /** Period of the short ATR window, for the {@code stop_basis} audit label. */
     private final int atrShortPeriod;
+    private final ConvictionProfile convictionProfile;
 
     @Autowired
     public ExecutorWebhookController(
@@ -186,7 +187,8 @@ public class ExecutorWebhookController {
             @Value("${dracul.executor.max-broker-stop-pct:0.20}") java.math.BigDecimal maxBrokerStopPct,
             @Value("${dracul.executor.risk-pct:0.005}") double riskPct,
             @Value("${dracul.executor.atr-short-period:5}") int atrShortPeriod,
-            MechanismBudget mechanismBudget) {
+            MechanismBudget mechanismBudget,
+            ConvictionProfile convictionProfile) {
         this(signalRepo, positionRepo, legRepo, decisionRepo, vetoService, orderGuard, gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper, assembler, sizer, ranker,
                 tranche2Detector, telegram, executorNotifier, positionContextRepo, patternRepo, webhookToken, connection, minConfidence,
@@ -195,7 +197,7 @@ public class ExecutorWebhookController {
                 entryGtdDays, maxBrokerAttempts, brokerAttemptWindowHours, maxBrokerCallsPerRun,
                 driftAnchorAtrMult, valueAnchorAtrMult, instrumentCurrency,
                 brokerStopBufferAtr, maxBrokerStopPct, riskPct, atrShortPeriod, mechanismBudget,
-                Clock.systemUTC());
+                convictionProfile, Clock.systemUTC());
     }
 
     /** Package-private overload with an injectable {@link Clock}, so tests can assert
@@ -251,6 +253,7 @@ public class ExecutorWebhookController {
             double riskPct,
             int atrShortPeriod,
             MechanismBudget mechanismBudget,
+            ConvictionProfile convictionProfile,
             Clock clock) {
 
         this.signalRepo = signalRepo;
@@ -282,6 +285,7 @@ public class ExecutorWebhookController {
         this.maxBrokerStopPct = maxBrokerStopPct;
         this.riskPct = riskPct;
         this.atrShortPeriod = atrShortPeriod;
+        this.convictionProfile = convictionProfile;
         this.verifier = new BearerTokenVerifier(webhookToken);
         this.assembler = assembler;
         this.sizer = sizer;
@@ -325,6 +329,7 @@ public class ExecutorWebhookController {
             node.put("symbol", s.symbol());
             node.put("direction", s.direction());
             node.put("mechanism", s.mechanism());
+            node.put("exit_profile", ExitProfile.fromMechanism(s.mechanism()).name());
             node.put("kill_criteria", s.killCriteria());
             // The hunter's structured thesis-death level (raw; place-entry may still refuse or
             // drop it). Null when the hunter set none.
@@ -818,6 +823,23 @@ public class ExecutorWebhookController {
                 .setScale(4, java.math.RoundingMode.HALF_UP);
     }
 
+    /** Exit profile CONVICTION sizing (spec 2026-10-03 §5.3): a fixed notional per basket name,
+     *  NOT risk/stop distance — qty = floor(notional / entry). {@code notional} is already in
+     *  INSTRUMENT currency ({@link EntryContext#convictionNotional()}); null (no FX) sizes zero
+     *  shares and is rejected SIZE_TOO_SMALL rather than guessed. The risk figure is the audit
+     *  record only — HEAT_LIMIT is skipped for this profile. */
+    static Sizing convictionSizing(String side, BigDecimal entry, BigDecimal stop,
+            BigDecimal notional, BigDecimal fxToAccount) {
+        BigDecimal qty = notional == null || notional.signum() <= 0
+                ? BigDecimal.ZERO : notional.divide(entry, 0, RoundingMode.FLOOR);
+        BigDecimal rPerShare = "SELL".equalsIgnoreCase(side)
+                ? stop.subtract(entry) : entry.subtract(stop);
+        BigDecimal fx = fxToAccount == null ? BigDecimal.ONE : fxToAccount;
+        BigDecimal risk = qty.multiply(rPerShare).multiply(fx).setScale(4, RoundingMode.HALF_UP);
+        return new Sizing(qty, rPerShare, risk, null, null, true,
+                "profile CONVICTION: emergency stop", qty, null, "PROFILE_NOTIONAL", null);
+    }
+
     /** {@code latency.signal_to_decision_seconds}, omitted entirely (null) when the signal's
      *  {@code createdAt} is missing or unparseable rather than guessed. */
     private ObjectNode latencyNode(String signalCreatedAt, Instant now) {
@@ -989,6 +1011,10 @@ public class ExecutorWebhookController {
 
         EntryContext ctx = assembler.assemble(signal);
 
+        // Exit profile of THIS entry, derived from the signal's mechanism (spec 2026-10-03 §5.1).
+        ExitProfile profile = ExitProfile.fromMechanism(signal.mechanism());
+        boolean conviction = profile == ExitProfile.CONVICTION;
+
         // -----------------------------------------------------------------
         // Row 0a (case A′) — BEFORE the veto pass, deliberately.
         //
@@ -1044,6 +1070,7 @@ public class ExecutorWebhookController {
         // sizing. Null only on the DATA_UNAVAILABLE placeholder path below, which the veto
         // short-circuits before anything reads it.
         BrokerStop.Result brokerStopResult = null;
+        boolean brokerStopNarrow = false;
         if (ctx.missing() == null || ctx.missing().isEmpty()) {
             // Risk layer is authoritative over the stop. Compute the sizer's stop window (pure fn
             // of side/price/ATR/swing-low, independent of the proposed stop) from the ROUNDED
@@ -1054,50 +1081,79 @@ public class ExecutorWebhookController {
             orderPrice = limitPrice != null ? limitPrice : ctx.price();
             orderPriceRounded = TickSize.roundEntry(side, orderPrice);
 
-            window = sizer.stopWindow(side, orderPriceRounded, ctx.atrEff(), ctx.swingLow());
-
-            // orderPriceRounded, not orderPrice: StopWindowRounding rule 2 requires the window to
-            // come from the SAME price size() below is called with. This call site is the only
-            // remaining place that rule can still be broken (StopWindowRounding itself cannot mix
-            // prices — it only ever takes one). See
-            // placeEntry_stopWindowRule2Regression_buy/_sell in the controller test suite, which
-            // fails under a mutation back to `orderPrice` here even though the whole rest of the
-            // suite stays green.
-            StopWindowRounding.Result stopResult = StopWindowRounding.compute(
-                    side, orderPriceRounded, ctx.atrEff(), ctx.swingLow(), stopPrice, sizer);
-            stopPrice = stopResult.stop();          // authoritative stop used by guard, booking, take-profit
-            roundedStopMin = stopResult.stopMin();
-            roundedStopMax = stopResult.stopMax();
-            stopClamped = stopResult.clamped();
-
-            sizing = sizer.size(side, orderPriceRounded, ctx.atrEff(), ctx.swingLow(), stopPrice,
-                    ctx.trancheAmount(), ctx.fxToAccount(), riskBudgetAccountCcy(), atrLabel(ctx));
-            // Immediately after sizing, from side / logical stop / atrEff / entry price. The sizer
-            // never sees this value and nothing feeds it back: the book's risk, the heat veto and
-            // the hard trigger all reason about the LOGICAL stop.
-            // A null stop can only come from a broken (null-bounds) server window, which
-            // OrderGuard rejects as NO_STOP below — long before the bracket is built. Leaving the
-            // result null here keeps BrokerStop's "logicalStop is never null" contract intact
-            // instead of teaching it to swallow a value that must not exist.
-            if (stopPrice != null) {
-                brokerStopResult = BrokerStop.forEntry(side, stopPrice, ctx.atrEff(),
-                        brokerStopBufferAtr, orderPriceRounded, maxBrokerStopPct);
-            }
-            if (takeProfit != null) {
-                takeProfit = TickSize.roundTarget(side, takeProfit);
-                // Rounding moves the target toward the entry (roundTarget: BUY floors, SELL
-                // ceilings); on a target already close to the entry this can collapse it onto or
-                // through orderPriceRounded (e.g. BUY entry 96.41, target 96.418 -> 96.41). A
-                // target at or past the entry is not a valid bracket leg — omit it rather than
-                // send a degenerate/invalid target (mirrors the "No synthetic take-profit"
-                // philosophy documented below at the guard/booking step: better absent than
-                // broken).
-                boolean collapsed = "BUY".equals(side)
-                        ? takeProfit.compareTo(orderPriceRounded) <= 0
-                        : takeProfit.compareTo(orderPriceRounded) >= 0;
-                if (collapsed) {
+            if (conviction) {
+                // Exit profile CONVICTION (spec 2026-10-03 §5.3). The logical stop is the profile's
+                // emergency stop: the LLM's proposal, StopWindowRounding's clamp and — through the
+                // null bounds handed to OrderGuard below — the stop-window check do not apply. A
+                // −35 % stop is far outside any 3-ATR window; without the bypass every CONVICTION
+                // entry would end REJECTED/NO_STOP (R1 M3). OrderGuard still checks the side.
+                stopPrice = convictionProfile.emergencyStop(side, orderPriceRounded);
+                log.info("place_entry {} {}: stop_source=profile, logical stop {} (LLM proposed {})",
+                        signalId, signal.symbol(), stopPrice.toPlainString(),
+                        proposedStop == null ? "none" : proposedStop.toPlainString());
+                sizing = convictionSizing(side, orderPriceRounded, stopPrice,
+                        ctx.convictionNotional(), ctx.fxToAccount());
+                // The broker rejects a bracket leg beyond its proximity band at entry (SIM
+                // 2026-10-03: −20 % accepted, −25 % rejected). The leg starts at the band and the
+                // row is flagged broker_stop_narrow until the leg is widened after the fill.
+                BigDecimal leg = convictionProfile.entryBrokerStop(side, orderPriceRounded, stopPrice);
+                brokerStopNarrow = leg.compareTo(stopPrice) != 0;
+                brokerStopResult = new BrokerStop.Result(leg, false, brokerStopNarrow, false);
+                if (takeProfit != null) {
+                    // A target leg makes the half-sale fail (LEG_RESTORE_UNSUPPORTED_OCO) and a
+                    // target fill would close the whole position (R1 M4).
+                    log.info("place_entry {} {}: take_profit {} dropped — exit profile CONVICTION "
+                                    + "never carries a target leg",
+                            signalId, signal.symbol(), takeProfit.toPlainString());
                     takeProfit = null;
                     takeProfitDropped = true;
+                }
+            } else {
+                window = sizer.stopWindow(side, orderPriceRounded, ctx.atrEff(), ctx.swingLow());
+
+                // orderPriceRounded, not orderPrice: StopWindowRounding rule 2 requires the window to
+                // come from the SAME price size() below is called with. This call site is the only
+                // remaining place that rule can still be broken (StopWindowRounding itself cannot mix
+                // prices — it only ever takes one). See
+                // placeEntry_stopWindowRule2Regression_buy/_sell in the controller test suite, which
+                // fails under a mutation back to `orderPrice` here even though the whole rest of the
+                // suite stays green.
+                StopWindowRounding.Result stopResult = StopWindowRounding.compute(
+                        side, orderPriceRounded, ctx.atrEff(), ctx.swingLow(), stopPrice, sizer);
+                stopPrice = stopResult.stop();          // authoritative stop used by guard, booking, take-profit
+                roundedStopMin = stopResult.stopMin();
+                roundedStopMax = stopResult.stopMax();
+                stopClamped = stopResult.clamped();
+
+                sizing = sizer.size(side, orderPriceRounded, ctx.atrEff(), ctx.swingLow(), stopPrice,
+                        ctx.trancheAmount(), ctx.fxToAccount(), riskBudgetAccountCcy(), atrLabel(ctx));
+                // Immediately after sizing, from side / logical stop / atrEff / entry price. The sizer
+                // never sees this value and nothing feeds it back: the book's risk, the heat veto and
+                // the hard trigger all reason about the LOGICAL stop.
+                // A null stop can only come from a broken (null-bounds) server window, which
+                // OrderGuard rejects as NO_STOP below — long before the bracket is built. Leaving the
+                // result null here keeps BrokerStop's "logicalStop is never null" contract intact
+                // instead of teaching it to swallow a value that must not exist.
+                if (stopPrice != null) {
+                    brokerStopResult = BrokerStop.forEntry(side, stopPrice, ctx.atrEff(),
+                            brokerStopBufferAtr, orderPriceRounded, maxBrokerStopPct);
+                }
+                if (takeProfit != null) {
+                    takeProfit = TickSize.roundTarget(side, takeProfit);
+                    // Rounding moves the target toward the entry (roundTarget: BUY floors, SELL
+                    // ceilings); on a target already close to the entry this can collapse it onto or
+                    // through orderPriceRounded (e.g. BUY entry 96.41, target 96.418 -> 96.41). A
+                    // target at or past the entry is not a valid bracket leg — omit it rather than
+                    // send a degenerate/invalid target (mirrors the "No synthetic take-profit"
+                    // philosophy documented below at the guard/booking step: better absent than
+                    // broken).
+                    boolean collapsed = "BUY".equals(side)
+                            ? takeProfit.compareTo(orderPriceRounded) <= 0
+                            : takeProfit.compareTo(orderPriceRounded) >= 0;
+                    if (collapsed) {
+                        takeProfit = null;
+                        takeProfitDropped = true;
+                    }
                 }
             }
         } else {
@@ -1142,6 +1198,21 @@ public class ExecutorWebhookController {
                         "contradiction pair with " + signalId, null, runId, null));
             }
 
+            return ResponseEntity.ok(Map.of("output",
+                    Map.of("placed", false, "reason", reason, "veto_trace", vetoTrace)));
+        }
+
+        if (conviction && sizing.qty().compareTo(BigDecimal.valueOf(convictionProfile.minEntryQty())) < 0) {
+            // A position this small can never be half-sold: the broker floors the fraction
+            // (QTY_ROUNDED_TO_ZERO), so the profile's target-half could never fire (R1 Minor 4).
+            String reason = RejectReason.SIZE_TOO_SMALL.name();
+            decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
+                    reason, vetoTrace, "rejected: " + reason + " (qty " + sizing.qty().toPlainString()
+                            + " < min-entry-qty " + convictionProfile.minEntryQty() + ")",
+                    null, runId, null));
+            signalRepo.markStatus(signalId, "REJECTED");
+            logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT",
+                    reason, null, confidence, clock.instant(), null, null);
             return ResponseEntity.ok(Map.of("output",
                     Map.of("placed", false, "reason", reason, "veto_trace", vetoTrace)));
         }
@@ -1455,6 +1526,18 @@ public class ExecutorWebhookController {
                     killResult.droppedReason(), killResult.basis());
         }
 
+        // broker_stop_narrow: the protective leg rests TIGHTER than the logical stop (spec §5.3).
+        // A fresh CONVICTION bracket starts at the band; an adopted fill is narrow when the leg it
+        // bound rests on the market side of the logical stop.
+        boolean bookedNarrow;
+        if (adoptedFill != null) {
+            BigDecimal boundLeg = adoptedStopLeg == null ? null : adoptedStopLeg.stopPrice();
+            bookedNarrow = conviction && boundLeg != null && ("buy".equalsIgnoreCase(entrySide)
+                    ? boundLeg.compareTo(stopPrice) > 0 : boundLeg.compareTo(stopPrice) < 0);
+        } else {
+            bookedNarrow = brokerStopNarrow;
+        }
+
         try {
             long positionId;
             if (adoptedFill != null) {
@@ -1477,7 +1560,7 @@ public class ExecutorWebhookController {
                         (adoptedFill.filledAt() != null ? adoptedFill.filledAt() : clock.instant())
                                 .toString(),
                         killResult.effectiveLevel(), killResult.droppedReason(),
-                        ExitProfile.fromMechanism(signal.mechanism()), null, null, null, false));
+                        profile, null, null, null, bookedNarrow));
                 // No setEntryExpiresAt: the entry is already filled, and
                 // findOpenUnfilledPastExpiry filters on entry_expires_at IS NOT NULL only.
                 if (adoptedStopLeg == null) {
@@ -1516,7 +1599,7 @@ public class ExecutorWebhookController {
                         orderPriceRounded, null, null, null, false,
                         brokerStopResult.price(), null,
                         killResult.effectiveLevel(), killResult.droppedReason(),
-                        ExitProfile.fromMechanism(signal.mechanism()), null, null, null, false));
+                        profile, null, null, null, bookedNarrow));
 
                 positionRepo.setEntryExpiresAt(positionId, entryExpiry(clock.instant(), entryGtdDays));
             }
@@ -1575,6 +1658,10 @@ public class ExecutorWebhookController {
                 orderJson.put("qty_notional", sizing.qtyNotional());
                 orderJson.put("qty_risk", sizing.qtyRisk());
                 orderJson.put("sizing_basis", sizing.sizingBasis());
+                orderJson.put("exit_profile", profile.name());
+                orderJson.put("stop_source", conviction ? "profile" : "llm_window");
+                orderJson.put("broker_stop_narrow", bookedNarrow);
+                if (conviction) orderJson.put("profile_notional", ctx.convictionNotional());
                 orderJson.put("reject_cause",
                         sizing.rejectCause() == null ? null : sizing.rejectCause().name());
                 orderJson.put("risk_pct", riskPct);

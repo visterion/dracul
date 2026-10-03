@@ -97,7 +97,7 @@ class TrancheCurrencyInvariantTest {
                 new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
                 2, 3, 72, 2, 0.0, 3.0, "USD",
                 java.math.BigDecimal.ONE, new java.math.BigDecimal("0.20"), 0.01, 5,
-                MechanismBudget.none(), fixedClock);
+                MechanismBudget.none(), ConvictionProfile.defaults(), fixedClock);
     }
 
     private JsonNode json(String s) {
@@ -121,7 +121,7 @@ class TrancheCurrencyInvariantTest {
                 new BigDecimal("100"), new BigDecimal("2"), null, new BigDecimal("500000"),
                 new BigDecimal("101"), "TECH", List.of(), List.of(), List.of(), 0, 0L,
                 new BigDecimal("1000"), new BigDecimal("10000"), BigDecimal.ZERO, BigDecimal.ZERO,
-                Map.of(), BigDecimal.ONE, List.of(), quoteCurrency, null, new BigDecimal("2"), Map.of());
+                Map.of(), BigDecimal.ONE, List.of(), quoteCurrency, null, new BigDecimal("2"), Map.of(), null);
     }
 
     @Test

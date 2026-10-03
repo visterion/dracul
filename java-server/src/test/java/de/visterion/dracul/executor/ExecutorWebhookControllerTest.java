@@ -122,7 +122,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
                 2, 3, 72, 2, 0.0, 3.0, "USD",
                 BUFFER_ONE, MAX_BROKER_STOP_PCT, 0.01, 5, mechanismBudget,
-                fixedClock);
+                ConvictionProfile.defaults(), fixedClock);
     }
 
     /** The identity wiring (buffer 0): the bracket then carries the logical stop VERBATIM, so a
@@ -148,7 +148,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("10000"), 10, heatPct, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
                 2, 3, 72, 2, 0.0, 3.0, "USD",
                 bufferAtr, MAX_BROKER_STOP_PCT, riskPct, 5, MechanismBudget.none(),
-                fixedClock);
+                ConvictionProfile.defaults(), fixedClock);
     }
 
     /** EntryContext with an explicit short ATR, so atrEff = max(atr, atrShort) differs from atr. */
@@ -159,7 +159,7 @@ class ExecutorWebhookControllerTest {
                 c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
                 c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
                 c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
-                c.missing(), c.quoteCurrency(), atrShort, atrEff, c.openExposureByMechanism());
+                c.missing(), c.quoteCurrency(), atrShort, atrEff, c.openExposureByMechanism(), null);
     }
 
     /** The ENTER row (the one carrying order_json), out of however many decision_log rows the
@@ -204,7 +204,7 @@ class ExecutorWebhookControllerTest {
                 Map.of(),
                 BigDecimal.ONE,
                 List.of(),
-                "USD", null, new BigDecimal("2"), Map.of());
+                "USD", null, new BigDecimal("2"), Map.of(), null);
     }
 
     private static EntryContext withMissing(EntryContext c, List<String> missing) {
@@ -212,7 +212,7 @@ class ExecutorWebhookControllerTest {
                 c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
                 c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
                 c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
-                missing, c.quoteCurrency(), c.atrShort(), c.atrEff(), c.openExposureByMechanism());
+                missing, c.quoteCurrency(), c.atrShort(), c.atrEff(), c.openExposureByMechanism(), null);
     }
 
     private static EntryContext withOpenPositions(EntryContext c, List<ExecutorPosition> positions) {
@@ -220,7 +220,7 @@ class ExecutorWebhookControllerTest {
                 c.dayHigh(), c.candidateSector(), positions, c.activeCooldowns(),
                 c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
                 c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
-                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff(), c.openExposureByMechanism());
+                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff(), c.openExposureByMechanism(), null);
     }
 
     /**
@@ -242,7 +242,7 @@ class ExecutorWebhookControllerTest {
                 c.totalBudget(), c.openExposure(), c.openHeat(),
                 Map.of(own.symbol(), "mechanism"), c.fxToAccount(),
                 c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff(),
-                c.openExposureByMechanism());
+                c.openExposureByMechanism(), null);
     }
 
     private static EntryContext withEntriesThisWeek(EntryContext c, int entriesThisWeek) {
@@ -250,7 +250,7 @@ class ExecutorWebhookControllerTest {
                 c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
                 c.pendingSignals(), entriesThisWeek, c.signalAgeTradingDays(), c.trancheAmount(),
                 c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
-                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff(), c.openExposureByMechanism());
+                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff(), c.openExposureByMechanism(), null);
     }
 
     private static EntryContext withPendingSignals(EntryContext c, List<ExecutorSignal> pending) {
@@ -258,7 +258,7 @@ class ExecutorWebhookControllerTest {
                 c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
                 pending, c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
                 c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
-                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff(), c.openExposureByMechanism());
+                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff(), c.openExposureByMechanism(), null);
     }
 
     private static EntryContext withSignalAge(EntryContext c, long ageTradingDays) {
@@ -266,7 +266,7 @@ class ExecutorWebhookControllerTest {
                 c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
                 c.pendingSignals(), c.entriesThisWeek(), ageTradingDays, c.trancheAmount(),
                 c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
-                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff(), c.openExposureByMechanism());
+                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff(), c.openExposureByMechanism(), null);
     }
 
     private static EntryContext withTrancheAmount(EntryContext c, BigDecimal trancheAmount) {
@@ -274,7 +274,7 @@ class ExecutorWebhookControllerTest {
                 c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
                 c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), trancheAmount,
                 c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
-                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff(), c.openExposureByMechanism());
+                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff(), c.openExposureByMechanism(), null);
     }
 
     /** Also raises adv20Notional to keep the LIQUIDITY veto's adv-multiple check satisfied
@@ -289,7 +289,7 @@ class ExecutorWebhookControllerTest {
                 withTranche.activeCooldowns(), withTranche.pendingSignals(), withTranche.entriesThisWeek(),
                 withTranche.signalAgeTradingDays(), withTranche.trancheAmount(), withTranche.totalBudget(),
                 withTranche.openExposure(), withTranche.openHeat(), withTranche.openMechanisms(),
-                withTranche.fxToAccount(), withTranche.missing(), withTranche.quoteCurrency(), withTranche.atrShort(), withTranche.atrEff(), withTranche.openExposureByMechanism());
+                withTranche.fxToAccount(), withTranche.missing(), withTranche.quoteCurrency(), withTranche.atrShort(), withTranche.atrEff(), withTranche.openExposureByMechanism(), null);
     }
 
     private static EntryContext withPrice(EntryContext c, BigDecimal price) {
@@ -297,7 +297,7 @@ class ExecutorWebhookControllerTest {
                 c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
                 c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
                 c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
-                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff(), c.openExposureByMechanism());
+                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff(), c.openExposureByMechanism(), null);
     }
 
     private static EntryContext withPriceAndAtr(EntryContext c, BigDecimal price, BigDecimal atr) {
@@ -305,7 +305,7 @@ class ExecutorWebhookControllerTest {
                 c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
                 c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
                 c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
-                c.missing(), c.quoteCurrency(), null, atr, c.openExposureByMechanism());
+                c.missing(), c.quoteCurrency(), null, atr, c.openExposureByMechanism(), null);
     }
 
     private static EntryContext withExposureByMechanism(EntryContext c, Map<String, BigDecimal> openExposureByMechanism) {
@@ -313,7 +313,7 @@ class ExecutorWebhookControllerTest {
                 c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
                 c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
                 c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
-                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff(), openExposureByMechanism);
+                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff(), openExposureByMechanism, null);
     }
 
     private static EntryContext withOpenHeat(EntryContext c, BigDecimal openHeat) {
@@ -321,13 +321,13 @@ class ExecutorWebhookControllerTest {
                 c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
                 c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
                 c.totalBudget(), c.openExposure(), openHeat, c.openMechanisms(), c.fxToAccount(),
-                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff(), c.openExposureByMechanism());
+                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff(), c.openExposureByMechanism(), null);
     }
 
     private static EntryContext unavailableContext() {
         return new EntryContext(null, null, null, null, null, null, null,
                 List.of(), List.of(), List.of(), 0, -1L, null, null, null, null,
-                Map.of(), BigDecimal.ONE, List.of("price", "atr"), "USD", null, null, Map.of());
+                Map.of(), BigDecimal.ONE, List.of("price", "atr"), "USD", null, null, Map.of(), null);
     }
 
     /** Like {@link #unavailableContext()}, but with a real, stale signal age (6 trading days,
@@ -337,7 +337,7 @@ class ExecutorWebhookControllerTest {
     private static EntryContext staleUnavailableContext() {
         return new EntryContext(null, null, null, null, null, null, null,
                 List.of(), List.of(), List.of(), 0, 6L, null, null, null, null,
-                Map.of(), BigDecimal.ONE, List.of("sector"), "USD", null, null, Map.of());
+                Map.of(), BigDecimal.ONE, List.of("sector"), "USD", null, null, Map.of(), null);
     }
 
     private ExecutorPosition openPosition(long id, String symbol, String side,
@@ -447,7 +447,7 @@ class ExecutorWebhookControllerTest {
                 "tkn", "depot-1", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
                 2, 3, 72, 2, 0.0, 3.0, "USD",
-                BUFFER_ONE, MAX_BROKER_STOP_PCT, 0.01, 5, MechanismBudget.none(), fixedClock);
+                BUFFER_ONE, MAX_BROKER_STOP_PCT, 0.01, 5, MechanismBudget.none(), ConvictionProfile.defaults(), fixedClock);
     }
 
     /** Builds a controller identical to {@link #controller} but with a lower LIQUIDITY min-price
@@ -463,7 +463,7 @@ class ExecutorWebhookControllerTest {
                 "tkn", "depot-1", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 10, 0.06, 2, minPrice, 200, 5, 1.0, 2, 2,
                 2, 3, 72, 2, 0.0, 3.0, "USD",
-                BUFFER_ONE, MAX_BROKER_STOP_PCT, 0.01, 5, MechanismBudget.none(), fixedClock);
+                BUFFER_ONE, MAX_BROKER_STOP_PCT, 0.01, 5, MechanismBudget.none(), ConvictionProfile.defaults(), fixedClock);
     }
 
     /** Builds a controller identical to {@link #controller} but wired with the REAL
@@ -479,7 +479,7 @@ class ExecutorWebhookControllerTest {
                 "tkn", "depot-1", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
                 2, 3, 72, 2, 0.0, 3.0, "USD",
-                BUFFER_ONE, MAX_BROKER_STOP_PCT, 0.01, 5, MechanismBudget.none(), fixedClock);
+                BUFFER_ONE, MAX_BROKER_STOP_PCT, 0.01, 5, MechanismBudget.none(), ConvictionProfile.defaults(), fixedClock);
     }
 
     /** Builds a controller identical to {@link #controller} but with a caller-supplied
@@ -2574,7 +2574,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("1.399"), base.adv20Notional(), base.dayHigh(), base.candidateSector(),
                 base.openPositions(), base.activeCooldowns(), base.pendingSignals(), base.entriesThisWeek(),
                 base.signalAgeTradingDays(), base.trancheAmount(), base.totalBudget(), base.openExposure(),
-                base.openHeat(), base.openMechanisms(), base.fxToAccount(), base.missing(), base.quoteCurrency(), base.atrShort(), base.atrEff(), base.openExposureByMechanism());
+                base.openHeat(), base.openMechanisms(), base.fxToAccount(), base.missing(), base.quoteCurrency(), base.atrShort(), base.atrEff(), base.openExposureByMechanism(), null);
         when(assembler.assemble(any())).thenReturn(withSwingLow);
         when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
                 .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "s1", OrderStatus.WORKING));
@@ -4390,7 +4390,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("102"), new BigDecimal("2"), null, new BigDecimal("500000"),
                 new BigDecimal("103"), "TECH", List.of(), List.of(), List.of(), 0, 0L,
                 new BigDecimal("750"), new BigDecimal("10000"), BigDecimal.ZERO, BigDecimal.ZERO,
-                Map.of(), BigDecimal.ONE, List.of(), "USD", null, new BigDecimal("2"), Map.of());
+                Map.of(), BigDecimal.ONE, List.of(), "USD", null, new BigDecimal("2"), Map.of(), null);
         when(assembler.assembleForSymbol(any())).thenReturn(ctx);
 
         JsonNode body = json("""
@@ -7497,5 +7497,140 @@ class ExecutorWebhookControllerTest {
         assertThat(a).doesNotContainKey("kill_close_below_dropped");
         assertThat(d.get("kill_close_below")).isNull();
         assertThat(d.get("kill_close_below_dropped")).isEqualTo("too_tight");
+    }
+
+    // -------------------------------------------------------------------
+    // Exit profile CONVICTION at place-entry (spec 2026-10-03 §5.3)
+    // -------------------------------------------------------------------
+
+    private static EntryContext withConvictionNotional(EntryContext c, BigDecimal notional) {
+        return new EntryContext(c.account(), c.price(), c.atr(), c.swingLow(), c.adv20Notional(),
+                c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
+                c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
+                c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
+                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff(), c.openExposureByMechanism(),
+                notional);
+    }
+
+    private ExecutorSignal convictionSignal(String signalId) {
+        return signal(signalId, 0.9, new BigDecimal("100"), "PENDING", "TECH_CONVICTION");
+    }
+
+    /** P1 #6 (†): the LLM's stop and take-profit are ignored, the logical stop is entry x 0.65,
+     *  the broker leg rests at the −20 % band, OrderGuard passes, and qty is the FX-converted
+     *  profile notional (363 USD / 100 = 3), not the tranche/risk sizer. */
+    @Test
+    void placeEntry_convictionUsesTheProfileStopNoTakeProfitAndNotionalSizing() {
+        when(signalRepo.findById("sig-1")).thenReturn(convictionSignal("sig-1"));
+        when(assembler.assemble(any())).thenReturn(
+                withConvictionNotional(happyContext(), new BigDecimal("363")));
+        stubFreshPlacement();
+
+        Map<String, Object> output = outputOf(controller.placeEntry(BEARER, "run-c", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95,"take_profit":130}
+                """)));
+
+        assertThat(output.get("placed")).isEqualTo(true);
+        ArgumentCaptor<BracketRequest> req = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), req.capture());
+        assertThat(req.getValue().qty()).isEqualByComparingTo("3");
+        assertThat(req.getValue().stopLossStop()).isEqualByComparingTo("80.00");
+        assertThat(req.getValue().takeProfitLimit()).isNull();
+
+        ExecutorPosition booked = bookedPosition();
+        assertThat(booked.initialStop()).isEqualByComparingTo("65.00");
+        assertThat(booked.activeStop()).isEqualByComparingTo("65.00");
+        assertThat(booked.brokerStop()).isEqualByComparingTo("80.00");
+        assertThat(booked.exitProfile()).isEqualTo(ExitProfile.CONVICTION);
+        assertThat(booked.brokerStopNarrow()).isTrue();
+
+        JsonNode order = enterLog().orderJson();
+        assertThat(order.path("sizing_basis").asString()).isEqualTo("PROFILE_NOTIONAL");
+        assertThat(order.path("stop_source").asString()).isEqualTo("profile");
+        assertThat(order.path("exit_profile").asString()).isEqualTo("CONVICTION");
+        assertThat(order.path("take_profit_dropped").asBoolean()).isTrue();
+        assertThat(order.path("proposed_take_profit").decimalValue()).isEqualByComparingTo("130");
+        assertThat(order.path("broker_stop_narrow").asBoolean()).isTrue();
+        assertThat(order.path("profile_notional").decimalValue()).isEqualByComparingTo("363");
+    }
+
+    /** P1 #7: a 1-share CONVICTION position can never be half-sold — SIZE_TOO_SMALL, terminal,
+     *  no broker call. */
+    @Test
+    void placeEntry_convictionBelowMinEntryQtyIsSizeTooSmall() {
+        when(signalRepo.findById("sig-1")).thenReturn(convictionSignal("sig-1"));
+        when(assembler.assemble(any())).thenReturn(
+                withConvictionNotional(happyContext(), new BigDecimal("150")));
+
+        Map<String, Object> output = outputOf(controller.placeEntry(BEARER, "run-c", json(BUY_BODY)));
+
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("SIZE_TOO_SMALL");
+        verify(gateway, never()).placeBracket(any(), any());
+        verify(signalRepo).markStatus("sig-1", "REJECTED");
+        assertThat(signalRow("REJECT").reasonCode()).isEqualTo("SIZE_TOO_SMALL");
+    }
+
+    /** A null notional (no FX) is never guessed: it sizes to zero and is SIZE_TOO_SMALL. */
+    @Test
+    void placeEntry_convictionWithoutNotionalIsSizeTooSmall() {
+        when(signalRepo.findById("sig-1")).thenReturn(convictionSignal("sig-1"));
+
+        Map<String, Object> output = outputOf(controller.placeEntry(BEARER, "run-c", json(BUY_BODY)));
+
+        assertThat(output.get("reason")).isEqualTo("SIZE_TOO_SMALL");
+        verify(gateway, never()).placeBracket(any(), any());
+    }
+
+    /** Spec §5.1: the adopted-fill insert derives the profile from the signal too, and a leg that
+     *  rests tighter than the logical stop is booked broker_stop_narrow. */
+    @Test
+    void placeEntry_adoptedConvictionFillCarriesTheProfileAndTheNarrowFlag() {
+        when(signalRepo.findById("sig-1")).thenReturn(convictionSignal("sig-1"));
+        when(assembler.assemble(any())).thenReturn(
+                withConvictionNotional(happyContext(), new BigDecimal("700")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
+                stopLegOrder("ord-stop", "sig-1", "ACME", "sell", "80"),
+                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "7", "98.50",
+                        "2026-09-08T14:00:00Z")));
+        when(gateway.positions("depot-1")).thenReturn(List.of(new BrokerPosition(
+                "ACME", "BUY", new BigDecimal("7"), new BigDecimal("98.50"),
+                new BigDecimal("101"), 1)));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        controller.placeEntry(BEARER, "run-7", json(BUY_BODY));
+
+        ExecutorPosition booked = bookedPosition();
+        assertThat(booked.exitProfile()).isEqualTo(ExitProfile.CONVICTION);
+        assertThat(booked.activeStop()).isEqualByComparingTo("65.00");
+        assertThat(booked.brokerStop()).isEqualByComparingTo("80");
+        assertThat(booked.brokerStopNarrow()).isTrue();
+    }
+
+    /** STANDARD entries are untouched: profile STANDARD, never narrow, sizing basis unchanged. */
+    @Test
+    void placeEntry_standardSignalBooksStandardAndNotNarrow() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        stubFreshPlacement();
+
+        controller.placeEntry(BEARER, "run-s", json(BUY_BODY));
+
+        ExecutorPosition booked = bookedPosition();
+        assertThat(booked.exitProfile()).isEqualTo(ExitProfile.STANDARD);
+        assertThat(booked.brokerStopNarrow()).isFalse();
+        assertThat(enterLog().orderJson().path("stop_source").asString()).isEqualTo("llm_window");
+        assertThat(enterLog().orderJson().path("sizing_basis").asString()).isNotEqualTo("PROFILE_NOTIONAL");
+    }
+
+    @Test
+    void fetchPending_carriesTheExitProfile() {
+        when(signalRepo.findPending(50)).thenReturn(List.of(convictionSignal("sig-c"),
+                signal("sig-s", 0.9, new BigDecimal("100"))));
+
+        List<?> signals = (List<?>) outputOf(controller.fetchPendingSignals(BEARER, null)).get("signals");
+
+        assertThat(signals).extracting(s -> (String) ((Map<?, ?>) s).get("exit_profile"))
+                .containsExactlyInAnyOrder("CONVICTION", "STANDARD");
     }
 }

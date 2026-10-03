@@ -47,7 +47,7 @@ class EntryContextAssemblerTest {
     void setUp() {
         assembler = new EntryContextAssembler(agora, gateway, fx, positionRepo, cooldownRepo,
                 signalRepo, mapper, sectorCascade, "depot-1", 22, 20, 5,
-                new BigDecimal("10000"), 10, "USD", CLOCK);
+                new BigDecimal("10000"), 10, "USD", ConvictionProfile.defaults(), CLOCK);
 
         when(gateway.account("depot-1"))
                 .thenReturn(new AccountSnapshot(new BigDecimal("50000"), new BigDecimal("50000"), "USD"));
@@ -518,5 +518,29 @@ class EntryContextAssemblerTest {
         assertThat(ctx.atrEff()).isEqualByComparingTo("2.50");
         assertThat(ctx.missing()).doesNotContain("atr_short");
         assertThat(ctx.missing()).isEmpty();
+    }
+
+    /** Spec 2026-10-03 §5.3 (R1 M5): the profile notional is total-budget x position-pct in the
+     *  ACCOUNT currency, converted into the instrument currency exactly like trancheAmount. */
+    @Test
+    void convictionNotionalIsFxConvertedFromTheAccountCurrency() {
+        when(gateway.account("depot-1")).thenReturn(new AccountSnapshot(new BigDecimal("50000"),
+                new BigDecimal("50000"), "EUR"));
+        when(fx.hasRate("USD", "EUR")).thenReturn(true);
+        when(fx.convert(any(), eq("EUR"), eq("USD")))
+                .thenAnswer(inv -> ((BigDecimal) inv.getArgument(0)).multiply(new BigDecimal("1.10")));
+        when(fx.convert(any(), eq("USD"), eq("EUR")))
+                .thenAnswer(inv -> ((BigDecimal) inv.getArgument(0)).divide(new BigDecimal("1.10"), 6,
+                        java.math.RoundingMode.HALF_UP));
+        when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
+                new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
+                new BigDecimal("101.00"), new BigDecimal("100.00")));
+        when(sectorCascade.resolve("ACME")).thenReturn("Technology");
+
+        EntryContext ctx = assembler.assemble(
+                signal("ACME", new BigDecimal("100.00"), "2026-07-10T00:00:00Z"));
+
+        // 10000 EUR x 0.033 = 330 EUR -> 363 USD
+        assertThat(ctx.convictionNotional()).isEqualByComparingTo("363");
     }
 }

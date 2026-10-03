@@ -145,4 +145,16 @@ class OrderGuardTest {
         assertThat(guard.check("BUY", new BigDecimal("7"), new BigDecimal("100"), new BigDecimal("95"),
                 null, null, "depot-1", "depot-1").ok()).isTrue();
     }
+
+    /** Spec 2026-10-03 §5.3 (R1 M3): place-entry hands the guard NULL window bounds for a
+     *  CONVICTION entry, so a −35 % stop passes — and the side check still applies. */
+    @Test
+    void nullWindowBypassesTheWindowButNotTheSideCheck() {
+        assertThat(guard.check("BUY", BigDecimal.TEN, new BigDecimal("100.00"),
+                new BigDecimal("65.00"), null, null, "depot-1", "depot-1").ok()).isTrue();
+        OrderGuard.Result wrongSide = guard.check("BUY", BigDecimal.TEN, new BigDecimal("100.00"),
+                new BigDecimal("135.00"), null, null, "depot-1", "depot-1");
+        assertThat(wrongSide.ok()).isFalse();
+        assertThat(wrongSide.reason()).isEqualTo(RejectReason.NO_STOP);
+    }
 }

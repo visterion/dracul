@@ -59,6 +59,7 @@ public class EntryContextAssembler {
     private final BigDecimal totalBudget;
     private final int trancheCount;
     private final String instrumentCurrency;
+    private final ConvictionProfile convictionProfile;
     private final Clock clock;
 
     public EntryContextAssembler(AgoraClient agora, ExecutionGateway gateway, FxService fx,
@@ -71,6 +72,7 @@ public class EntryContextAssembler {
             @Value("${dracul.executor.total-budget:100000}") BigDecimal totalBudget,
             @Value("${dracul.executor.tranche-count:25}") int trancheCount,
             @Value("${dracul.executor.instrument-currency:USD}") String instrumentCurrency,
+            ConvictionProfile convictionProfile,
             @Qualifier("executorClock") Clock clock) {
         this.agora = agora;
         this.gateway = gateway;
@@ -87,6 +89,7 @@ public class EntryContextAssembler {
         this.totalBudget = totalBudget;
         this.trancheCount = trancheCount;
         this.instrumentCurrency = instrumentCurrency;
+        this.convictionProfile = convictionProfile;
         this.clock = clock;
     }
 
@@ -146,6 +149,10 @@ public class EntryContextAssembler {
                 totalBudget.divide(BigDecimal.valueOf(trancheCount), 6, RoundingMode.HALF_UP),
                 accountCurrency, instrumentCurrency);
 
+        BigDecimal convictionNotional = fx.convert(
+                totalBudget.multiply(convictionProfile.positionPct()).setScale(6, RoundingMode.HALF_UP),
+                accountCurrency, instrumentCurrency);
+
         BigDecimal openExposure = BigDecimal.ZERO;
         BigDecimal openHeat = BigDecimal.ZERO;
         Map<String, String> openMechanisms = new LinkedHashMap<>();
@@ -191,7 +198,8 @@ public class EntryContextAssembler {
                 quoteCurrency,
                 ind.atrShort(),
                 ind.atrEff(),
-                openExposureByMechanism);
+                openExposureByMechanism,
+                convictionNotional);
     }
 
     /**
