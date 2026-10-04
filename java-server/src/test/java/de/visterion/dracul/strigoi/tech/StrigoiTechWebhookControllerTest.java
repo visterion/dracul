@@ -22,6 +22,7 @@ import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -152,6 +153,7 @@ class StrigoiTechWebhookControllerTest {
                 List.of(row(9L, "SYNA", ExitProfile.CONVICTION)), List.of(), 1, Set.of("SYNE"),
                 Set.of("SYNA"), Set.of()));
         when(candidates.lastPrices(any())).thenReturn(Map.of("SYNA", new BigDecimal("120")));
+        when(candidates.bookNews(eq("SYNA"), anyInt(), anyInt())).thenReturn(news(true, "synthetic headline"));
 
         @SuppressWarnings("unchecked")
         Map<String, Object> bookMap = (Map<String, Object>) c.bookPayload(book.snapshot()).get("book");
@@ -206,21 +208,68 @@ class StrigoiTechWebhookControllerTest {
         assertThat(health.get("status")).isEqualTo("healthy");
     }
 
-    /** Ruling F4: open positions exist but not one could be priced -> unavailable; the book
-     *  itself (Dracul state) stays in the payload. */
+    private static TechCandidateService.NewsRead news(boolean available, String... headlines) {
+        var arr = JSON.createArrayNode();
+        for (String h : headlines) arr.addObject().put("headline", h);
+        return new TechCandidateService.NewsRead(arr, available);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> health(Map<String, Object> payload) {
+        return (Map<String, Object>) payload.get("data_source_health");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> openPositions(Map<String, Object> payload) {
+        return (List<Map<String, Object>>) ((Map<String, Object>) payload.get("book")).get("open_positions");
+    }
+
+    /** Fix round 1: a get_quote outage degrades the book (healthy + partial) — it never flips it
+     *  to "unavailable", because the prompt answers that with {"prey": []} and the catastrophe
+     *  check reads news, not prices. The news is still delivered. */
     @Test
-    void bookIsUnavailableWhenNoOpenPositionCouldBePriced() {
+    void aPriceOutageLeavesTheBookHealthyButPartialAndKeepsTheNews() {
         var c = controller(true);
         var snap = new TechBookService.Snapshot(true, List.of(row(9L, "SYNA", ExitProfile.CONVICTION)),
                 List.of(), 0, Set.of(), Set.of("SYNA"), Set.of());
         when(candidates.lastPrices(any())).thenReturn(Map.of());
+        when(candidates.bookNews(eq("SYNA"), anyInt(), anyInt()))
+                .thenReturn(news(true, "synthetic fraud headline"));
 
         Map<String, Object> payload = c.bookPayload(snap);
 
-        @SuppressWarnings("unchecked")
-        Map<String, Object> health = (Map<String, Object>) payload.get("data_source_health");
-        assertThat(health.get("status")).isEqualTo("unavailable");
-        assertThat(payload.get("book")).isNotNull();
+        assertThat(health(payload).get("status")).isEqualTo("healthy");
+        assertThat(health(payload).get("partial")).isEqualTo(true);
+        assertThat((String) health(payload).get("detail")).contains("no current price for 1 of 1");
+        assertThat(openPositions(payload)).singleElement().satisfies(p -> {
+            assertThat(p.get("current_close")).isNull();
+            assertThat(p.get("news_available")).isEqualTo(true);
+            assertThat(p.get("news_since_last_run").toString()).contains("synthetic fraud headline");
+        });
+    }
+
+    /** Fix round 1: a news outage is visible (partial + detail naming the positions), and the
+     *  position says news_available=false so the LLM knows it cannot judge it tonight. */
+    @Test
+    void aNewsOutageMarksTheBookPartialWithTheAffectedPositions() {
+        var c = controller(true);
+        var snap = new TechBookService.Snapshot(true, List.of(row(9L, "SYNA", ExitProfile.CONVICTION),
+                row(10L, "SYNB", ExitProfile.CONVICTION)), List.of(), 0, Set.of(),
+                Set.of("SYNA", "SYNB"), Set.of());
+        when(candidates.lastPrices(any())).thenReturn(Map.of("SYNA", new BigDecimal("120"),
+                "SYNB", new BigDecimal("90")));
+        when(candidates.bookNews(eq("SYNA"), anyInt(), anyInt())).thenReturn(news(false));
+        when(candidates.bookNews(eq("SYNB"), anyInt(), anyInt())).thenReturn(news(true));
+
+        Map<String, Object> payload = c.bookPayload(snap);
+
+        assertThat(health(payload).get("status")).isEqualTo("healthy");
+        assertThat(health(payload).get("partial")).isEqualTo(true);
+        assertThat((String) health(payload).get("detail"))
+                .contains("news unavailable for 1 of 2 open position(s)").contains("SYNA")
+                .doesNotContain("SYNB").doesNotContain("no current price");
+        assertThat(openPositions(payload)).extracting(p -> p.get("news_available"))
+                .containsExactly(false, true);
     }
 
     @Test

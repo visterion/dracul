@@ -593,14 +593,21 @@ Neither tool is cached — the book is tonight's state and the check is per symb
 - **`fetch_tech_book`** (`POST /api/strigoi-tech/tools/fetch-book`, no input) returns
   `book.open_positions` (open CONVICTION positions on the executor connection, each with
   `symbol`, `entry_price`, `qty`, `highest_close`, `current_close`, `pl_pct`, `active_stop`,
-  `half_sold`, `days_held`, `catastrophe_flagged` and `news_since_last_run` — up to 5 headlines
-  of the last 3 calendar days, which covers the weekend gap of a Mon–Fri schedule),
+  `half_sold`, `days_held`, `catastrophe_flagged`, `news_available` and `news_since_last_run` —
+  up to 5 headlines of the last 3 calendar days, which covers the weekend gap of a Mon–Fri
+  schedule),
   `book.pending_signals` (PENDING executor signals with mechanism `TECH_CONVICTION`),
   `basket_size`, `slots_free`, `new_names_allowed_this_week`, `accepted_this_week`,
   `recently_exited`, `executor_available` and `last_completion_notes`. The current closes come
-  from one `get_quote` call; when the book has open positions and not one of them could be
-  priced, `data_source_health` is `unavailable` (source `agora`) — the book itself is still
-  in the payload.
+  from one `get_quote` call, the news from a strict `get_company_news` read per position.
+  Neither failure ever makes the book `unavailable` (every hunter prompt answers that with
+  `{"prey": []}`, and the two halves are independent: a quote outage says nothing about the
+  news the catastrophe check reads). Instead `data_source_health` stays `healthy` with
+  `partial: true` (source `agora`) and a `detail` naming what is missing —
+  `no current price for k of n open position(s): …` and/or `news unavailable for k of n open
+  position(s) — not judgeable for a catastrophe tonight: …`. A position whose news read
+  failed carries `news_available: false` (empty headlines that mean "could not be read", not
+  "no news"); the prompt does not flag such a position that night.
 - **`check_tech_candidate`** (`POST /api/strigoi-tech/tools/check-candidate`,
   `{"symbol": "<TICKER>"}`) returns `candidate.profile` (name, provider industry, market cap
   in millions, currency, exchange, `listing_ticker`, `type`), `quote` (price, currency),
@@ -610,7 +617,8 @@ Neither tool is cached — the book is tonight's state and the check is per symb
   verdict `eligible` / `reasons` (blocking) / `notes` (informational). A section whose source
   failed is null. `data_source_health` is `unavailable` only when the profile AND the quote both
   failed with an Agora outage (SOURCE scope) — an error about one unknown symbol is not an
-  outage. The prompt answers an `unavailable` health from either tool with `{"prey": []}`.
+  outage. The prompt answers an `unavailable` health from either tool with `"prey": []` but
+  still returns catastrophe exits already backed by headlines it received.
 
 ### Eligibility (code)
 

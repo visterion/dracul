@@ -122,6 +122,18 @@ public class AgoraCompanyData {
         }
     }
 
+    /**
+     * Strict variant of {@link #news(String, LocalDate, LocalDate)}: propagates
+     * {@link AgoraUnavailableException} WITH its {@link AgoraUnavailableException.Scope} instead
+     * of swallowing it into an empty list — for callers that must tell "no news" apart from "news
+     * could not be read" AND log the outage under the scope-correct prefix (strigoi-tech's book:
+     * a position whose news could not be read cannot be judged for a catastrophe). Same request
+     * and parsing as the other two variants.
+     */
+    public List<NewsHeadline> newsStrict(String symbol, LocalDate from, LocalDate to) {
+        return parseNews(agora.callTool("get_company_news", newsArgs(symbol, from, to)), symbol);
+    }
+
     private ObjectNode newsArgs(String symbol, LocalDate from, LocalDate to) {
         ObjectNode args = mapper.createObjectNode();
         args.put("symbol", symbol).put("from", from.toString()).put("to", to.toString());

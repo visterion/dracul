@@ -1804,7 +1804,7 @@ Response:
     "open_positions": [
       { "symbol": "ACME", "entry_price": 100.00, "qty": 10, "highest_close": 131.00,
         "current_close": 120.00, "pl_pct": 20.00, "active_stop": 91.70, "half_sold": true,
-        "days_held": 41, "catastrophe_flagged": false,
+        "days_held": 41, "catastrophe_flagged": false, "news_available": true,
         "news_since_last_run": [ { "headline": "...", "source": "...",
                                    "datetime": "2026-01-02T14:00:00Z", "url": "https://example.com/1" } ] } ],
     "pending_signals": [ { "symbol": "SYNB", "signal_id": "...", "created_at": "..." } ],
@@ -1815,9 +1815,12 @@ Response:
 ```
 
 `open_positions` are the OPEN CONVICTION positions on `dracul.executor.connection`;
-`news_since_last_run` covers the last 3 calendar days (at most 5). `data_source_health` is
-`unavailable` (source `agora`) when there are open positions and not one could be priced; the
-`book` is still returned. `last_completion_notes` is null until the first completion after a
+`news_since_last_run` covers the last 3 calendar days (at most 5); `news_available: false`
+means the news read failed for that position (empty headlines = "could not be read", not "no
+news"). A missing price or a failed news read never makes the book `unavailable`:
+`data_source_health` stays `healthy` with `partial: true` (source `agora`) and a `detail` such as
+`agora: no current price for 1 of 3 open position(s): ACME; news unavailable for 1 of 3 open
+position(s) — not judgeable for a catastrophe tonight: ACME`. `last_completion_notes` is null until the first completion after a
 restart.
 
 ### `POST /api/strigoi-tech/tools/check-candidate`

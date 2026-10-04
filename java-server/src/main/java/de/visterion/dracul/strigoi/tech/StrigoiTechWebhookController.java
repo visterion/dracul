@@ -167,8 +167,11 @@ public class StrigoiTechWebhookController extends HuntController {
         List<String> symbols = s.convictionOpen().stream().map(ExecutorPosition::symbol).toList();
         Map<String, BigDecimal> prices = candidates.lastPrices(symbols);
         List<Map<String, Object>> open = new ArrayList<>();
+        List<String> unpriced = new ArrayList<>();
+        List<String> newsless = new ArrayList<>();
         for (ExecutorPosition p : s.convictionOpen()) {
             BigDecimal close = prices.get(p.symbol());
+            if (close == null) unpriced.add(p.symbol());
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("symbol", p.symbol());
             m.put("entry_price", p.entryPrice());
@@ -184,7 +187,11 @@ public class StrigoiTechWebhookController extends HuntController {
             m.put("half_sold", p.trimCount() > 0);
             m.put("days_held", daysHeld(p.entryDate()));
             m.put("catastrophe_flagged", p.catastropheReason() != null);
-            m.put("news_since_last_run", candidates.news(p.symbol(), BOOK_NEWS_LOOKBACK_DAYS, BOOK_NEWS_MAX));
+            TechCandidateService.NewsRead news =
+                    candidates.bookNews(p.symbol(), BOOK_NEWS_LOOKBACK_DAYS, BOOK_NEWS_MAX);
+            m.put("news_available", news.available());
+            m.put("news_since_last_run", news.items());
+            if (!news.available()) newsless.add(p.symbol());
             open.add(m);
         }
         List<Map<String, Object>> pending = new ArrayList<>();
@@ -207,16 +214,28 @@ public class StrigoiTechWebhookController extends HuntController {
         bookMap.put("last_completion_notes", lastCompletionNotes.get());
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("book", bookMap);
-        if (!symbols.isEmpty() && prices.isEmpty()) {
-            // Not one open position could be priced: Agora's get_quote is down (lastPrices
-            // swallows the outage into an empty map). The book itself is Dracul's own state and
-            // stays in the payload; the health block says the market half of it is missing.
-            log.warn("{} tool {}: data source DOWN — no current price for any of {} open "
-                    + "position(s)", AGENT, TechDefaults.FETCH_BOOK, symbols.size());
-            out.put("data_source_health", healthOf(DataSourceHealth.unavailable("agora",
-                    "agora: no current price for any of " + symbols.size() + " open position(s)")));
-        } else {
+        // Degraded, never "unavailable": every hunter prompt answers "unavailable" with
+        // {"prey": []}, and the two halves of the book are independent — a get_quote outage says
+        // nothing about the news the catastrophe check reads, and missing news for one position
+        // says nothing about the others. partial + detail name exactly what is missing; each
+        // position also carries news_available so the LLM knows which ones it cannot judge.
+        List<String> missing = new ArrayList<>();
+        if (!unpriced.isEmpty()) {
+            missing.add("no current price for " + unpriced.size() + " of " + symbols.size()
+                    + " open position(s): " + String.join(",", unpriced));
+        }
+        if (!newsless.isEmpty()) {
+            missing.add("news unavailable for " + newsless.size() + " of " + symbols.size()
+                    + " open position(s) — not judgeable for a catastrophe tonight: "
+                    + String.join(",", newsless));
+        }
+        if (missing.isEmpty()) {
             out.put("data_source_health", healthOf(DataSourceHealth.healthy("dracul")));
+        } else {
+            String detail = "agora: " + String.join("; ", missing);
+            log.warn("{} tool {}: book degraded — {}", AGENT, TechDefaults.FETCH_BOOK, detail);
+            out.put("data_source_health", healthOf(DataSourceHealth.degraded("agora", detail,
+                    true, false)));
         }
         return out;
     }

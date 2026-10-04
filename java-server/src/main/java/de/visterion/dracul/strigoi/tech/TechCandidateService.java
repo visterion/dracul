@@ -46,6 +46,11 @@ public class TechCandidateService {
      *  outage (SOURCE scope; an error about this one symbol does not count) — the verdict is then "data_unavailable" for a reason that has nothing to do with
      *  the symbol, and the tool must say so in {@code data_source_health} (a total outage must
      *  never look like a night of ineligible names). */
+    /** News of one book position; {@code available=false} = the news read failed (any scope —
+     *  either way nothing can be said about a catastrophe for this position tonight). */
+    public record NewsRead(ArrayNode items, boolean available) {
+    }
+
     public record Candidate(ObjectNode payload, TechEligibility.Verdict verdict,
             boolean sourceUnavailable) {
     }
@@ -167,11 +172,29 @@ public class TechCandidateService {
         return out;
     }
 
-    /** Newest-first headlines over {@code lookbackDays}, at most {@code max}. */
+    /** Newest-first headlines over {@code lookbackDays}, at most {@code max}; an outage is an
+     *  empty list (the candidate check reports source health via profile + quote instead). */
     public ArrayNode news(String symbol, int lookbackDays, int max) {
-        ArrayNode arr = mapper.createArrayNode();
         LocalDate to = LocalDate.now(ZoneOffset.UTC);
-        List<NewsHeadline> items = companyData.news(symbol, to.minusDays(lookbackDays), to);
+        return headlines(companyData.news(symbol, to.minusDays(lookbackDays), to), max);
+    }
+
+    /** The book's per-position news: unlike {@link #news} an outage is reported, not swallowed —
+     *  "no headlines" and "headlines could not be read" mean opposite things for the catastrophe
+     *  check. Logged under the stable scope-chosen prefix. */
+    public NewsRead bookNews(String symbol, int lookbackDays, int max) {
+        LocalDate to = LocalDate.now(ZoneOffset.UTC);
+        try {
+            return new NewsRead(headlines(companyData.newsStrict(symbol, to.minusDays(lookbackDays), to),
+                    max), true);
+        } catch (AgoraUnavailableException e) {
+            logSwallowed(e, "get_company_news", symbol);
+            return new NewsRead(mapper.createArrayNode(), false);
+        }
+    }
+
+    private ArrayNode headlines(List<NewsHeadline> items, int max) {
+        ArrayNode arr = mapper.createArrayNode();
         items.stream()
                 .sorted(Comparator.comparing(NewsHeadline::datetime,
                         Comparator.nullsLast(Comparator.<java.time.Instant>reverseOrder())))

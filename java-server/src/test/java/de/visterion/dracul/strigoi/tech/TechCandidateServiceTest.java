@@ -125,4 +125,29 @@ class TechCandidateServiceTest {
         assertThat(service.eligibility("Q", EMPTY).reasons())
                 .containsExactly("data_unavailable:instrument_type");
     }
+
+    /** Fix round 1: the book's news read reports an outage instead of swallowing it — "no
+     *  headlines" and "headlines could not be read" mean opposite things for a catastrophe. */
+    @Test
+    void bookNewsReportsAnOutageInsteadOfAnEmptyList() {
+        when(companyData.newsStrict(eq("SYNA"), any(), any()))
+                .thenThrow(new AgoraUnavailableException("Agora unreachable for get_company_news"));
+        when(companyData.newsStrict(eq("SYNB"), any(), any())).thenReturn(List.of(
+                new de.visterion.dracul.hunting.agora.NewsHeadline("SYNTHETIC headline",
+                        "SYNTHETIC summary", "synthetic-source", "rss",
+                        java.time.Instant.parse("2026-01-02T00:00:00Z"), "https://example.com/1",
+                        "example.com", 0.7)));
+        when(companyData.newsStrict(eq("SYNC"), any(), any())).thenReturn(List.of());
+
+        var down = service.bookNews("SYNA", 3, 5);
+        var up = service.bookNews("SYNB", 3, 5);
+        var quiet = service.bookNews("SYNC", 3, 5);
+
+        assertThat(down.available()).isFalse();
+        assertThat(down.items()).isEmpty();
+        assertThat(up.available()).isTrue();
+        assertThat(up.items().get(0).path("headline").asString()).isEqualTo("SYNTHETIC headline");
+        assertThat(quiet.available()).isTrue();
+        assertThat(quiet.items()).isEmpty();
+    }
 }
