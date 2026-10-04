@@ -761,6 +761,24 @@ class ExecutorPositionRepositoryTest {
     }
 
     @Test
+    void markTrimUnconfirmedBumpsOnlyTheTrimCount() {
+        String symbol = "TUNC-" + UUID.randomUUID();
+        long id = repo.insert(ExecutorPositionFixtures.withoutKillLevel(null, "depot-1", symbol,
+                "BUY", new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("65.00"),
+                new BigDecimal("65.00"), 1, null, List.of("X"), "sig-tunc", "strigoi-tech", null,
+                null, "OPEN", null, null, null, 0, null, null, null, null, "stop-tunc", null, null,
+                null, null, 0, null, null, null, null, null, null, false, null, null));
+
+        repo.markTrimUnconfirmed(id, 1);
+
+        ExecutorPosition after = repo.findById(id);
+        assertThat(after.trimCount()).isEqualTo(1);
+        assertThat(after.qty()).isEqualByComparingTo("10");
+        assertThat(after.stopOrderId()).isEqualTo("stop-tunc");
+        assertThat(after.pendingTrimOrderId()).isNull();
+    }
+
+    @Test
     void pendingTrimLifecycleQueries() {
         String symbol = "PTL-" + UUID.randomUUID();
         long id = repo.insert(ExecutorPositionFixtures.withoutKillLevel(null, "ptl-conn", symbol,

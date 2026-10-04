@@ -4,6 +4,7 @@ import de.visterion.dracul.executor.broker.BrokerRejectedException;
 import de.visterion.dracul.executor.broker.BrokerUnavailableException;
 import de.visterion.dracul.executor.broker.CloseResult;
 import de.visterion.dracul.executor.broker.ExecutionGateway;
+import de.visterion.dracul.notify.TelegramNotifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -88,6 +89,7 @@ public class HardTriggerService {
     private final int cooldownDays;
     private final PartialExitService partialExit;
     private final ConvictionProfile convictionProfile;
+    private final TelegramNotifier telegram;
     private final Clock clock;
 
     @Autowired
@@ -102,10 +104,11 @@ public class HardTriggerService {
             @Value("${dracul.executor.giveback-active-from-r:1.5}") double givebackActiveFromR,
             @Value("${dracul.executor.cooldown-days:3}") int cooldownDays,
             PartialExitService partialExit,
-            ConvictionProfile convictionProfile) {
+            ConvictionProfile convictionProfile,
+            TelegramNotifier telegram) {
         this(gateway, positionRepo, decisionRepo, cooldownRepo, ruleVersions, mapper,
                 givebackPct, givebackActiveFromR, cooldownDays, partialExit, convictionProfile,
-                Clock.systemUTC());
+                telegram, Clock.systemUTC());
     }
 
     HardTriggerService(
@@ -120,6 +123,7 @@ public class HardTriggerService {
             int cooldownDays,
             PartialExitService partialExit,
             ConvictionProfile convictionProfile,
+            TelegramNotifier telegram,
             Clock clock) {
         this.gateway = gateway;
         this.positionRepo = positionRepo;
@@ -132,6 +136,7 @@ public class HardTriggerService {
         this.cooldownDays = cooldownDays;
         this.partialExit = partialExit;
         this.convictionProfile = convictionProfile;
+        this.telegram = telegram;
         this.clock = clock;
     }
 
@@ -251,8 +256,36 @@ public class HardTriggerService {
         String reasoning = "TARGET_HALF: close " + plain(close) + " >= target "
                 + plain(convictionProfile.targetPrice(p.entryPrice())) + " (entry "
                 + plain(p.entryPrice()) + " x (1 + " + plain(convictionProfile.targetPct()) + "))";
-        partialExit.execute(p, fraction, "HARD_TRIGGER", "HARD_TARGET_HALF",
-                "target-half flatten", reasoning, null, runId);
+        PartialExitService.Result result = partialExit.execute(p, fraction, "HARD_TRIGGER",
+                "HARD_TARGET_HALF", "target-half flatten", reasoning, null, runId);
+        if (result != null && result.outcome() == PartialExitService.Outcome.UNAVAILABLE) {
+            markTargetHalfUnconfirmed(p, runId);
+        }
+    }
+
+    /**
+     * Final review #1: BROKER_UNAVAILABLE on the target-half is not "nothing happened" — the
+     * gateway maps every transport failure to it, including a read timeout AFTER the POST reached
+     * the broker. Leaving trim_count at 0 would let the next reconcile QTY_SYNC the book down to the
+     * half the broker kept and the next close >= target sell half of THAT. So trim_count is bumped
+     * (qty untouched — QTY_SYNC converges it to the broker), the escalation names the position and
+     * an operator verifies at the broker. Only the TARGET_HALF path: the LLM's soft scale-out keeps
+     * the plain BROKER_UNAVAILABLE semantics. {@code PartialExitService} has already written its
+     * BROKER_UNAVAILABLE row; this one adds the unconfirmed-trim state on top.
+     */
+    private void markTargetHalfUnconfirmed(ExecutorPosition p, String runId) {
+        int newTrimCount = p.trimCount() + 1;
+        positionRepo.markTrimUnconfirmed(p.id(), newTrimCount);
+        String text = "target-half partial close on " + p.symbol() + " (position " + p.id()
+                + ") got no broker verdict — it may or may not have executed. trim_count set to "
+                + newTrimCount + " so it is never sold twice; verify at broker; reset trim_count "
+                + "to " + p.trimCount() + " if nothing sold";
+        ObjectNode inputs = mapper.createObjectNode();
+        inputs.put("position_id", p.id());
+        inputs.put("qty", p.qty());
+        inputs.put("trim_count", newTrimCount);
+        escalate(p, runId, "TARGET_HALF_UNCONFIRMED", text, inputs);
+        telegram.notifyAlert(p.symbol(), "TARGET_HALF_UNCONFIRMED", "CRITICAL", text);
     }
 
     /**
@@ -359,15 +392,40 @@ public class HardTriggerService {
     // Reason codes produced here ("HARD_STOP", "HARD_KILL_CRITERIA", "GIVEBACK_BREACH",
     // "HARD_CATASTROPHE", "HARD_TARGET_HALF") are duplicated in ReconcileService#HARD_REASONS —
     // keep both in sync.
+    //
+    // CONVICTION after the half-sale (final review #2): the breach level is the tighter of
+    // active_stop and the profile trail on highest_price (which already includes tonight's close).
+    // StopRatchetService skips a trail candidate the close is already beyond (wrong-side guard), so
+    // after a >= trail-pct drop between two ratchets active_stop still sits on the old level and
+    // would never fire — the trail must be checked here, against the same close.
     private Trigger detectStopBreach(ExecutorPosition p, BigDecimal close, boolean sell) {
+        BigDecimal trail = convictionTrail(p);
+        boolean trailTighter = trail != null && (sell
+                ? trail.compareTo(p.activeStop()) < 0
+                : trail.compareTo(p.activeStop()) > 0);
+        BigDecimal level = trailTighter ? trail : p.activeStop();
         boolean breached = sell
-                ? close.compareTo(p.activeStop()) > 0
-                : close.compareTo(p.activeStop()) < 0;
+                ? close.compareTo(level) > 0
+                : close.compareTo(level) < 0;
         if (!breached) return null;
 
-        String measured = "STOP_BREACH: close " + plain(close) + (sell ? " > stop " : " < stop ")
-                + plain(p.activeStop());
+        String measured = trailTighter
+                ? "STOP_BREACH: close " + plain(close) + (sell ? " > trail " : " < trail ")
+                        + plain(trail) + " (highest " + plain(p.highestPrice()) + " x (1 "
+                        + (sell ? "+ " : "- ") + plain(convictionProfile.trailPct())
+                        + "); active stop " + plain(p.activeStop()) + ")"
+                : "STOP_BREACH: close " + plain(close) + (sell ? " > stop " : " < stop ")
+                        + plain(p.activeStop());
         return new Trigger("HARD_STOP", "STOP_BREACH", measured);
+    }
+
+    /** The CONVICTION trail level once the half-sale happened, else null (STANDARD, no trim yet,
+     *  or no recorded extreme). SELL would trail on the lowest close; the basket is long-only, so
+     *  only the BUY side carries an extreme here. */
+    private BigDecimal convictionTrail(ExecutorPosition p) {
+        if (p.exitProfile() != ExitProfile.CONVICTION || p.trimCount() <= 0) return null;
+        if (!isBuy(p) || p.highestPrice() == null) return null;
+        return convictionProfile.trailStop(p.side(), p.highestPrice());
     }
 
     private Trigger detectKillCriteria(ExecutorPosition p, BigDecimal close) {

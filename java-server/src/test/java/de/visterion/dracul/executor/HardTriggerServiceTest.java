@@ -32,6 +32,8 @@ class HardTriggerServiceTest {
     private final CooldownRepository cooldownRepo = mock(CooldownRepository.class);
     private final RuleVersionProvider ruleVersions = mock(RuleVersionProvider.class);
     private final PartialExitService partialExit = mock(PartialExitService.class);
+    private final de.visterion.dracul.notify.TelegramNotifier telegram =
+            mock(de.visterion.dracul.notify.TelegramNotifier.class);
     private final ObjectMapper mapper = new ObjectMapper();
     private final Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
 
@@ -41,7 +43,7 @@ class HardTriggerServiceTest {
     void setUp() {
         when(ruleVersions.active()).thenReturn("exec-v0.2");
         service = new HardTriggerService(gateway, positionRepo, decisionRepo, cooldownRepo,
-                ruleVersions, mapper, 0.35, 1.5, 10, partialExit, ConvictionProfile.defaults(), clock);
+                ruleVersions, mapper, 0.35, 1.5, 10, partialExit, ConvictionProfile.defaults(), telegram, clock);
     }
 
     private ExecutorPosition openPosition(long id, String symbol, String side, BigDecimal entry,
@@ -328,7 +330,7 @@ class HardTriggerServiceTest {
         };
         HardTriggerService slowService = new HardTriggerService(slowGateway, positionRepo,
                 decisionRepo, cooldownRepo, ruleVersions, mapper,
-                0.35, 1.5, 10, partialExit, ConvictionProfile.defaults(), steppingClock);
+                0.35, 1.5, 10, partialExit, ConvictionProfile.defaults(), telegram, steppingClock);
 
         ExecutorPosition p = openPosition(10L, "ACME", "BUY", new BigDecimal("100"),
                 new BigDecimal("95"), new BigDecimal("95"), null);
@@ -728,5 +730,118 @@ class HardTriggerServiceTest {
 
         assertThat(infos).containsExactly("kill levels evaluated: 0 of 2 filled positions "
                 + "(breached: 0); catastrophe flagged: 1, targets hit: 1");
+    }
+
+    /** Final review #1: a TARGET_HALF call that got no verdict (e.g. a read timeout after the POST
+     *  was sent) may still have sold half at the broker. trim_count is bumped without touching qty,
+     *  an ESCALATE TARGET_HALF_UNCONFIRMED row names the position, a CRITICAL alert asks for a
+     *  broker check — and the next pass, re-reading trim_count 1, never sells a second half. */
+    @Test
+    void targetHalfUnavailableIsMarkedUnconfirmedAndNeverRetried() {
+        ExecutorPosition p = conviction(43L, "SYNN", 0, null, null, null);
+        when(partialExit.execute(any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new PartialExitService.Result(PartialExitService.Outcome.UNAVAILABLE,
+                        null, null, null, null));
+
+        List<ExecutorPosition> survivors = service.apply(List.of(p),
+                Map.of("SYNN", new BigDecimal("131")), "run1");
+
+        assertThat(survivors).containsExactly(p);
+        verify(positionRepo).markTrimUnconfirmed(43L, 1);
+        verify(positionRepo, never()).recordTrim(org.mockito.ArgumentMatchers.anyLong(), any(),
+                org.mockito.ArgumentMatchers.anyInt());
+        DecisionLog row = onlyRow();
+        assertThat(row.action()).isEqualTo("ESCALATE");
+        assertThat(row.reasonCode()).isEqualTo("TARGET_HALF_UNCONFIRMED");
+        assertThat(row.triggerType()).isEqualTo("HARD_TRIGGER");
+        assertThat(row.symbol()).isEqualTo("SYNN");
+        assertThat(row.inputsSnapshot().path("position_id").asLong()).isEqualTo(43L);
+        verify(telegram).notifyAlert(org.mockito.ArgumentMatchers.eq("SYNN"),
+                org.mockito.ArgumentMatchers.eq("TARGET_HALF_UNCONFIRMED"),
+                org.mockito.ArgumentMatchers.eq("CRITICAL"),
+                org.mockito.ArgumentMatchers.contains("reset trim_count"));
+
+        // Next pass: the book now carries trim_count 1 (qty still full) -> no second half-sale.
+        ExecutorPosition reread = conviction(43L, "SYNN", 1, null, null, null);
+        org.mockito.Mockito.clearInvocations(partialExit);
+        service.apply(List.of(reread), Map.of("SYNN", new BigDecimal("133")), "run2");
+        verify(partialExit, never()).execute(any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    /** Final review #1: a REJECTED or TRIMMED target-half is not "unconfirmed" — the verdict is
+     *  known and PartialExitService already booked it; nothing extra here. */
+    @Test
+    void targetHalfRejectedOrTrimmedIsNotMarkedUnconfirmed() {
+        ExecutorPosition p = conviction(44L, "SYNO", 0, null, null, null);
+        when(partialExit.execute(any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new PartialExitService.Result(PartialExitService.Outcome.REJECTED,
+                        null, null, null, null));
+
+        service.apply(List.of(p), Map.of("SYNO", new BigDecimal("131")), "run1");
+
+        verify(positionRepo, never()).markTrimUnconfirmed(org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyInt());
+        verify(decisionRepo, never()).insert(any());
+        verify(telegram, never()).notifyAlert(any(), any(), any(), any());
+    }
+
+    /** CONVICTION BUY like {@link #conviction}, with a recorded highest close. */
+    private ExecutorPosition convictionWithHighest(long id, String symbol, int trimCount,
+            BigDecimal highest) {
+        ExecutorPosition base = ExecutorPositionFixtures.withoutKillLevel(id, "c", symbol, "BUY",
+                BigDecimal.TEN, new BigDecimal("100"), new BigDecimal("65"), new BigDecimal("65"),
+                1, null, List.of(), "sig-" + id, "strigoi-tech", "2026-07-01", null, "OPEN",
+                "brk-" + id, highest, null, 0, null, null, null, null, "stop-" + id, null, null,
+                null, null, trimCount, null, null, null, null, null, null, false,
+                new BigDecimal("80"), "2026-07-01T09:00:00Z");
+        return ExecutorPositionFixtures.conviction(base);
+    }
+
+    /** Final review #2: after the half-sale a >=30 % drop between two ratchets leaves active_stop
+     *  on the old level (the ratchet skips a trail candidate the close is already below). The hard
+     *  trigger compares the close to max(active_stop, trail) itself: highest 140 -> trail 98,
+     *  close 95 -> HARD_STOP, measured names the trail. */
+    @Test
+    void convictionTrailBreachFiresEvenWhenActiveStopLagsBehind() {
+        ExecutorPosition p = convictionWithHighest(45L, "SYNP", 1, new BigDecimal("140"));
+
+        List<ExecutorPosition> survivors = service.apply(List.of(p),
+                Map.of("SYNP", new BigDecimal("95")), "run1");
+
+        assertThat(survivors).isEmpty();
+        assertThat(gateway.flattenFractions).containsExactly(BigDecimal.ONE);
+        DecisionLog row = onlyRow();
+        assertThat(row.reasonCode()).isEqualTo("HARD_STOP");
+        assertThat(row.vetoResults().get(0).path("measured").asString())
+                .isEqualTo("STOP_BREACH: close 95 < trail 98 (highest 140 x (1 - 0.3); active stop 65)");
+    }
+
+    /** The trail check is CONVICTION-after-half-sale only: before the half-sale (trim_count 0) the
+     *  same close above the emergency stop holds; and a close at/above the trail holds. */
+    @Test
+    void convictionTrailCheckOnlyAfterTheHalfSaleAndStrictlyBelow() {
+        ExecutorPosition beforeHalf = convictionWithHighest(46L, "SYNQ", 0, new BigDecimal("140"));
+        ExecutorPosition atTrail = convictionWithHighest(47L, "SYNR", 1, new BigDecimal("140"));
+
+        List<ExecutorPosition> survivors = service.apply(List.of(beforeHalf, atTrail),
+                Map.of("SYNQ", new BigDecimal("95"), "SYNR", new BigDecimal("98")), "run1");
+
+        assertThat(survivors).containsExactly(beforeHalf, atTrail);
+        assertThat(gateway.flattenedSymbols).isEmpty();
+    }
+
+    /** STANDARD rows never use the conviction trail, whatever their highest close. */
+    @Test
+    void standardIgnoresTheConvictionTrail() {
+        ExecutorPosition base = ExecutorPositionFixtures.withoutKillLevel(48L, "c", "SYNS", "BUY",
+                BigDecimal.TEN, new BigDecimal("100"), new BigDecimal("65"), new BigDecimal("65"),
+                1, null, List.of(), "sig-48", "agent", "2026-07-01", null, "OPEN", "brk-48",
+                new BigDecimal("140"), null, 0, null, null, null, null, "stop-48", null, null,
+                null, null, 1, null, null, null, null, null, null, false, null, null);
+
+        List<ExecutorPosition> survivors = service.apply(List.of(base),
+                Map.of("SYNS", new BigDecimal("95")), "run1");
+
+        assertThat(survivors).containsExactly(base);
     }
 }

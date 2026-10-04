@@ -339,6 +339,7 @@ class MaintenancePipelineTest {
         HardTriggerService realHardTrigger = new HardTriggerService(fakeGateway, positionRepo,
                 decisionRepo, cooldownRepo, ruleVersions, new tools.jackson.databind.ObjectMapper(),
                 0.35, 1.5, 10, mock(PartialExitService.class), ConvictionProfile.defaults(),
+                mock(de.visterion.dracul.notify.TelegramNotifier.class),
                 java.time.Clock.fixed(java.time.Instant.parse("2026-07-08T12:00:00Z"),
                         java.time.ZoneOffset.UTC));
         MaintenancePipeline gatedPipeline = new MaintenancePipeline(reconcile, entryExpiry, sweeper,
@@ -382,6 +383,7 @@ class MaintenancePipelineTest {
         HardTriggerService realHardTrigger = new HardTriggerService(fakeGateway, positionRepo,
                 decisionRepo, mock(CooldownRepository.class), ruleVersions,
                 new tools.jackson.databind.ObjectMapper(), 0.35, 1.5, 3, mock(PartialExitService.class), ConvictionProfile.defaults(),
+                mock(de.visterion.dracul.notify.TelegramNotifier.class),
                 java.time.Clock.fixed(java.time.Instant.parse("2026-07-08T12:00:00Z"),
                         java.time.ZoneOffset.UTC));
         MaintenancePipeline realPipeline = new MaintenancePipeline(reconcile, entryExpiry, sweeper,
@@ -417,6 +419,7 @@ class MaintenancePipelineTest {
         HardTriggerService realHardTrigger = new HardTriggerService(fakeGateway, positionRepo,
                 mock(DecisionLogRepository.class), mock(CooldownRepository.class), ruleVersions,
                 new tools.jackson.databind.ObjectMapper(), 0.35, 1.5, 3, mock(PartialExitService.class), ConvictionProfile.defaults(),
+                mock(de.visterion.dracul.notify.TelegramNotifier.class),
                 java.time.Clock.fixed(java.time.Instant.parse("2026-07-08T12:00:00Z"),
                         java.time.ZoneOffset.UTC));
         MaintenancePipeline realPipeline = new MaintenancePipeline(reconcile, entryExpiry, sweeper,

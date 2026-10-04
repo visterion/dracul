@@ -696,6 +696,12 @@ once a daily close reaches +30 %, the rest trailed 30 % below the highest close,
 exits and no tranche 2. See "Executor" below and `documentation/configuration.md`
 (`dracul.executor.profiles.conviction.*`).
 
+**Deploy gating — the −20 % broker leg is the effective emergency stop.** The bracket's
+protective leg rests at the broker's entry band (`entry-broker-stop-pct`, −20 %), and the
+post-fill widening of that leg to the logical −35 % stop has not shipped yet; until it does,
+an intraday fall of 20 % fills the broker leg before the half-sale or the close-based −35 % stop
+can act. `dracul.strigoi.tech.enabled` stays `false` in production until the widening lands.
+
 ## Hunt Pattern
 
 Every Strigoi follows the same three-step shape:
@@ -1561,7 +1567,23 @@ the LLM, which owns only the soft judgment call. Every call to
    price — then the stop (emergency stop or trail), then the target-half
    (`HARD_TARGET_HALF`: no half-sale yet, no trim pending, close ≥ entry × 1.30
    → a 0.5 partial exit through `PartialExitService`, the position stays
-   open). Kill level and giveback are STANDARD only; CONVICTION rows carry no
+   open). After the half-sale (`trim_count > 0`) the stop check compares the
+   close to the TIGHTER of `active_stop` and the trail
+   `highest_price × (1 − trail-pct)` itself — the ratchet skips a trail
+   candidate the close is already below, so after a ≥ 30 % drop between two
+   ratchets `active_stop` would still sit on the old level; the breach is
+   `HARD_STOP` with `measured` naming the trail
+   (`STOP_BREACH: close … < trail … (highest … x (1 - 0.3); active stop …)`).
+   A target-half that gets no broker verdict (`BROKER_UNAVAILABLE`, which
+   includes a read timeout after the order may have reached the broker) is
+   NOT retried: `trim_count` is set to 1 with `qty` untouched (the next
+   reconcile's `QTY_SYNC` converges it to the broker), an
+   `ESCALATE`/`TARGET_HALF_UNCONFIRMED` row carries
+   `inputs_snapshot.position_id`, and a CRITICAL Telegram asks the operator to
+   verify at the broker and reset `trim_count` to 0 if nothing was sold. A
+   catastrophe or stop flatten while a target-half order is still queued
+   (orders placed at 23:00 UTC fill at the next open) may be rejected by the
+   broker; it escalates and is retried by the next run — a one-day delay. Kill level and giveback are STANDARD only; CONVICTION rows carry no
    soft trigger. Each run logs one INFO line
    `kill levels evaluated: n of m filled positions (breached: k); catastrophe flagged: c, targets hit: t`.
 3. **`StopRatchetService`** — ratchets the active stop up to the chandelier

@@ -247,6 +247,18 @@ public class ExecutorPositionRepository {
                 .update();
     }
 
+    /** TARGET_HALF_UNCONFIRMED (final review #1): the target-half partial close got no verdict
+     *  (transport failure/timeout — the order may or may not have reached the broker). Bumps ONLY
+     *  {@code trim_count} so the target-half can never fire a second time on a position that may
+     *  already be half-sold; {@code qty} stays as it is and the next reconcile's QTY_SYNC converges
+     *  it to what the broker actually holds. An operator resets trim_count if nothing was sold. */
+    public void markTrimUnconfirmed(long id, int trimCount) {
+        jdbc.sql("UPDATE executor_position SET trim_count = :tc WHERE id = :id")
+                .param("tc", trimCount)
+                .param("id", id)
+                .update();
+    }
+
     /** CLOSED rows of {@code connection} still carrying a pending trim (a trim followed by a full
      *  exit before reconcile saw the fill — R2 Minor 4). */
     public List<ExecutorPosition> findClosedWithPendingTrim(String connection) {
