@@ -183,6 +183,22 @@ public class ExecutorSignalRepository {
                 .update();
     }
 
+    /** Signals of {@code mechanism} (trimmed, case-insensitive) that reached {@code status} at or
+     *  after {@code since} — strigoi-tech's weekly cap counts ACCEPTED (placed) entries
+     *  (spec 2026-10-03 §4.3, R1 Minor 11). */
+    public int countByMechanismAndStatusSince(String mechanism, String status, java.time.Instant since) {
+        return jdbc.sql("""
+                SELECT count(*) FROM executor_signal
+                WHERE upper(trim(mechanism)) = upper(trim(:mechanism)) AND status = :status
+                  AND processed_at >= :since
+                """)
+                .param("mechanism", mechanism)
+                .param("status", status)
+                .param("since", java.sql.Timestamp.from(since))
+                .query(Integer.class)
+                .single();
+    }
+
     private ExecutorSignal mapRow(ResultSet rs, int n) throws SQLException {
         Object confidenceObj = rs.getObject("confidence");
         BigDecimal referencePrice = rs.getBigDecimal("reference_price");

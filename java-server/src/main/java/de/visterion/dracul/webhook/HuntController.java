@@ -395,8 +395,16 @@ public abstract class HuntController {
             log.warn("{} run {} status={} — acknowledging without persisting", agentName(), runId, status);
             return ResponseEntity.noContent().build();
         }
-        var prey = preyMapper.map(body.path("output").path("prey"), agentName(),
-                defaultAnomalyType(), defaultHorizon(), skipBlankSymbol());
+        // Hunter-specific output that must be handled even when there is no new prey (spec
+        // 2026-10-03 §4.3, R2 Major 1: strigoi-tech's catastrophe exits on a full basket). Runs
+        // BEFORE the empty / all-duplicates early returns below. Fail-soft.
+        try {
+            onCompletionAccepted(body, runId);
+        } catch (RuntimeException e) {
+            log.warn("{} run {} — completion hook failed: {}", agentName(), runId, e.toString(), e);
+        }
+        var prey = selectForPersist(preyMapper.map(body.path("output").path("prey"), agentName(),
+                defaultAnomalyType(), defaultHorizon(), skipBlankSymbol()), body, runId);
         if (prey.isEmpty()) {
             log.info("{} run {} produced no persistable prey", agentName(), runId);
             return ResponseEntity.noContent().build();
@@ -453,5 +461,22 @@ public abstract class HuntController {
      */
     protected void afterPersist(List<Prey> inserted, JsonNode body) {
         // no-op
+    }
+
+    /**
+     * Called once per accepted completion (status done/succeeded), right after the status check
+     * and BEFORE prey are mapped — so before the "no persistable prey" and "all duplicates" early
+     * returns. Default: no-op. Exceptions are caught and logged by {@link #complete}.
+     */
+    protected void onCompletionAccepted(JsonNode body, String runId) {
+        // no-op
+    }
+
+    /**
+     * Last word on which mapped prey are persisted (validation, caps). Called on every accepted
+     * completion, also with an empty list. Default: everything. Must never return null.
+     */
+    protected List<Prey> selectForPersist(List<Prey> mapped, JsonNode body, String runId) {
+        return mapped;
     }
 }

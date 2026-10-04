@@ -15,6 +15,9 @@ import de.visterion.dracul.strigoi.merger.MergerEnrichmentService;
 import de.visterion.dracul.strigoi.spin.SpinBalanceSheetSnapshotter;
 import de.visterion.dracul.strigoi.spin.SpinDistributionSnapshotter;
 import de.visterion.dracul.strigoi.spin.SpinValuationSnapshotter;
+import de.visterion.dracul.strigoi.tech.TechBookService;
+import de.visterion.dracul.strigoi.tech.TechCandidateService;
+import de.visterion.dracul.strigoi.tech.TechEligibility;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -60,7 +63,7 @@ import static org.springframework.boot.test.context.SpringBootTest.WebEnvironmen
  *  <p>Two things make this test worth having rather than decorative:
  *  <ol>
  *    <li>The endpoint list is derived from {@link RequestMappingHandlerMapping} and then pinned
- *        against an explicit, hand-written expectation ({@link #derivedToolEndpointListMatchesTheSevenExpectedPaths}).
+ *        against an explicit, hand-written expectation ({@link #derivedToolEndpointListMatchesTheNineExpectedPaths}).
  *        Every hunter is {@code @ConditionalOnProperty} with default {@code false}; a forgotten
  *        property in this class's {@code @TestPropertySource} would silently shrink the derived
  *        list — in the worst case to zero — and every {@code @MethodSource}-driven test below
@@ -92,6 +95,7 @@ import static org.springframework.boot.test.context.SpringBootTest.WebEnvironmen
         "dracul.strigoi.index.enabled=true",
         "dracul.strigoi.insider.enabled=true",
         "dracul.strigoi.lazarus.enabled=true",
+        "dracul.strigoi.tech.enabled=true",
         "dracul.public-url=http://test.invalid:9090"
 })
 class ToolEndpointResponseRuleIT {
@@ -112,12 +116,15 @@ class ToolEndpointResponseRuleIT {
             "/api/strigoi-spin/tools/fetch-candidates",
             "/api/strigoi-index/tools/fetch-candidates",
             "/api/strigoi-insider/tools/fetch-clusters",
-            "/api/strigoi-lazarus/tools/fetch-candidates");
+            "/api/strigoi-lazarus/tools/fetch-candidates",
+            "/api/strigoi-tech/tools/fetch-book",
+            "/api/strigoi-tech/tools/check-candidate");
 
-    /** The six candidate/cluster endpoints — everything except {@code fetch-news}, which needs
-     *  its own benign-input test (see class javadoc). */
+    /** The endpoints that take no required input — everything except {@code fetch-news} and
+     *  strigoi-tech's {@code check-candidate}, which both need a {@code symbol} and get their own
+     *  benign-input tests (see class javadoc). */
     private static final List<String> CANDIDATE_PATHS = ALL_PATHS.stream()
-            .filter(p -> !p.endsWith("/fetch-news"))
+            .filter(p -> !p.endsWith("/fetch-news") && !p.endsWith("/check-candidate"))
             .toList();
 
     static List<String> endpoints() { return ALL_PATHS; }
@@ -141,6 +148,8 @@ class ToolEndpointResponseRuleIT {
     @MockitoBean SpinBalanceSheetSnapshotter balanceSheet;   // spin
     @MockitoBean SpinDistributionSnapshotter distribution;   // spin
     @MockitoBean SpinValuationSnapshotter valuation;         // spin
+    @MockitoBean TechBookService techBook;                   // tech (fetch-book + check-candidate)
+    @MockitoBean TechCandidateService techCandidates;        // tech (check-candidate)
 
     private final HttpClient http = HttpClient.newHttpClient();
 
@@ -187,6 +196,13 @@ class ToolEndpointResponseRuleIT {
         // and turn every merger row of this matrix into the guard envelope it is asserting against.
         when(mergerEnrichment.enrich(any()))
                 .thenReturn(new EnrichedMergerBatch(List.of(), false, 0, 0));
+        // strigoi-tech: an empty basket (no quote call) and a clean, answered candidate check.
+        when(techBook.snapshot()).thenReturn(new TechBookService.Snapshot(false, List.of(),
+                List.of(), 0, java.util.Set.of(), java.util.Set.of(), java.util.Set.of()));
+        when(techCandidates.check(anyString(), any())).thenAnswer(inv ->
+                new TechCandidateService.Candidate(
+                        objectMapper.createObjectNode().put("symbol", (String) inv.getArgument(0)),
+                        new TechEligibility.Verdict(true, List.of(), List.of()), false));
     }
 
     private HttpResponse<String> post(String path, String bearer, String rawBody) throws Exception {
@@ -221,13 +237,13 @@ class ToolEndpointResponseRuleIT {
     // --- Step 1: derive the endpoint list and pin it ---
 
     @Test
-    void derivedToolEndpointListMatchesTheSevenExpectedPaths() {
+    void derivedToolEndpointListMatchesTheNineExpectedPaths() {
         var paths = handlerMapping.getHandlerMethods().keySet().stream()
                 .flatMap(i -> i.getPathPatternsCondition().getPatternValues().stream())
                 .filter(p -> p.startsWith("/api/strigoi-") && p.contains("/tools/"))
                 .toList();
 
-        assertThat(paths).hasSize(7).containsExactlyInAnyOrderElementsOf(ALL_PATHS);
+        assertThat(paths).hasSize(9).containsExactlyInAnyOrderElementsOf(ALL_PATHS);
     }
 
     // --- Step 2: the matrix ---
@@ -280,6 +296,30 @@ class ToolEndpointResponseRuleIT {
     @Test
     void fetchNewsAbsentBodyIsGuardedByDesign() throws Exception {
         var out = post("/api/strigoi-echo/tools/fetch-news", TOKEN, null);
+        assertThat(out.statusCode()).isEqualTo(200);
+        assertThat(status(out)).isEqualTo("unavailable");
+        assertThat(detail(out)).startsWith(GUARD_MARKER);
+    }
+
+    /** strigoi-tech {@code check-candidate}: like {@code fetch-news}, a {@code symbol} is
+     *  required, so its benign rows supply one and its absent body is the guarded shape. */
+    @Test
+    void checkCandidateBenignInputRunsNormally() throws Exception {
+        String path = "/api/strigoi-tech/tools/check-candidate";
+        for (String body : List.of(
+                "{\"input\":{\"symbol\":\"SYNA\"}}",
+                "{\"input\":{\"symbol\":\" syna \"},\"unknown\":1}",
+                "{\"symbol\":\"SYNA\"}")) {
+            var out = post(path, TOKEN, body);
+            assertThat(out.statusCode()).as("body=%s", body).isEqualTo(200);
+            assertThat(status(out)).as("body=%s", body).isEqualTo("healthy");
+            assertThat(detail(out)).as("body=%s", body).doesNotStartWith(GUARD_MARKER);
+        }
+    }
+
+    @Test
+    void checkCandidateAbsentBodyIsGuardedByDesign() throws Exception {
+        var out = post("/api/strigoi-tech/tools/check-candidate", TOKEN, null);
         assertThat(out.statusCode()).isEqualTo(200);
         assertThat(status(out)).isEqualTo("unavailable");
         assertThat(detail(out)).startsWith(GUARD_MARKER);

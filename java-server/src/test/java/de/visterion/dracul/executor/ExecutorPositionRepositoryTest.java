@@ -783,4 +783,32 @@ class ExecutorPositionRepositoryTest {
         repo.clearPendingTrim(id);
         assertThat(repo.findClosedWithPendingTrim("ptl-conn")).isEmpty();
     }
+
+    @Test
+    void catastropheFlagIsSetOnceAndOnlyOnAnOpenConvictionRowOfThatConnection() {
+        String symbol = "CAT-" + UUID.randomUUID();
+        var base = ExecutorPositionFixtures.withoutKillLevel(null, "cat-conn", symbol, "BUY",
+                new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("65.00"),
+                new BigDecimal("65.00"), 1, null, List.of("X"), "sig-cat", "strigoi-tech", null,
+                null, "OPEN", null, null, null, 0, null, null, null, null, null, null, null, null,
+                null, 0, null, null, null, null, null, null, false, null, null);
+        long conviction = repo.insert(ExecutorPositionFixtures.conviction(base));
+        long standard = repo.insert(ExecutorPositionFixtures.withoutKillLevel(null, "cat-conn",
+                symbol + "S", "BUY", new BigDecimal("10"), new BigDecimal("100.00"),
+                new BigDecimal("65.00"), new BigDecimal("65.00"), 1, null, List.of("X"),
+                "sig-cat-s", "strigoi-echo", null, null, "OPEN", null, null, null, 0, null, null,
+                null, null, null, null, null, null, null, 0, null, null, null, null, null, null,
+                false, null, null));
+        Instant at = Instant.parse("2026-07-08T22:30:00Z");
+
+        assertThat(repo.flagCatastrophe(conviction, "other-conn", "r", at)).isFalse();
+        assertThat(repo.flagCatastrophe(standard, "cat-conn", "r", at)).isFalse();
+        assertThat(repo.flagCatastrophe(conviction, "cat-conn", "synthetic fraud", at)).isTrue();
+        assertThat(repo.flagCatastrophe(conviction, "cat-conn", "second", at)).isFalse();
+        assertThat(repo.findById(conviction).catastropheReason()).isEqualTo("synthetic fraud");
+
+        repo.close(conviction, new BigDecimal("50"), null, "HARD_CATASTROPHE", null);
+        assertThat(repo.findSymbolsClosedSince(ExitProfile.CONVICTION, at.minusSeconds(86400 * 365L)))
+                .contains(symbol.toUpperCase(java.util.Locale.ROOT));
+    }
 }

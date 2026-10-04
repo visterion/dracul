@@ -18,7 +18,7 @@ class StrigoiPromptContractTest {
 
     private static final List<String> STRIGOI = List.of(
             "strigoi-spin", "strigoi-merger", "strigoi-insider",
-            "strigoi-echo", "strigoi-lazarus", "strigoi-index");
+            "strigoi-echo", "strigoi-lazarus", "strigoi-index", "strigoi-tech");
 
     @Test
     void everyStrigoiPromptDeclaresEmptyResultContract() {

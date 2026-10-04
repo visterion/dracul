@@ -1785,6 +1785,82 @@ On success (`status` = `done`) persists each `output.prey[]` entry as Prey with
 `symbol` are skipped. Returns 204; non-success / empty prey acknowledged without
 persisting.
 
+## Strigoi-Tech Webhooks
+
+Called by Vistierie during a `strigoi-tech` agent run (conviction basket). All three
+require `Authorization: Bearer <STRIGOI_TECH_TOKEN>`; only registered when
+`STRIGOI_TECH_ENABLED=true`. Neither tool is cached. Like every hunter tool endpoint they
+never answer 4xx except 401: a failure is a 200 with `data_source_health.status =
+"unavailable"` and a `detail` starting `tool-guard: `.
+
+### `POST /api/strigoi-tech/tools/fetch-book`
+
+Tool webhook (`fetch_tech_book`). The request body is ignored.
+
+Response:
+```json
+{ "output": {
+  "book": {
+    "open_positions": [
+      { "symbol": "ACME", "entry_price": 100.00, "qty": 10, "highest_close": 131.00,
+        "current_close": 120.00, "pl_pct": 20.00, "active_stop": 91.70, "half_sold": true,
+        "days_held": 41, "catastrophe_flagged": false,
+        "news_since_last_run": [ { "headline": "...", "source": "...",
+                                   "datetime": "2026-01-02T14:00:00Z", "url": "https://example.com/1" } ] } ],
+    "pending_signals": [ { "symbol": "SYNB", "signal_id": "...", "created_at": "..." } ],
+    "basket_size": 12, "slots_free": 10, "new_names_allowed_this_week": 1,
+    "accepted_this_week": 1, "recently_exited": ["SYNE"], "executor_available": true,
+    "last_completion_notes": "run=... picks_over_cap=0 ineligible_pick=1 catastrophe_rejected=0 executor_disabled=0" },
+  "data_source_health": { "status": "healthy", "source": "dracul", "detail": null, "checked_at": "..." } } }
+```
+
+`open_positions` are the OPEN CONVICTION positions on `dracul.executor.connection`;
+`news_since_last_run` covers the last 3 calendar days (at most 5). `data_source_health` is
+`unavailable` (source `agora`) when there are open positions and not one could be priced; the
+`book` is still returned. `last_completion_notes` is null until the first completion after a
+restart.
+
+### `POST /api/strigoi-tech/tools/check-candidate`
+
+Tool webhook (`check_tech_candidate`). Request: `{"input":{"symbol":"ACME"}}` (a top-level
+`symbol` is accepted too; trimmed and upper-cased).
+
+Response:
+```json
+{ "output": {
+  "candidate": {
+    "symbol": "ACME",
+    "profile": { "name": "Acme Corp", "industry": "Technology", "market_cap_millions": 50000,
+                 "currency": "USD", "exchange": "...", "listing_ticker": "ACME", "type": "EQUITY" },
+    "quote": { "price": 120.00, "currency": "USD" },
+    "technicals": { "current_close": 120.00, "atr": 3.10, "ma50": 110.00, "ma200": 95.00,
+                    "high_52w": 130.00, "low_52w": 80.00 },
+    "fundamentals": { "...": "BasicFinancials summary" },
+    "analyst_estimates": { "period": "...", "strongBuy": 0, "buy": 0, "hold": 0, "sell": 0, "strongSell": 0 },
+    "news": [ { "headline": "...", "source": "...", "datetime": "...", "url": "..." } ],
+    "eligible": true, "reasons": [], "notes": [] },
+  "data_source_health": { "status": "healthy", "source": "agora", "detail": null, "checked_at": "..." } } }
+```
+
+A section whose source failed is null. `reasons` block (`not_equity:<TYPE>`,
+`quote_currency:<CCY>`, `already_held`, `already_pending`, `recently_exited`,
+`market_cap_below_min`, `data_unavailable:<field>`), `notes` inform (`market_cap_unverified`).
+`data_source_health` is `unavailable` when the profile AND the quote both failed with an Agora
+outage. A missing symbol answers 200 / `unavailable` with `detail` `tool-guard: missing symbol`.
+
+### `POST /api/strigoi-tech/complete`
+
+Completion webhook. Headers: `Authorization: Bearer ...`, `X-Vistierie-Run-Id: ...`.
+On success (`status` = `done`/`succeeded`), in this order: `output.catastrophe_exits[]`
+(`symbol`, `reason`, `evidence[]`) are processed — even with `prey: []` and on a duplicate
+re-delivery — and set `executor_position.catastrophe_reason` / `catastrophe_flagged_at` once
+on an OPEN CONVICTION position of `dracul.executor.connection` (anything else is rejected and
+counted); then every `output.prey[]` pick is re-validated with the `check-candidate` rules and
+capped at `min(free slots, weekly allowance)`; the survivors are persisted as Prey with
+`anomalyType=TECH_CONVICTION`, `discoveredBy=strigoi-tech` and emitted as executor signals.
+Prey without a `symbol` are skipped. Returns 204; non-success is acknowledged without
+processing anything.
+
 ## Daywalker Webhooks
 
 These endpoints are called by Vistierie for the `daywalker` StreamingBee. Both

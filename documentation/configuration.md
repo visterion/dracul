@@ -363,6 +363,8 @@ dracul:
       cron: "0 0 4 * * MON-FRI"
     merger:
       cron: "0 0 4 * * MON-FRI"
+    tech:
+      cron: "0 30 22 * * MON-FRI"   # 22:30 UTC, after the US close, before the executor
   voievod:
     cron: "0 0 8 * * 1-5"         # 08:00 UTC on weekdays (synthesizer)
 ```
@@ -484,6 +486,24 @@ that being a permanent property of the instrument rather than a degradation
 budget, spent pre-filter budget) set `truncated`. The candidates that were found
 are always kept — the flags say "what you see is incomplete", not "you saw
 nothing". The screen thresholds above are unchanged by this fix.
+
+## Strigoi Tech
+
+Conviction basket hunter (see `documentation/strigoi.md`, "Strigoi-Tech: conviction basket").
+The executor connection, depot connection and instrument currency it reads are the existing
+`dracul.executor.connection`, `dracul.position.connection` and
+`dracul.executor.instrument-currency`.
+
+| Env var | Property | Default | Purpose |
+|---|---|---|---|
+| `STRIGOI_TECH_ENABLED` | `dracul.strigoi.tech.enabled` | `false` | Register the agent + activate the webhook controller and its services (`@ConditionalOnProperty`). |
+| `STRIGOI_TECH_TOKEN` | `dracul.strigoi.tech.webhook-token` | `dev-token-change-me` | Bearer token shared with Vistierie for the two tool webhooks and the completion webhook. **Change in production.** |
+| `DRACUL_TECH_SCHEDULE` | `dracul.strigoi.tech.schedule` | `0 30 22 * * 1-5` | Spring cron (sec min hour dom month dow). Default: 22:30 UTC Mon–Fri — after the US close, before the executor. |
+| `TECH_BASKET_SIZE` | `dracul.strigoi.tech.basket-size` | `12` | Maximum number of names in the basket: open CONVICTION positions plus pending tech signals. |
+| `TECH_MAX_NEW_PER_WEEK` | `dracul.strigoi.tech.max-new-per-week` | `3` | New names per ISO week (Monday 00:00 UTC): tech signals ACCEPTED this week plus pending tech signals. Picks beyond `min(free slots, weekly allowance)` are dropped (`picks_over_cap`). |
+| `TECH_POSITION_PCT` | `dracul.strigoi.tech.position-pct` | `0.033` | Fixed size per name as a fraction of `dracul.executor.total-budget`. ONE key, read by the hunter and by the executor's exit profile CONVICTION (`ConvictionProfile`). |
+| `TECH_MIN_MARKET_CAP_USD_MILLIONS` | `dracul.strigoi.tech.min-market-cap-usd-millions` | `20000` | Minimum market cap (USD millions). Enforced only for a confirmed listing (`profile.ticker` equals the symbol); a foreign primary listing (ADR) gets the non-blocking note `market_cap_unverified`. |
+| `TECH_REENTRY_BLOCK_DAYS` | `dracul.strigoi.tech.reentry-block-days` | `90` | A symbol whose CONVICTION position was CLOSED within this many days is ineligible (`recently_exited`). |
 
 ## Strigoi Merger
 

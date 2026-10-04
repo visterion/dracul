@@ -9,6 +9,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -163,5 +164,25 @@ class ExecutorSignalRepositoryTest {
         assertThat(repo.findPending(Integer.MAX_VALUE)).filteredOn(s -> s.signalId().equals(id))
                 .singleElement()
                 .satisfies(s -> assertThat(s.killCloseBelow()).isEqualByComparingTo("48.2"));
+    }
+
+    @Test
+    void countByMechanismAndStatusSinceCountsOnlyThatStatusInTheWindow() {
+        String accepted = UUID.randomUUID().toString();
+        String rejected = UUID.randomUUID().toString();
+        String symbol = "TCNT" + System.nanoTime();
+        Instant before = Instant.now().minusSeconds(5);
+        repo.insert(new ExecutorSignal(accepted, "strigoi-tech", "v1", symbol, "BUY", 0.8,
+                " tech_conviction ", List.of("x"), "12m", null, "PENDING", null));
+        repo.insert(new ExecutorSignal(rejected, "strigoi-tech", "v1", symbol + "R", "BUY", 0.8,
+                "TECH_CONVICTION", List.of("x"), "12m", null, "PENDING", null));
+        int baseline = repo.countByMechanismAndStatusSince("TECH_CONVICTION", "ACCEPTED", before);
+        repo.markStatus(accepted, "ACCEPTED");
+        repo.markStatus(rejected, "REJECTED");
+
+        assertThat(repo.countByMechanismAndStatusSince("TECH_CONVICTION", "ACCEPTED", before))
+                .isEqualTo(baseline + 1);
+        assertThat(repo.countByMechanismAndStatusSince("TECH_CONVICTION", "ACCEPTED",
+                Instant.now().plusSeconds(60))).isZero();
     }
 }

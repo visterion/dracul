@@ -249,6 +249,20 @@ dracul:
       # since Spring never even sees a missing property in that case — only a property that is
       # genuinely absent from both compose and this file reaches the @Value fallback.
       profile-max: ${LAZARUS_PROFILE_MAX:40}
+    tech:
+      # Conviction basket (spec 2026-10-03). Runs after the US close, before the executor.
+      enabled: ${STRIGOI_TECH_ENABLED:false}
+      webhook-token: ${STRIGOI_TECH_TOKEN:dev-token-change-me}
+      schedule: ${DRACUL_TECH_SCHEDULE:0 30 22 * * 1-5}
+      basket-size: ${TECH_BASKET_SIZE:12}
+      max-new-per-week: ${TECH_MAX_NEW_PER_WEEK:3}
+      # Fixed size per name as a fraction of dracul.executor.total-budget; also read by the
+      # executor's exit profile CONVICTION (one key).
+      position-pct: ${TECH_POSITION_PCT:0.033}
+      # Enforced only for a confirmed listing (profile.ticker == symbol); a foreign primary
+      # listing (ADR) is reported market_cap_unverified and not blocked.
+      min-market-cap-usd-millions: ${TECH_MIN_MARKET_CAP_USD_MILLIONS:20000}
+      reentry-block-days: ${TECH_REENTRY_BLOCK_DAYS:90}
     merger:
       enabled: ${STRIGOI_MERGER_ENABLED:false}
       webhook-token: ${STRIGOI_MERGER_TOKEN:dev-token-change-me}

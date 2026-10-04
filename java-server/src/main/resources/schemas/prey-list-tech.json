@@ -1,0 +1,37 @@
+{
+  "type": "object",
+  "required": ["prey"],
+  "properties": {
+    "prey": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["symbol", "companyName", "confidence", "thesis", "horizon", "kill_criteria"],
+        "properties": {
+          "symbol":        {"type": "string"},
+          "companyName":   {"type": "string"},
+          "anomalyType":   {"type": "string", "const": "TECH_CONVICTION"},
+          "confidence":    {"type": "number", "minimum": 0, "maximum": 1},
+          "thesis":        {"type": "string"},
+          "signals":       {"type": "array", "items": {"type": "string"}},
+          "risks":         {"type": "array", "items": {"type": "string"}},
+          "horizon":       {"type": "string"},
+          "kill_criteria": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 5}
+        }
+      }
+    },
+    "catastrophe_exits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["symbol", "reason", "evidence"],
+        "properties": {
+          "symbol":   {"type": "string"},
+          "reason":   {"type": "string"},
+          "evidence": {"type": "array", "items": {"type": "string"}, "minItems": 1}
+        }
+      }
+    },
+    "data_source_health": {"type": "object"}
+  }
+}

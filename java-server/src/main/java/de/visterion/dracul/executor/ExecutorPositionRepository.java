@@ -665,6 +665,36 @@ public class ExecutorPositionRepository {
                 .single();
     }
 
+    /** Sets the strigoi-tech catastrophe flag (spec 2026-10-03 §4.4) — only on an OPEN
+     *  CONVICTION row of {@code connection}, and only once (a flag is final; an operator clears it
+     *  in SQL). @return true when THIS call set it. */
+    public boolean flagCatastrophe(long id, String connection, String reason, Instant at) {
+        return jdbc.sql("""
+                UPDATE executor_position
+                SET catastrophe_reason = :reason, catastrophe_flagged_at = :at
+                WHERE id = :id AND connection = :conn AND status = 'OPEN'
+                  AND exit_profile = 'CONVICTION' AND catastrophe_reason IS NULL
+                """)
+                .param("reason", reason)
+                .param("at", java.sql.Timestamp.from(at))
+                .param("id", id)
+                .param("conn", connection)
+                .update() == 1;
+    }
+
+    /** Upper-cased symbols of {@code profile} rows CLOSED at or after {@code since} — the
+     *  strigoi-tech re-entry block (R2 Minor 9). */
+    public java.util.Set<String> findSymbolsClosedSince(ExitProfile profile, Instant since) {
+        return new java.util.HashSet<>(jdbc.sql("""
+                SELECT DISTINCT upper(symbol) FROM executor_position
+                WHERE status = 'CLOSED' AND exit_profile = :profile AND closed_at >= :since
+                """)
+                .param("profile", profile.name())
+                .param("since", java.sql.Timestamp.from(since))
+                .query(String.class)
+                .list());
+    }
+
     private ExecutorPosition mapRow(ResultSet rs, int n) throws SQLException {
         Object entryDateObj = rs.getObject("entry_date");
         return new ExecutorPosition(

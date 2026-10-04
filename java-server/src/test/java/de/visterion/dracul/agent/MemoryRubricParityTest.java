@@ -7,11 +7,11 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Guards the byte-identical shared memory-rubric block (T1.6 spec §10) across the eight
+ * Guards the byte-identical shared memory-rubric block (T1.6 spec §10) across the nine
  * tool-callback prompts that gain a native {@code search} tool. The prompt system has no include
- * mechanism, so the block is duplicated verbatim into each of the eight prompts and delimited
+ * mechanism, so the block is duplicated verbatim into each of the nine prompts and delimited
  * with explicit sentinel comment markers; this test extracts the sentinel-delimited substring
- * from each file and asserts 8-way equality plus exactly one sentinel pair per file, and that the
+ * from each file and asserts 9-way equality plus exactly one sentinel pair per file, and that the
  * MEMORY-RUBRIC block does not accidentally swallow or duplicate the pre-existing
  * SENTIMENT-RUBRIC block (strigoi-echo.md carries both, non-overlapping). The sentinels are part
  * of the hashed, LLM-visible prompt body (PromptDocument strips only the leading agent-meta
@@ -23,10 +23,10 @@ class MemoryRubricParityTest {
     private static final String END = "<!-- MEMORY-RUBRIC END -->";
     private static final List<String> AGENTS = List.of(
             "strigoi-echo", "strigoi-lazarus", "strigoi-insider", "strigoi-index",
-            "strigoi-merger", "strigoi-spin", "gropar", "voievod");
+            "strigoi-merger", "strigoi-spin", "gropar", "voievod", "strigoi-tech");
 
     @Test
-    void rubricBlockIsByteIdenticalAcrossAllEightPrompts() {
+    void rubricBlockIsByteIdenticalAcrossAllNinePrompts() {
         String reference = null;
         for (String agent : AGENTS) {
             String block = extractBlock(AgentResources.classpath("prompts/" + agent + ".md"), agent);

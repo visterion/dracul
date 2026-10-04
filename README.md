@@ -151,7 +151,7 @@ is non-negotiable — see `CLAUDE.md`.
 
 ## The residents of the crypt
 
-### The six Strigoi (nightly hunters)
+### The Strigoi (nightly hunters)
 
 | # | Strigoi | Anomaly | Tier | Source |
 |---|---------|---------|------|--------|
@@ -161,6 +161,13 @@ is non-negotiable — see `CLAUDE.md`.
 | 4 | **Strigoi-Lazarus** | Quality at 52-week low | reasoning | Piotroski 2000 |
 | 5 | **Strigoi-Index** | Index-inclusion drift | routine | S&P / Russell studies |
 | 6 | **Strigoi-Merger** | M&A arbitrage | reasoning | Mitchell & Pulvino 2001 |
+| 7 | **Strigoi-Tech** | Conviction basket of large tech / "future" names (disabled by default) | reasoning | Breadth + staying invested |
+
+Strigoi-Tech is the odd one out: it does not hunt an anomaly but builds and guards a
+fixed-size basket held for the long run. Its picks feed the executor with exit profile
+CONVICTION (emergency stop, half sold at +30 %, trailing rest), and its nightly news check
+can flag a thesis-destroying event for a code-driven exit. See
+[strigoi.md](documentation/strigoi.md).
 
 Each Strigoi follows the same pattern: deterministic pre-screen against
 its hunting ground → LLM evaluation via Vistierie at the appropriate

@@ -33,7 +33,8 @@ public class MockVistierieClient implements VistierieClient {
                 new StrigoiStatus("strigoi-echo",     "hunting",   MINUS_12H, null),
                 new StrigoiStatus("strigoi-lazarus",  "paused",    null,      null),
                 new StrigoiStatus("strigoi-index",    "resting",   null,      PLUS_20H),
-                new StrigoiStatus("strigoi-merger",   "budget-hit",null,      null)
+                new StrigoiStatus("strigoi-merger",   "budget-hit",null,      null),
+                new StrigoiStatus("strigoi-tech",     "resting",   null,      PLUS_20H)
         );
     }
 
@@ -142,6 +143,7 @@ public class MockVistierieClient implements VistierieClient {
             case "strigoi-lazarus" -> new BudgetStatus(  500_000L, 10_000_000L, 80, 80,       0L,        0L, false, false, false, false);
             case "strigoi-index"   -> new BudgetStatus(  500_000L, 10_000_000L, 80, 80,       0L,        0L, false, false, false, false);
             case "strigoi-merger"  -> new BudgetStatus(  500_000L, 10_000_000L, 80, 80,       0L,        0L, false, false, false, false);
+            case "strigoi-tech"    -> new BudgetStatus(  500_000L, 10_000_000L, 80, 80,       0L,        0L, false, false, false, false);
             default                -> BudgetStatus.empty();
         };
     }

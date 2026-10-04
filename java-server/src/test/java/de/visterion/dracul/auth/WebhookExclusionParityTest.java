@@ -31,7 +31,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * from accidentally letting an operator-facing endpoint (Task 4's
  * {@code GET /api/renfield/proposals}) bypass human auth.
  *
- * <p>Following {@code ToolEndpointResponseRuleIT#derivedToolEndpointListMatchesTheSevenExpectedPaths}
+ * <p>Following {@code ToolEndpointResponseRuleIT#derivedToolEndpointListMatchesTheNineExpectedPaths}
  * (see its class javadoc, "Two things make this test worth having"): the derived machine-auth set is
  * pinned against a hand-written expectation, because every one of these controllers is
  * {@code @ConditionalOnProperty} default {@code false} — a forgotten property in this class's
@@ -46,6 +46,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         "dracul.strigoi.echo.enabled=true", "dracul.strigoi.lazarus.enabled=true",
         "dracul.strigoi.merger.enabled=true", "dracul.strigoi.index.enabled=true",
         "dracul.strigoi.insider.enabled=true", "dracul.strigoi.spin.enabled=true",
+        "dracul.strigoi.tech.enabled=true",
         "dracul.renfield.enabled=true",
         "dracul.gropar.enabled=true",
         "dracul.voievod-outcome.enabled=true",
@@ -70,6 +71,8 @@ class WebhookExclusionParityTest {
             "/api/strigoi-merger/tools/fetch-candidates", "/api/strigoi-merger/complete",
             "/api/strigoi-echo/tools/fetch-candidates", "/api/strigoi-echo/tools/fetch-news",
             "/api/strigoi-echo/complete",
+            "/api/strigoi-tech/tools/fetch-book", "/api/strigoi-tech/tools/check-candidate",
+            "/api/strigoi-tech/complete",
             "/api/gropar/tools/fetch-held-positions", "/api/gropar/complete",
             "/api/daywalker/events", "/api/daywalker/complete",
             "/api/daywalker-deep/complete",

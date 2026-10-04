@@ -111,7 +111,7 @@ class KillCloseBelowContractTest {
     @Test
     void hunterSchemasOutsideScopeDoNotDeclareTheLevel() {
         for (String schemaPath : List.of("schemas/prey-list-spin.json", "schemas/prey-list-index.json",
-                "schemas/prey-list-merger.json", "schemas/prey-list.json")) {
+                "schemas/prey-list-merger.json", "schemas/prey-list.json", "schemas/prey-list-tech.json")) {
             assertThat(preyItems(schemaPath).path("properties").has(PreyMapper.KILL_CLOSE_BELOW))
                     .as("%s must not offer kill_close_below (spec §3.1: out of scope)", schemaPath)
                     .isFalse();
