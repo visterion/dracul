@@ -1,6 +1,9 @@
 package de.visterion.dracul.gropar;
 
 import de.visterion.dracul.agent.ToolFetchCache;
+import de.visterion.dracul.executor.ExecutorPosition;
+import de.visterion.dracul.executor.ExecutorPositionRepository;
+import de.visterion.dracul.executor.ExitProfile;
 import de.visterion.dracul.hivemem.HiveMemResearchService;
 import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.AgoraMarketData;
@@ -10,6 +13,8 @@ import de.visterion.dracul.position.HeldPositionService;
 import de.visterion.dracul.webhook.BearerTokenVerifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpHeaders;
@@ -57,6 +62,15 @@ public class GroparWebhookController {
     private final double stopLossPct;
     private final long fetchThrottleMs;
 
+    /** Optional (executor-gated bean), field-injected so the constructor and its tests stay
+     *  unchanged — the HuntController pattern (spec 2026-10-03 §5.6, R2 Minor 7). Gropar does not
+     *  read executor_position otherwise; this one lookup tells it which held symbols are managed
+     *  by exit profile CONVICTION. */
+    @Autowired
+    private ObjectProvider<ExecutorPositionRepository> executorPositions;
+
+    static final String CONVICTION_LABEL = "managed by exit profile CONVICTION";
+
     public GroparWebhookController(
             @Value("${dracul.gropar.webhook-token}") String token,
             HeldPositionService heldPositionService,
@@ -93,6 +107,27 @@ public class GroparWebhookController {
         this.fetchThrottleMs = fetchThrottleMs;
     }
 
+    /** Tests only. */
+    void setExecutorPositions(ObjectProvider<ExecutorPositionRepository> executorPositions) {
+        this.executorPositions = executorPositions;
+    }
+
+    /** True when the executor holds {@code symbol} as an OPEN CONVICTION position on this
+     *  connection. Fail-soft: any lookup failure means "not managed" (gropar keeps advising). */
+    private boolean convictionManaged(String symbol) {
+        if (executorPositions == null) return false;
+        ExecutorPositionRepository repo = executorPositions.getIfAvailable();
+        if (repo == null) return false;
+        try {
+            ExecutorPosition p = repo.findOpenBySymbolIgnoreCase(connection, symbol);
+            return p != null && p.exitProfile() == ExitProfile.CONVICTION;
+        } catch (RuntimeException e) {
+            log.warn("gropar: exit-profile lookup for {} failed — treating as unmanaged: {}",
+                    symbol, e.getMessage());
+            return false;
+        }
+    }
+
     /** Tool callback: returns all held depot positions (depot ⨝ context) enriched with exit indicators. */
     @PostMapping("/tools/fetch-held-positions")
     public ResponseEntity<Map<String, Object>> fetchHeldPositions(
@@ -118,6 +153,14 @@ public class GroparWebhookController {
                     // position with no matching verdict) simply yields thesis=null below --
                     // never dropped, never erroring.
                     Map<String, Object> thesis = buildThesis(hp);
+                    boolean managed = convictionManaged(hp.symbol());
+                    if (managed) {
+                        // Exit profile CONVICTION owns every exit of this position (emergency
+                        // stop, target-half, trail, catastrophe) — gropar's advisory rules and
+                        // ladder do not apply; say so instead of silently dropping them.
+                        thesis = thesis == null ? new LinkedHashMap<>() : new LinkedHashMap<>(thesis);
+                        thesis.put("exitProfile", CONVICTION_LABEL);
+                    }
 
                     // position_context.opened_at is the best-effort anchor for both TIME_STOP
                     // horizon-elapsed detection and the MFE/giveback peak-search window --
@@ -140,8 +183,9 @@ public class GroparWebhookController {
                     }
                     if (risk.initialStopBreached()) firedRules.add(ExitRules.INITIAL_STOP);
                     if (risk.givebackBreached())    firedRules.add(ExitRules.GIVEBACK);
+                    if (managed) firedRules.clear();
 
-                    var profitTargets = ScaleOutLadder.profitTargets(
+                    var profitTargets = managed ? List.<BigDecimal>of() : ScaleOutLadder.profitTargets(
                             hp.avgPrice(), risk.rAvailable() ? risk.r() : null);
 
                     // An empty price series means we do NOT know this position's current price.
@@ -281,6 +325,12 @@ public class GroparWebhookController {
             if (!heldSymbols.contains(positionId)) {
                 log.warn("gropar: signal for unknown/non-held position_id {} (symbol {}) — skipping",
                         positionId, symbol);
+                continue;
+            }
+
+            if (convictionManaged(symbol)) {
+                log.info("gropar run {}: {} is {} — {} signal not persisted", runId, symbol,
+                        CONVICTION_LABEL, action);
                 continue;
             }
 

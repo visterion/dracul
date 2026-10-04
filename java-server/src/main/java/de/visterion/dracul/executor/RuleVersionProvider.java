@@ -39,9 +39,10 @@ public class RuleVersionProvider {
     private final int maxPerSector;
     private final int cooldownDays;
     private final MechanismBudget mechanismBudget;
+    private final ConvictionProfile convictionProfile;
 
     public RuleVersionProvider(
-            @Value("${dracul.executor.rule-version:exec-v0.9}") String active,
+            @Value("${dracul.executor.rule-version:exec-v1.0}") String active,
             RuleVersionRepository repo,
             ObjectMapper mapper,
             @Value("${dracul.executor.broker-stop-buffer-atr:1.0}") BigDecimal brokerStopBufferAtr,
@@ -56,7 +57,8 @@ public class RuleVersionProvider {
             @Value("${dracul.executor.pace-per-week:10}") int pacePerWeek,
             @Value("${dracul.executor.max-per-sector:5}") int maxPerSector,
             @Value("${dracul.executor.cooldown-days:3}") int cooldownDays,
-            MechanismBudget mechanismBudget) {
+            MechanismBudget mechanismBudget,
+            ConvictionProfile convictionProfile) {
         this.active = active;
         this.repo = repo;
         this.mapper = mapper;
@@ -73,6 +75,7 @@ public class RuleVersionProvider {
         this.maxPerSector = maxPerSector;
         this.cooldownDays = cooldownDays;
         this.mechanismBudget = mechanismBudget;
+        this.convictionProfile = convictionProfile;
     }
 
     @PostConstruct
@@ -100,10 +103,26 @@ public class RuleVersionProvider {
                     .put("tranche_count", trancheCount)
                     .put("heat_pct", heatPct)
                     .put("pace_per_week", pacePerWeek)
-                    .put("max_per_sector", maxPerSector);
+                    .put("max_per_sector", maxPerSector)
+                    .put("exit_profiles", "STANDARD,CONVICTION")
+                    .put("conviction_emergency_stop_pct", convictionProfile.emergencyStopPct())
+                    .put("conviction_target_pct", convictionProfile.targetPct())
+                    .put("conviction_target_fraction", convictionProfile.targetFraction())
+                    .put("conviction_trail_pct", convictionProfile.trailPct())
+                    .put("conviction_min_entry_qty", convictionProfile.minEntryQty())
+                    .put("conviction_entry_broker_stop_pct", convictionProfile.entryBrokerStopPct())
+                    .put("conviction_position_pct", convictionProfile.positionPct());
             // seed() only inserts when the version string is NEW, so this text is written once and
             // is then permanent for the version it describes -- it is the audit record of what
             // that version changed, and prod verification asserts it verbatim.
+            //
+            // exec-v0.9 history (no longer seeded): "structured kill level: only the
+            // hunter-authored kill_close_below is code-enforced (BUY, one daily close strictly
+            // below it -> HARD_KILL_CRITERIA); free-text kill_criteria are no longer parsed by
+            // the executor; place-entry rejects a fresh entry whose level is at or above the
+            // order price (KILL_LEVEL_BREACHED) and drops a level closer than 0.5 x atr_effective
+            // (too_tight) or breached on an adopted order/fill (breached_at_adoption); all other
+            // gates unchanged from exec-v0.8"
             //
             // exec-v0.8 history (no longer seeded): "cooldown after exit shortened from 10 to 3
             // days: COOLDOWN-vetoed signals averaged +1.17 R after 20 days (16/16 positive, n=16);
@@ -119,14 +138,17 @@ public class RuleVersionProvider {
             // entry cap (MERGER_ARB 20%, QUALITY_52W_LOW 15% of budget), transient like
             // MAX_POSITIONS; max_positions 8"
             repo.upsert(new RuleVersion(active, LocalDate.now().toString(),
-                    "structured kill level: only the hunter-authored kill_close_below is "
-                            + "code-enforced (BUY, one daily close strictly below it -> "
-                            + "HARD_KILL_CRITERIA); free-text kill_criteria are no longer parsed by "
-                            + "the executor; place-entry rejects a fresh entry whose level is at or "
-                            + "above the order price (KILL_LEVEL_BREACHED) and drops a level closer "
-                            + "than 0.5 x atr_effective (too_tight) or breached on an adopted "
-                            + "order/fill (breached_at_adoption); all other gates unchanged from "
-                            + "exec-v0.8",
+                    "exit profile CONVICTION for mechanism TECH_CONVICTION (strigoi-tech basket): "
+                            + "logical emergency stop 35 % below entry with the broker leg at the "
+                            + "entry band until widened, fixed notional per name (position-pct of "
+                            + "total-budget, FX-converted, SIZE_TOO_SMALL below min-entry-qty), no "
+                            + "take-profit, half sold at a close of +30 % (HARD_TARGET_HALF), the "
+                            + "rest trailed 30 % below the highest close, a flagged catastrophe "
+                            + "flattens (HARD_CATASTROPHE); CORRELATED, CONCENTRATION and HEAT_LIMIT "
+                            + "skipped for the profile, BUDGET and MECHANISM_BUDGET charge the profile "
+                            + "notional (TECH_CONVICTION 0.44); exit_position rejects the profile "
+                            + "(PROFILE_MANAGED); partial exits repoint the leg rows; STANDARD "
+                            + "unchanged from exec-v0.9",
                     null, params));
         }
     }

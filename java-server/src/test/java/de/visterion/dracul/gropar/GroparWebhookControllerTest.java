@@ -16,6 +16,7 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
 import org.mockito.ArgumentCaptor;
+import org.springframework.beans.factory.support.StaticListableBeanFactory;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -594,5 +595,69 @@ class GroparWebhookControllerTest {
         assertThat(view.currentPrice()).isEqualTo(105.0);
         assertThat(view.currentPriceAvailable()).isTrue();
         assertThat(view.indicators().gainLossPct()).isEqualByComparingTo("5.0000");
+    }
+
+    // =========================================================================
+    // Exit profile CONVICTION (spec 2026-10-03 §5.6, R1 Minor 10 / R2 Minor 7)
+    // =========================================================================
+
+    private void convictionManaged(String symbol) {
+        var repo = mock(de.visterion.dracul.executor.ExecutorPositionRepository.class);
+        var row = de.visterion.dracul.executor.ExecutorPositionFixtures.conviction(
+                de.visterion.dracul.executor.ExecutorPositionFixtures.withoutKillLevel(1L,
+                        CONNECTION, symbol, "BUY", BigDecimal.TEN, new BigDecimal("100"),
+                        new BigDecimal("65"), new BigDecimal("65"), 1, null, List.of(), "sig-1",
+                        "strigoi-tech", "2026-07-01", null, "OPEN", null, null, null, 0, null,
+                        null, null, null, null, null, null, null, null, 0, null, null, null, null,
+                        null, null, false, null, null));
+        when(repo.findOpenBySymbolIgnoreCase(CONNECTION, symbol)).thenReturn(row);
+        controller.setExecutorPositions(new StaticListableBeanFactory(java.util.Map.of("repo", repo))
+                .getBeanProvider(de.visterion.dracul.executor.ExecutorPositionRepository.class));
+    }
+
+    /** The −15 % / +40 % advisory rules do not apply to a CONVICTION position: no fired rules, no
+     *  profit targets, and the view says who manages it. */
+    @Test
+    void fetchHeldPositions_convictionPositionIsLabelledAndCarriesNoAdvisoryRules() throws Exception {
+        convictionManaged("SYNA");
+        when(heldPositionService.openPositions(CONNECTION)).thenReturn(List.of(taOnly("SYNA", "200", "10")));
+        when(marketData.dailyOhlcHistory(eq("SYNA"), anyInt())).thenReturn(multiBars());
+
+        var resp = controller.fetchHeldPositions(BEARER, null);
+
+        @SuppressWarnings("unchecked")
+        var output = (Map<String, Object>) ((Map<?, ?>) resp.getBody()).get("output");
+        var view = (HeldPositionView) ((List<?>) output.get("positions")).get(0);
+        assertThat(view.firedRules()).isEmpty();   // -50 % from 200 would fire STOP_LOSS otherwise
+        assertThat(view.profitTargets()).isEmpty();
+        assertThat(view.thesis()).containsEntry("exitProfile", "managed by exit profile CONVICTION");
+    }
+
+    /** No exit_signal row and no Telegram for a CONVICTION-managed symbol. */
+    @Test
+    void complete_skipsExitSignalsForConvictionPositions() throws Exception {
+        convictionManaged("SYNA");
+        when(heldPositionService.openPositions(CONNECTION)).thenReturn(List.of(taOnly("SYNA", "200", "10")));
+
+        controller.complete(BEARER, "run-g", mapper.readTree("""
+                {"status":"done","output":{"signals":[{"position_id":"SYNA","symbol":"SYNA",
+                 "action":"EXIT","rationale":"stop","confidence":0.8}]}}
+                """));
+
+        verify(exitSignalRepo, never()).insert(any(), any());
+        verify(telegram, never()).notifyAlert(any(), any(), any(), any());
+    }
+
+    /** STANDARD positions keep the advisory exits. */
+    @Test
+    void complete_keepsExitSignalsForStandardPositions() throws Exception {
+        when(heldPositionService.openPositions(CONNECTION)).thenReturn(List.of(taOnly("SYNB", "200", "10")));
+
+        controller.complete(BEARER, "run-g", mapper.readTree("""
+                {"status":"done","output":{"signals":[{"position_id":"SYNB","symbol":"SYNB",
+                 "action":"EXIT","rationale":"stop","confidence":0.8}]}}
+                """));
+
+        verify(exitSignalRepo).insert(any(), any());
     }
 }

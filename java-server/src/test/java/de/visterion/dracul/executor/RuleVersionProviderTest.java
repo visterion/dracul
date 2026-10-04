@@ -24,12 +24,17 @@ class RuleVersionProviderTest {
     static final String DEFAULTS_VERSION = "exec-test-sp2-" + UUID.randomUUID();
     static final String OVERRIDES_VERSION = "exec-test-sp2-ovr-" + UUID.randomUUID();
 
-    static final String CHANGES = "structured kill level: only the hunter-authored kill_close_below "
-            + "is code-enforced (BUY, one daily close strictly below it -> HARD_KILL_CRITERIA); "
-            + "free-text kill_criteria are no longer parsed by the executor; place-entry rejects a "
-            + "fresh entry whose level is at or above the order price (KILL_LEVEL_BREACHED) and "
-            + "drops a level closer than 0.5 x atr_effective (too_tight) or breached on an adopted "
-            + "order/fill (breached_at_adoption); all other gates unchanged from exec-v0.8";
+    static final String CHANGES = "exit profile CONVICTION for mechanism TECH_CONVICTION (strigoi-tech basket): "
+            + "logical emergency stop 35 % below entry with the broker leg at the "
+            + "entry band until widened, fixed notional per name (position-pct of "
+            + "total-budget, FX-converted, SIZE_TOO_SMALL below min-entry-qty), no "
+            + "take-profit, half sold at a close of +30 % (HARD_TARGET_HALF), the "
+            + "rest trailed 30 % below the highest close, a flagged catastrophe "
+            + "flattens (HARD_CATASTROPHE); CORRELATED, CONCENTRATION and HEAT_LIMIT "
+            + "skipped for the profile, BUDGET and MECHANISM_BUDGET charge the profile "
+            + "notional (TECH_CONVICTION 0.44); exit_position rejects the profile "
+            + "(PROFILE_MANAGED); partial exits repoint the leg rows; STANDARD "
+            + "unchanged from exec-v0.9";
 
     @Nested
     @SpringBootTest
@@ -71,6 +76,15 @@ class RuleVersionProviderTest {
             assertThat(v.params().path("kill_criteria_hard").asString()).isEqualTo(
                     "structured kill_close_below, single close, KILL_LEVEL_BREACHED veto, "
                             + "0.5 ATR min distance");
+            // Exit profile CONVICTION (exec-v1.0)
+            assertThat(v.params().path("exit_profiles").asString()).isEqualTo("STANDARD,CONVICTION");
+            assertThat(v.params().path("conviction_emergency_stop_pct").decimalValue()).isEqualByComparingTo("0.35");
+            assertThat(v.params().path("conviction_target_pct").decimalValue()).isEqualByComparingTo("0.30");
+            assertThat(v.params().path("conviction_target_fraction").decimalValue()).isEqualByComparingTo("0.5");
+            assertThat(v.params().path("conviction_trail_pct").decimalValue()).isEqualByComparingTo("0.30");
+            assertThat(v.params().path("conviction_min_entry_qty").asInt()).isEqualTo(2);
+            assertThat(v.params().path("conviction_entry_broker_stop_pct").decimalValue()).isEqualByComparingTo("0.20");
+            assertThat(v.params().path("conviction_position_pct").decimalValue()).isEqualByComparingTo("0.033");
         }
     }
 

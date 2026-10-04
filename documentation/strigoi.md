@@ -1188,6 +1188,10 @@ On each run:
    position with **no** open context row (e.g. opened by the executor before a matching
    verdict was linked) degrades to **TA-only**: indicators are still computed, but `thesis`
    is `null` — it is never dropped from the feed.
+   Positions the executor holds with exit profile CONVICTION are labelled
+   `managed by exit profile CONVICTION` (`thesis.exitProfile`), carry no fired rules or profit
+   targets, and no exit signal is persisted for them (lookup by connection + symbol through the
+   optional executor repository).
 2. `GroparExitIndicators` assembles the exit-indicator bundle for each position. The technical
    indicators are sourced from Agora's bundled `get_indicators` MCP tool (one call per position)
    via the `AgoraResearch` facade — Dracul no longer computes them locally:
