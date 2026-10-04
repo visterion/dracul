@@ -1813,8 +1813,11 @@ class StopRatchetServiceTest {
     /** Leg at the −20 % band (80), logical stop at −35 % (65), not yet half-sold. */
     private ExecutorPosition narrow(long id) {
         ExecutorPosition p = conviction(id, new BigDecimal("110"), new BigDecimal("65"), 0);
-        return ExecutorPositionFixtures.withProfileFields(
+        ExecutorPosition n = ExecutorPositionFixtures.withProfileFields(
                 withBrokerStop(p, new BigDecimal("80")), ExitProfile.CONVICTION, null, null, null, true);
+        // widenNarrowLeg re-reads the row from the book; by default the book agrees.
+        when(positionRepo.findById(id)).thenReturn(n);
+        return n;
     }
 
     @Test
@@ -1867,8 +1870,11 @@ class StopRatchetServiceTest {
 
         ratchet(List.of(p), Map.of("SYNT", new BigDecimal("2.0")),
                 Map.of("SYNT", new BigDecimal("110")), "run1");
+        assertThat(gateway.modifyCalls).hasSize(1);
+        verify(positionRepo, never()).markBrokerStopWidened(anyLong(), any());
         ratchet(List.of(p), Map.of("SYNT", new BigDecimal("2.0")),
                 Map.of("SYNT", new BigDecimal("110")), "run2");
+        assertThat(gateway.modifyCalls).hasSize(2);
 
         verify(decisionRepo, never()).insert(org.mockito.ArgumentMatchers.argThat(
                 d -> "BROKER_STOP_WIDEN_REJECTED".equals(d.reasonCode())));
@@ -1898,6 +1904,38 @@ class StopRatchetServiceTest {
 
         ratchet(List.of(p), Map.of("SYNT", new BigDecimal("2.0")),
                 Map.of("SYNT", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).isEmpty();
+        verify(positionRepo, never()).markBrokerStopWidened(anyLong(), any());
+    }
+
+    /** Same-pass TARGET_HALF: HardTriggerService hands on the stale pre-trim row (trimCount 0,
+     *  flag set) while the book already shows the half-sale — nothing may be widened. */
+    @Test
+    void staleRowWhoseBookRowIsAlreadyHalfSoldIsNotWidened() {
+        ExecutorPosition stale = narrow(75L);
+        ExecutorPosition book = conviction(75L, new BigDecimal("131"), new BigDecimal("65"), 1);
+        when(positionRepo.findById(75L)).thenReturn(ExecutorPositionFixtures.withProfileFields(
+                withBrokerStop(book, new BigDecimal("80")), ExitProfile.CONVICTION, null, null, null, true));
+        withOpenLegs(75L, leg(750L, 75L, 1, "brk-1", "stop-remainder", new BigDecimal("3")));
+
+        ratchet(List.of(stale), Map.of("SYNT", new BigDecimal("2.0")),
+                Map.of("SYNT", new BigDecimal("131")), "run1");
+
+        assertThat(gateway.modifyCalls).isEmpty();
+        verify(positionRepo, never()).markBrokerStopWidened(anyLong(), any());
+        verify(decisionRepo, never()).insert(any());
+    }
+
+    /** A pending (accepted, unfilled) trim in the book: the trim's outcome is open — no modify. */
+    @Test
+    void staleRowWhoseBookRowHasAPendingTrimIsNotWidened() {
+        ExecutorPosition stale = narrow(76L);
+        when(positionRepo.findById(76L)).thenReturn(ExecutorPositionFixtures.withProfileFields(
+                stale, ExitProfile.CONVICTION, null, null, "trim-76", true));
+
+        ratchet(List.of(stale), Map.of("SYNT", new BigDecimal("2.0")),
+                Map.of("SYNT", new BigDecimal("131")), "run1");
 
         assertThat(gateway.modifyCalls).isEmpty();
         verify(positionRepo, never()).markBrokerStopWidened(anyLong(), any());

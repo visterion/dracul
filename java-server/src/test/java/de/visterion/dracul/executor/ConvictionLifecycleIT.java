@@ -3,6 +3,7 @@ package de.visterion.dracul.executor;
 import de.visterion.dracul.ContainerConfig;
 import de.visterion.dracul.executor.broker.BrokerPosition;
 import de.visterion.dracul.executor.broker.FakeExecutionGateway;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -48,6 +49,13 @@ class ConvictionLifecycleIT {
     @Autowired ReconcileService reconcile;
     @Autowired HardTriggerService hardTrigger;
     @Autowired StopRatchetService ratchet;
+
+    /** The fake gateway is one Spring bean shared by every test in this context. */
+    @BeforeEach
+    void resetGatewayRecordings() {
+        gateway.modifyCalls.clear();
+        gateway.flattenFractions.clear();
+    }
 
     private List<ExecutorPosition> reconciled(String connection, long id, String runId) {
         return reconcile.reconcile(connection, runId).survivors().stream()
@@ -129,5 +137,38 @@ class ConvictionLifecycleIT {
                 Map.of(symbol, new BigDecimal("97")), "run-3");
         assertThat(gateway.flattenFractions).last().isEqualTo(BigDecimal.ONE);
         assertThat(positions.findById(id).pendingExitReason()).isEqualTo("HARD_STOP");
+    }
+
+    /** Gap-up first pass: the first close is already >= +30 %, so TARGET_HALF fires before the
+     *  narrow leg was ever widened. The stale pre-trim row MaintenancePipeline hands to the
+     *  ratchet in the same pass must not widen the remainder's leg away from the market. */
+    @Test
+    void targetHalfInTheSamePassAsAPendingWideningSendsNoWidening() {
+        String connection = "lifecycle-gap-" + System.nanoTime();
+        String symbol = "SYNG";
+        long id = positions.insert(ExecutorPositionFixtures.withProfileFields(
+                ExecutorPositionFixtures.withoutKillLevel(null, connection, symbol, "BUY",
+                        new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("65.00"),
+                        new BigDecimal("65.00"), 1, null, List.of("X"), "sig-" + connection,
+                        "strigoi-tech", null, null, "OPEN", "brk-" + connection,
+                        new BigDecimal("100"), null, 0, null, null, null, null, null, null, null,
+                        null, null, 0, null, null, null, null, null, null, false,
+                        new BigDecimal("80.00"), "2026-07-01T00:00:00Z"),
+                ExitProfile.CONVICTION, null, null, null, true));
+
+        gateway.seedPosition(new BrokerPosition(symbol, "BUY", new BigDecimal("10"),
+                new BigDecimal("100"), new BigDecimal("131"), 0));
+        List<ExecutorPosition> afterHard = hardTrigger.apply(reconciled(connection, id, "run-g1"),
+                Map.of(symbol, new BigDecimal("131")), "run-g1");
+        assertThat(afterHard).singleElement()
+                .satisfies(p -> assertThat(p.trimCount()).isZero());   // the stale row
+        ratchet.ratchet(afterHard, Map.of(symbol, new BigDecimal("2")), Map.of(),
+                Map.of(symbol, new BigDecimal("2")), Map.of(symbol, new BigDecimal("131")), "run-g1");
+
+        assertThat(gateway.modifyCalls).isEmpty();
+        ExecutorPosition book = positions.findById(id);
+        assertThat(book.trimCount()).isEqualTo(1);
+        assertThat(book.brokerStop()).isEqualByComparingTo("80.00");
+        assertThat(book.brokerStopNarrow()).isTrue();
     }
 }

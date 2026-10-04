@@ -199,9 +199,11 @@ public class StopRatchetService {
             //
             // The one thing a pre-half-sale CONVICTION row does get is the post-fill widening of
             // a narrow entry leg out to the logical stop (spec 2026-10-03 §5.3) — see
-            // widenNarrowLeg. On the stale same-pass row above, that widening is harmless: it
-            // moves the (repointed) leg to the emergency stop the book already holds as
-            // active_stop, and the trail takes over on the next pass (ruling F14).
+            // widenNarrowLeg. It must NOT fire on the stale same-pass row above: by then
+            // PartialExitService has repointed the legs to the remainder, and widening would move
+            // the remainder's leg AWAY from the market after the half-sale — or send a modify while
+            // an unconfirmed trim's broker outcome is unknown. widenNarrowLeg therefore re-reads
+            // the row from the book and widens only a row that is still un-trimmed there.
             if (conviction && p.trimCount() == 0) {
                 if (p.brokerStopNarrow()) widenNarrowLeg(p, runId);
                 continue;
@@ -361,7 +363,9 @@ public class StopRatchetService {
      * the logical emergency stop ({@code active_stop}, −35 %). This is the ONE deliberate move of
      * a broker leg away from the market — the narrow leg was a band workaround, never a stop
      * anyone chose — so it bypasses {@link StopRatchetGuard} on purpose and is reached only for a
-     * row flagged {@code broker_stop_narrow} before the half-sale.
+     * row flagged {@code broker_stop_narrow} before the half-sale. "Before the half-sale" is
+     * decided by the BOOK, re-read here, never by the in-memory row: after a same-pass
+     * TARGET_HALF that row is stale while the legs already belong to the remainder.
      *
      * <p>A broker verdict "no" escalates {@code BROKER_STOP_WIDEN_REJECTED} once and is never
      * retried: the flag stays, the effective emergency stop is the narrow leg, and the daily
@@ -375,7 +379,15 @@ public class StopRatchetService {
      * tranche), so the multi-leg branch exists only for remainder legs left by a lost trim
      * (ruling F14); a leg that cannot be named there is not guessed at.
      */
-    private void widenNarrowLeg(ExecutorPosition p, String runId) {
+    private void widenNarrowLeg(ExecutorPosition stale, String runId) {
+        // The in-memory row can be the stale pre-trim one HardTriggerService hands on after a
+        // same-pass TARGET_HALF (trimCount 0 in memory, 1 or a pending trim id in the book). The
+        // book decides: widening is for an un-trimmed, still-narrow position only.
+        ExecutorPosition p = positionRepo.findById(stale.id());
+        if (p == null || p.trimCount() != 0 || p.pendingTrimOrderId() != null
+                || !p.brokerStopNarrow()) {
+            return;
+        }
         BigDecimal target = p.activeStop();
         if (target == null) return;
         if (decisionRepo.countByReasonCodeForPosition(WIDEN_REJECTED, p.id()) > 0) return;

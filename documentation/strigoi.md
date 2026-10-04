@@ -1616,8 +1616,12 @@ the LLM, which owns only the soft judgment call. Every call to
    −20 % leg stays the position's effective emergency stop. A call that got no
    verdict (outage, or a rejection carrying a rate-limit signature) writes
    nothing and is tried again on the next run — one modify per leg per run,
-   no in-run retry. This is the only move of a broker leg away from the
-   market; it does not pass the ratchet guard.
+   no in-run retry. The row is re-read from the book first and widened only
+   while it is still un-trimmed there (`trim_count = 0`, no pending trim):
+   after a same-pass `HARD_TARGET_HALF` the in-memory row is stale and the
+   legs already belong to the remainder, which is never widened. This is the
+   only move of a broker leg away from the market; it does not pass the
+   ratchet guard.
 
 Only after that does the LLM see the (now current) open positions, each
 carrying a `soft_trigger` block (`chandelier_breach`, `ma_break`,
