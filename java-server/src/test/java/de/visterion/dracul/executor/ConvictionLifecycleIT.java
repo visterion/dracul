@@ -70,13 +70,21 @@ class ConvictionLifecycleIT {
         // Night 1: close 131 -> target-half (0.5 of 10)
         gateway.seedPosition(new BrokerPosition(symbol, "BUY", new BigDecimal("10"),
                 new BigDecimal("100"), new BigDecimal("131"), 0));
-        hardTrigger.apply(reconciled(connection, id, "run-1"),
+        List<ExecutorPosition> afterHard = hardTrigger.apply(reconciled(connection, id, "run-1"),
                 Map.of(symbol, new BigDecimal("131")), "run-1");
         assertThat(gateway.flattenFractions).containsExactly(new BigDecimal("0.5"));
         ExecutorPosition halfSold = positions.findById(id);
         assertThat(halfSold.trimCount()).isEqualTo(1);
         assertThat(halfSold.qty()).isEqualByComparingTo("5");
         assertThat(halfSold.status()).isEqualTo("OPEN");
+
+        // The same-pass stale row (trimCount still 0 in memory) must not be ratcheted: this is
+        // the exact coupling Task 6's review carried forward — MaintenancePipeline hands THIS
+        // survivors list, not a re-read one, straight to StopRatchetService.ratchet.
+        ratchet.ratchet(afterHard, Map.of(symbol, new BigDecimal("2")), Map.of(),
+                Map.of(symbol, new BigDecimal("2")), Map.of(symbol, new BigDecimal("131")), "run-1");
+        assertThat(gateway.modifyCalls).isEmpty();
+        assertThat(positions.findById(id).activeStop()).isEqualByComparingTo("65.00");
 
         // Second maintenance pass of the same run: the re-read row blocks a second half-sale
         hardTrigger.apply(List.of(positions.findById(id)), Map.of(symbol, new BigDecimal("131")), "run-1");
