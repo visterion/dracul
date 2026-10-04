@@ -50,7 +50,13 @@ class SettingsAgentConfigControllerIT {
 
         assertThat(body).isNotNull();
         assertThat(body.isArray()).isTrue();
-        assertThat(body).hasSize(6);
+        // 7: MockVistierieClient#listStrigoi() (dev profile) now also lists strigoi-tech
+        // (feat/strigoi-tech, 2026-10-03) alongside the 6 pre-existing hunters.
+        assertThat(body).hasSize(7);
+
+        var tech = row(body, "strigoi-tech");
+        assertThat(tech.get("state").asText()).isEqualTo("resting");
+        assertThat(tech.get("paused").asBoolean()).isFalse();
 
         var spin = row(body, "strigoi-spin");
         assertThat(spin.get("tier").asText()).isEqualTo("Reasoning");
