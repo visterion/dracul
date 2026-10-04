@@ -660,4 +660,66 @@ class GroparWebhookControllerTest {
 
         verify(exitSignalRepo).insert(any(), any());
     }
+
+    /** Final review #4: the CONVICTION check uses the VALIDATED position_id, never the LLM-echoed
+     *  symbol — an echo that differs (case, typo, another ticker) must not bypass the skip. */
+    @Test
+    void complete_convictionCheckUsesTheValidatedPositionIdNotTheEchoedSymbol() throws Exception {
+        convictionManaged("SYNA");
+        when(heldPositionService.openPositions(CONNECTION)).thenReturn(List.of(taOnly("SYNA", "200", "10")));
+
+        controller.complete(BEARER, "run-g", mapper.readTree("""
+                {"status":"done","output":{"signals":[{"position_id":"SYNA","symbol":"SYNZ",
+                 "action":"EXIT","rationale":"stop","confidence":0.8}]}}
+                """));
+
+        verify(exitSignalRepo, never()).insert(any(), any());
+    }
+
+    /** Fail-soft: no executor repository bean (executor disabled) -> STANDARD exit signals persist. */
+    @Test
+    void complete_emptyExecutorProviderKeepsExitSignals() throws Exception {
+        controller.setExecutorPositions(new StaticListableBeanFactory(java.util.Map.of())
+                .getBeanProvider(de.visterion.dracul.executor.ExecutorPositionRepository.class));
+        when(heldPositionService.openPositions(CONNECTION)).thenReturn(List.of(taOnly("SYNB", "200", "10")));
+
+        controller.complete(BEARER, "run-g", mapper.readTree("""
+                {"status":"done","output":{"signals":[{"position_id":"SYNB","symbol":"SYNB",
+                 "action":"EXIT","rationale":"stop","confidence":0.8}]}}
+                """));
+
+        verify(exitSignalRepo).insert(any(), any());
+    }
+
+    /** Fail-soft: a lookup that throws — while resolving the bean or while querying — is "not
+     *  managed"; the advisory exit signal is still inserted. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void complete_throwingExecutorLookupKeepsExitSignals() throws Exception {
+        var provider = (org.springframework.beans.factory.ObjectProvider<
+                de.visterion.dracul.executor.ExecutorPositionRepository>)
+                mock(org.springframework.beans.factory.ObjectProvider.class);
+        when(provider.getIfAvailable()).thenThrow(
+                new org.springframework.beans.factory.BeanCreationException("synthetic"));
+        controller.setExecutorPositions(provider);
+        when(heldPositionService.openPositions(CONNECTION)).thenReturn(List.of(
+                taOnly("SYNB", "200", "10"), taOnly("SYNC", "200", "10")));
+
+        controller.complete(BEARER, "run-g", mapper.readTree("""
+                {"status":"done","output":{"signals":[{"position_id":"SYNB","symbol":"SYNB",
+                 "action":"EXIT","rationale":"stop","confidence":0.8}]}}
+                """));
+        verify(exitSignalRepo).insert(any(), any());
+
+        var repo = mock(de.visterion.dracul.executor.ExecutorPositionRepository.class);
+        when(repo.findOpenBySymbolIgnoreCase(any(), any())).thenThrow(new IllegalStateException("db down"));
+        controller.setExecutorPositions(new StaticListableBeanFactory(java.util.Map.of("repo", repo))
+                .getBeanProvider(de.visterion.dracul.executor.ExecutorPositionRepository.class));
+
+        controller.complete(BEARER, "run-h", mapper.readTree("""
+                {"status":"done","output":{"signals":[{"position_id":"SYNC","symbol":"SYNC",
+                 "action":"EXIT","rationale":"stop","confidence":0.8}]}}
+                """));
+        verify(exitSignalRepo, org.mockito.Mockito.times(2)).insert(any(), any());
+    }
 }

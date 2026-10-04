@@ -116,9 +116,10 @@ public class GroparWebhookController {
      *  connection. Fail-soft: any lookup failure means "not managed" (gropar keeps advising). */
     private boolean convictionManaged(String symbol) {
         if (executorPositions == null) return false;
-        ExecutorPositionRepository repo = executorPositions.getIfAvailable();
-        if (repo == null) return false;
         try {
+            // Resolving the bean is part of the lookup: a creation failure is fail-soft too.
+            ExecutorPositionRepository repo = executorPositions.getIfAvailable();
+            if (repo == null) return false;
             ExecutorPosition p = repo.findOpenBySymbolIgnoreCase(connection, symbol);
             return p != null && p.exitProfile() == ExitProfile.CONVICTION;
         } catch (RuntimeException e) {
@@ -328,7 +329,9 @@ public class GroparWebhookController {
                 continue;
             }
 
-            if (convictionManaged(symbol)) {
+            // The validated position_id (a held symbol), never the LLM-echoed symbol: an echo that
+            // differs would otherwise slip an advisory signal past the CONVICTION skip.
+            if (convictionManaged(positionId)) {
                 log.info("gropar run {}: {} is {} — {} signal not persisted", runId, symbol,
                         CONVICTION_LABEL, action);
                 continue;
