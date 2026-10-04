@@ -829,4 +829,22 @@ class ExecutorPositionRepositoryTest {
         assertThat(repo.findSymbolsClosedSince(ExitProfile.CONVICTION, at.minusSeconds(86400 * 365L)))
                 .contains(symbol.toUpperCase(java.util.Locale.ROOT));
     }
+
+    @Test
+    void markBrokerStopWidenedClearsTheNarrowFlag() {
+        String symbol = "WID-" + UUID.randomUUID();
+        var base = ExecutorPositionFixtures.withoutKillLevel(null, "depot-1", symbol, "BUY",
+                new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("65.00"),
+                new BigDecimal("65.00"), 1, null, List.of("X"), "sig-wid", "strigoi-tech", null,
+                null, "OPEN", null, null, null, 0, null, null, null, null, null, null, null, null,
+                null, 0, null, null, null, null, null, null, false, new BigDecimal("80.00"), null);
+        long id = repo.insert(ExecutorPositionFixtures.withProfileFields(base,
+                ExitProfile.CONVICTION, null, null, null, true));
+
+        repo.markBrokerStopWidened(id, new BigDecimal("65.00"));
+
+        ExecutorPosition read = repo.findById(id);
+        assertThat(read.brokerStopNarrow()).isFalse();
+        assertThat(read.brokerStop()).isEqualByComparingTo("65.00");
+    }
 }

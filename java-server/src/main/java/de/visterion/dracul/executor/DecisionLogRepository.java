@@ -169,6 +169,21 @@ public class DecisionLogRepository {
                 .single();
     }
 
+    /** Count of rows with {@code reasonCode} whose {@code order_json.position_id} is
+     *  {@code positionId} — {@code decision_log} has no position column, so the id is read out of
+     *  the JSON the escalation idiom writes. Used to make {@code BROKER_STOP_WIDEN_REJECTED} a
+     *  once-per-position verdict that is never retried. */
+    public int countByReasonCodeForPosition(String reasonCode, long positionId) {
+        return jdbc.sql("""
+                SELECT count(*) FROM decision_log
+                WHERE reason_code = :rc AND order_json->>'position_id' = :pid
+                """)
+                .param("rc", reasonCode)
+                .param("pid", Long.toString(positionId))
+                .query(Integer.class)
+                .single();
+    }
+
     /** The submission of a pending trim (spec 2026-10-03 §5.7): when and in which run the TRIM row
      *  carrying {@code order_json.order_id = orderId} was written, and how many shares it booked
      *  out ({@code qty_closed}, null when absent). */

@@ -181,4 +181,16 @@ class DecisionLogRepositoryTest {
         assertThat(sub.qtyClosed()).isEqualByComparingTo("5");
         assertThat(repo.trimSubmission("trim-unknown-" + orderId)).isNull();
     }
+
+    @Test
+    void countByReasonCodeForPositionMatchesOrderJsonPositionId() {
+        long pid = Math.abs(java.util.UUID.randomUUID().getMostSignificantBits() % 1_000_000_000L);
+        var oj = mapper.createObjectNode();
+        oj.put("position_id", pid);
+        repo.insert(new DecisionLog(null, "run-w", "exec-test", "MAINTENANCE", null, null, null,
+                "SYNT", null, null, "ESCALATE", "BROKER_STOP_WIDEN_REJECTED", oj, "r", null, null, null));
+
+        assertThat(repo.countByReasonCodeForPosition("BROKER_STOP_WIDEN_REJECTED", pid)).isEqualTo(1);
+        assertThat(repo.countByReasonCodeForPosition("BROKER_STOP_WIDEN_REJECTED", pid + 1)).isZero();
+    }
 }

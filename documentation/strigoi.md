@@ -696,11 +696,14 @@ once a daily close reaches +30 %, the rest trailed 30 % below the highest close,
 exits and no tranche 2. See "Executor" below and `documentation/configuration.md`
 (`dracul.executor.profiles.conviction.*`).
 
-**Deploy gating — the −20 % broker leg is the effective emergency stop.** The bracket's
-protective leg rests at the broker's entry band (`entry-broker-stop-pct`, −20 %), and the
-post-fill widening of that leg to the logical −35 % stop has not shipped yet; until it does,
-an intraday fall of 20 % fills the broker leg before the half-sale or the close-based −35 % stop
-can act. `dracul.strigoi.tech.enabled` stays `false` in production until the widening lands.
+**Broker leg: narrow at entry, widened after the fill.** The broker rejects a bracket leg
+beyond its proximity band at entry, so the protective leg starts at the entry band
+(`entry-broker-stop-pct`, −20 %) and the row is flagged `broker_stop_narrow`. The first
+maintenance pass after the fill moves that leg out to the logical −35 % stop (see
+`StopRatchetService` under "Executor" below). Until then — the first trading session after an
+entry placed at 23:00 UTC — an intraday fall of 20 % fills the narrow leg before the half-sale
+or the close-based −35 % stop can act. If the broker refuses the widening, the position keeps
+the −20 % leg as its effective emergency stop (`BROKER_STOP_WIDEN_REJECTED`, see below).
 
 ## Hunt Pattern
 
@@ -1603,6 +1606,18 @@ the LLM, which owns only the soft judgment call. Every call to
    after the trim), with the broker leg resting at the trail level itself
    (no ATR buffer). `decision_log.order_json.stop_basis` reads
    `"conviction trail: highestClose x (1 - 0.30)"` for these rows.
+   The one exception before the half-sale is the post-fill widening of a
+   narrow entry leg (`broker_stop_narrow`): on the first pass after the fill
+   every open leg is moved by name (`modify_bracket`) to the logical stop
+   (`active_stop`, −35 %). On success `broker_stop` is set to that level, the
+   flag is cleared and a `MODIFY_STOP / BROKER_STOP_WIDENED` row is written.
+   A broker rejection keeps the flag and escalates
+   `ESCALATE / BROKER_STOP_WIDEN_REJECTED` once — it is never retried, and the
+   −20 % leg stays the position's effective emergency stop. A call that got no
+   verdict (outage, or a rejection carrying a rate-limit signature) writes
+   nothing and is tried again on the next run — one modify per leg per run,
+   no in-run retry. This is the only move of a broker leg away from the
+   market; it does not pass the ratchet guard.
 
 Only after that does the LLM see the (now current) open positions, each
 carrying a `soft_trigger` block (`chandelier_breach`, `ma_break`,

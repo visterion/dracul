@@ -435,6 +435,19 @@ public class ExecutorPositionRepository {
     }
 
     /**
+     * The narrow CONVICTION entry leg now rests at the logical stop (spec 2026-10-03 §5.3): records
+     * where the leg rests and clears {@code broker_stop_narrow}. Written by
+     * {@link StopRatchetService} only AFTER the broker confirmed every open leg — broker first,
+     * book second.
+     */
+    public void markBrokerStopWidened(long id, BigDecimal brokerStop) {
+        jdbc.sql("UPDATE executor_position SET broker_stop = :bs, broker_stop_narrow = false WHERE id = :id")
+                .param("bs", brokerStop)
+                .param("id", id)
+                .update();
+    }
+
+    /**
      * Records that this position's two stop legs have collapsed to one, without touching anything
      * else. For a trim that removed the tranche whose stop had already filled: {@link
      * #clearStopLeg} nulls the dead id, and this explains the null.

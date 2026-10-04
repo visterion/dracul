@@ -80,8 +80,9 @@ import java.util.Map;
  * {@code modifyBracket} returned — the book never claims a stop the broker did not confirm.
  *
  * <p><b>Exit profile {@code CONVICTION}</b> (spec 2026-10-03 §5.5): no ratchet before the
- * half-sale; afterwards the candidate is highest close × (1 − trail-pct), through the same
- * guard and the same leg rows (repointed by {@code PartialExitService}), with the broker leg at
+ * half-sale — only the one-time post-fill widening of a narrow entry leg to the logical stop
+ * ({@code BROKER_STOP_WIDENED}, see {@link #widenNarrowLeg}); afterwards the candidate is
+ * highest close × (1 − trail-pct), through the same guard and the same leg rows (repointed by {@code PartialExitService}), with the broker leg at
  * the trail level (no ATR buffer).
  */
 @Service
@@ -92,6 +93,11 @@ public class StopRatchetService {
 
     /** Agora's reject code for "that leg is not at the broker (any more)". */
     private static final String LEG_NOT_FOUND = "LEG_NOT_FOUND";
+
+    /** {@code MODIFY_STOP} row: the narrow CONVICTION entry leg now rests at the logical stop. */
+    static final String WIDENED = "BROKER_STOP_WIDENED";
+    /** {@code ESCALATE} row: the broker said "no" to the widening; written once, never retried. */
+    static final String WIDEN_REJECTED = "BROKER_STOP_WIDEN_REJECTED";
 
     private final ExecutionGateway gateway;
     private final ExecutorPositionRepository positionRepo;
@@ -190,7 +196,16 @@ public class StopRatchetService {
             // TARGET_HALF: HardTriggerService's survivors list still carries the PRE-trim row
             // (trimCount 0), so it is skipped here exactly like a genuine pre-half-sale row — the
             // real trail starts only once a later pass re-reads the position from the book.
-            if (conviction && p.trimCount() == 0) continue;
+            //
+            // The one thing a pre-half-sale CONVICTION row does get is the post-fill widening of
+            // a narrow entry leg out to the logical stop (spec 2026-10-03 §5.3) — see
+            // widenNarrowLeg. On the stale same-pass row above, that widening is harmless: it
+            // moves the (repointed) leg to the emergency stop the book already holds as
+            // active_stop, and the trail takes over on the next pass (ruling F14).
+            if (conviction && p.trimCount() == 0) {
+                if (p.brokerStopNarrow()) widenNarrowLeg(p, runId);
+                continue;
+            }
             BigDecimal atr = atrBySymbol.get(p.symbol());
             // The profile trail is a fraction of the highest close and needs no ATR.
             if (atr == null && !conviction) continue;
@@ -338,6 +353,85 @@ public class StopRatchetService {
 
             executorNotifier.notifyStopRatchet(p, oldStop, chandelier, p.connection());
         }
+    }
+
+    /**
+     * Spec 2026-10-03 §5.3/§8 V2: the entry bracket's leg starts at the broker's proximity band
+     * (−20 %) because the broker rejects a wider leg at entry; after the fill it is moved out to
+     * the logical emergency stop ({@code active_stop}, −35 %). This is the ONE deliberate move of
+     * a broker leg away from the market — the narrow leg was a band workaround, never a stop
+     * anyone chose — so it bypasses {@link StopRatchetGuard} on purpose and is reached only for a
+     * row flagged {@code broker_stop_narrow} before the half-sale.
+     *
+     * <p>A broker verdict "no" escalates {@code BROKER_STOP_WIDEN_REJECTED} once and is never
+     * retried: the flag stays, the effective emergency stop is the narrow leg, and the daily
+     * analysis lists the position. A call that got no verdict (outage, or a rejection carrying a
+     * rate-limit signature — the same classification as {@link #escalateModifyFailure}) writes
+     * nothing and is retried on the next run. One modify per leg per run, no in-run retry, so
+     * there is no retry storm either way.
+     *
+     * <p>Broker first, book second: {@code broker_stop} and the flag change only after every open
+     * leg confirmed. A CONVICTION position is single-tranche (Tranche2Detector refuses a second
+     * tranche), so the multi-leg branch exists only for remainder legs left by a lost trim
+     * (ruling F14); a leg that cannot be named there is not guessed at.
+     */
+    private void widenNarrowLeg(ExecutorPosition p, String runId) {
+        BigDecimal target = p.activeStop();
+        if (target == null) return;
+        if (decisionRepo.countByReasonCodeForPosition(WIDEN_REJECTED, p.id()) > 0) return;
+        List<ExecutorPositionLeg> legs = legRepo.findOpenByPosition(p.id());
+        if (legs.size() > 1 && legs.stream().anyMatch(l -> l.stopOrderId() == null)) {
+            log.warn("broker-stop widening for {} (position {}) skipped: {} open legs and not every "
+                    + "one is named", p.symbol(), p.id(), legs.size());
+            return;
+        }
+        List<String> moved = new ArrayList<>();
+        try {
+            if (legs.isEmpty()) {
+                if (p.brokerOrderId() == null) {
+                    log.warn("broker-stop widening for {} (position {}) skipped: no bracket id",
+                            p.symbol(), p.id());
+                    return;
+                }
+                gateway.modifyBracket(p.connection(), p.brokerOrderId(), p.symbol(), target, null,
+                        p.stopOrderId(), null);
+            } else {
+                for (ExecutorPositionLeg leg : legs) {
+                    String bracket = leg.entryOrderId() != null ? leg.entryOrderId() : p.brokerOrderId();
+                    if (bracket == null) {
+                        log.warn("broker-stop widening for {} (position {}) skipped tranche {}: no "
+                                + "bracket id", p.symbol(), p.id(), leg.tranche());
+                        return;
+                    }
+                    gateway.modifyBracket(p.connection(), bracket, p.symbol(), target, null,
+                            leg.stopOrderId(), null);
+                    moved.add(leg.stopOrderId());
+                }
+            }
+        } catch (BrokerUnavailableException e) {
+            if (e instanceof BrokerRejectedException rejected && !isTransient(e)) {
+                escalate(p, runId, WIDEN_REJECTED, "broker rejected widening the entry stop leg from "
+                        + (p.brokerStop() == null ? "unknown" : p.brokerStop().toPlainString())
+                        + " to the logical stop " + target.toPlainString() + " ["
+                        + (rejected.rejectCode() == null ? "no reject code" : rejected.rejectCode())
+                        + "]: " + e.getMessage()
+                        + (moved.isEmpty() ? "" : " (legs already moved: " + moved + ")")
+                        + " — broker_stop_narrow stays set; the effective emergency stop is the "
+                        + "narrow leg; not retried");
+                return;
+            }
+            log.warn("broker-stop widening for {} (position {}) got no verdict, retrying next run: {}",
+                    p.symbol(), p.id(), e.getMessage());
+            return;
+        }
+        positionRepo.markBrokerStopWidened(p.id(), target);
+        ObjectNode order = mapper.createObjectNode();
+        order.put("position_id", p.id());
+        order.put("broker_stop_old", p.brokerStop());
+        order.put("broker_stop_new", target);
+        decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                "MAINTENANCE", p.sourceSignalId(), p.sourceAgent(), null, p.symbol(), null, null,
+                "MODIFY_STOP", WIDENED, order, null, null, null, null));
     }
 
     /**

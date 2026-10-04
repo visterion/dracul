@@ -1805,4 +1805,101 @@ class StopRatchetServiceTest {
 
         assertThat(gateway.modifyCalls).hasSize(1);
     }
+
+    // ---------------------------------------------------------------------------------------
+    // Post-fill widening of the narrow entry leg (spec 2026-10-03 §5.3, P1 4f)
+    // ---------------------------------------------------------------------------------------
+
+    /** Leg at the −20 % band (80), logical stop at −35 % (65), not yet half-sold. */
+    private ExecutorPosition narrow(long id) {
+        ExecutorPosition p = conviction(id, new BigDecimal("110"), new BigDecimal("65"), 0);
+        return ExecutorPositionFixtures.withProfileFields(
+                withBrokerStop(p, new BigDecimal("80")), ExitProfile.CONVICTION, null, null, null, true);
+    }
+
+    @Test
+    void firstPassAfterTheFillWidensTheLegToTheLogicalStop() {
+        ExecutorPosition p = narrow(70L);
+        withOpenLegs(70L, leg(700L, 70L, 1, "brk-1", "stop-old", new BigDecimal("5")));
+
+        ratchet(List.of(p), Map.of("SYNT", new BigDecimal("2.0")),
+                Map.of("SYNT", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).singleElement().satisfies(c -> {
+            assertThat(c.stopOrderId()).isEqualTo("stop-old");
+            assertThat(c.stop()).isEqualByComparingTo("65");
+        });
+        verify(positionRepo).markBrokerStopWidened(70L, new BigDecimal("65"));
+        ArgumentCaptor<DecisionLog> row = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(row.capture());
+        assertThat(row.getValue().action()).isEqualTo("MODIFY_STOP");
+        assertThat(row.getValue().reasonCode()).isEqualTo("BROKER_STOP_WIDENED");
+    }
+
+    /** 4f: a broker rejection keeps the flag, escalates once and is not retried (no storm). */
+    @Test
+    void rejectedWideningKeepsTheFlagEscalatesOnceAndIsNotRetried() {
+        ExecutorPosition p = narrow(71L);
+        gateway.modifyFailures = 1;
+        gateway.modifyRejectCode = "TOO_FAR_FROM_ENTRY";
+
+        ratchet(List.of(p), Map.of("SYNT", new BigDecimal("2.0")),
+                Map.of("SYNT", new BigDecimal("110")), "run1");
+
+        verify(positionRepo, never()).markBrokerStopWidened(anyLong(), any());
+        ArgumentCaptor<DecisionLog> row = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(row.capture());
+        assertThat(row.getValue().reasonCode()).isEqualTo("BROKER_STOP_WIDEN_REJECTED");
+        assertThat(gateway.modifyCalls).hasSize(1);
+
+        // next run: the recorded rejection blocks another attempt
+        when(decisionRepo.countByReasonCodeForPosition("BROKER_STOP_WIDEN_REJECTED", 71L)).thenReturn(1);
+        ratchet(List.of(p), Map.of("SYNT", new BigDecimal("2.0")),
+                Map.of("SYNT", new BigDecimal("110")), "run2");
+        assertThat(gateway.modifyCalls).hasSize(1);
+    }
+
+    /** No verdict (outage): no escalation, the next run simply tries again. */
+    @Test
+    void wideningWithoutAVerdictIsRetriedNextRun() {
+        ExecutorPosition p = narrow(72L);
+        gateway.modifyFailures = 1;   // plain BrokerUnavailableException
+
+        ratchet(List.of(p), Map.of("SYNT", new BigDecimal("2.0")),
+                Map.of("SYNT", new BigDecimal("110")), "run1");
+        ratchet(List.of(p), Map.of("SYNT", new BigDecimal("2.0")),
+                Map.of("SYNT", new BigDecimal("110")), "run2");
+
+        verify(decisionRepo, never()).insert(org.mockito.ArgumentMatchers.argThat(
+                d -> "BROKER_STOP_WIDEN_REJECTED".equals(d.reasonCode())));
+        verify(positionRepo).markBrokerStopWidened(72L, new BigDecimal("65"));
+    }
+
+    /** A rejection carrying a rate-limit signature is an outage, not a verdict: retried next run,
+     *  never recorded as a permanent BROKER_STOP_WIDEN_REJECTED (same rule as escalateModifyFailure). */
+    @Test
+    void rateLimitedRejectionIsTreatedAsNoVerdict() {
+        ExecutorPosition p = narrow(73L);
+        gateway.modifyFailures = 1;
+        gateway.modifyRejectCode = "RATE_LIMITED";
+        gateway.modifyFailureMessage = "rate limited (HTTP 429)";
+
+        ratchet(List.of(p), Map.of("SYNT", new BigDecimal("2.0")),
+                Map.of("SYNT", new BigDecimal("110")), "run1");
+
+        verify(decisionRepo, never()).insert(any());
+        verify(positionRepo, never()).markBrokerStopWidened(anyLong(), any());
+    }
+
+    /** A widened row (flag cleared) before the half-sale sends nothing. */
+    @Test
+    void alreadyWidenedConvictionRowBeforeTheHalfSaleSendsNothing() {
+        ExecutorPosition p = conviction(74L, new BigDecimal("110"), new BigDecimal("65"), 0);
+
+        ratchet(List.of(p), Map.of("SYNT", new BigDecimal("2.0")),
+                Map.of("SYNT", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).isEmpty();
+        verify(positionRepo, never()).markBrokerStopWidened(anyLong(), any());
+    }
 }
