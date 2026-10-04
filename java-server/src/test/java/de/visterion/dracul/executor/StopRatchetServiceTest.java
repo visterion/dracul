@@ -42,9 +42,10 @@ class StopRatchetServiceTest {
                 DecisionLogRepository decisionRepo, RuleVersionProvider ruleVersions,
                 StopRatchetGuard guard, ObjectMapper mapper, ExecutorNotifier notifier,
                 double chandelierMult, int retryAttempts, long retryBackoffMs, long retryBudgetMs,
-                BigDecimal bufferAtr) {
+                BigDecimal bufferAtr, ConvictionProfile convictionProfile) {
             super(gateway, positionRepo, legRepo, decisionRepo, ruleVersions, guard, mapper, notifier,
-                    chandelierMult, retryAttempts, retryBackoffMs, retryBudgetMs, bufferAtr);
+                    chandelierMult, retryAttempts, retryBackoffMs, retryBudgetMs, bufferAtr,
+                    convictionProfile);
         }
 
         @Override
@@ -69,7 +70,7 @@ class StopRatchetServiceTest {
             BigDecimal bufferAtr) {
         return new RecordingStopRatchetService(gateway, positionRepo, legRepo, decisionRepo, ruleVersions,
                 new StopRatchetGuard(), mapper, executorNotifier, 3.0, attempts, backoffMs, budgetMs,
-                bufferAtr);
+                bufferAtr, ConvictionProfile.defaults());
     }
 
     /** Legacy-shaped call: the same ATR is the long, the short and the effective one, so every
@@ -1717,5 +1718,91 @@ class StopRatchetServiceTest {
         assertThat(gateway.modifyCalls).hasSize(2);
         assertThat(gateway.modifyCalls).extracting(FakeExecutionGateway.ModifyCall::stop)
                 .allSatisfy(stop -> assertThat(stop).isEqualByComparingTo("102.00"));
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Exit profile CONVICTION (spec 2026-10-03 §5.5)
+    // ---------------------------------------------------------------------------------------
+
+    /** CONVICTION BUY, entry 100, emergency stop 65, leg resting at 65 (already widened). */
+    private ExecutorPosition conviction(long id, BigDecimal highest, BigDecimal activeStop,
+            int trimCount) {
+        return ExecutorPositionFixtures.conviction(ExecutorPositionFixtures.withoutKillLevel(id,
+                "c", "SYNT", "BUY", new BigDecimal("5"), new BigDecimal("100"), new BigDecimal("65"),
+                activeStop, 1, null, List.of(), "sig-1", "strigoi-tech", "2026-07-01", null, "OPEN",
+                "brk-1", highest, null, 0, null, null, null, null, "stop-old", null, null, null,
+                null, trimCount, null, null, null, null, null, null, false, activeStop,
+                "2026-07-01T09:00:00Z"));
+    }
+
+    /** No ratchet before the half-sale: the emergency stop stays, however far the price ran. */
+    @Test
+    void convictionBeforeTheHalfSaleNeverRatchets() {
+        ExecutorPosition p = conviction(60L, new BigDecimal("200"), new BigDecimal("65"), 0);
+
+        ratchet(List.of(p), Map.of("SYNT", new BigDecimal("2.0")),
+                Map.of("SYNT", new BigDecimal("200")), "run1");
+
+        assertThat(gateway.modifyCalls).isEmpty();
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class),
+                any(), any(), any());
+    }
+
+    /** After the half-sale: candidate = highest close x 0.70, sent to the leg row PartialExitService
+     *  repointed (by its NEW id), logical and broker stop both at the trail level. */
+    @Test
+    void convictionAfterTheHalfSaleTrailsThirtyPercentBelowTheHighestCloseThroughTheLegRows() {
+        ExecutorPosition p = conviction(61L, new BigDecimal("140"), new BigDecimal("65"), 1);
+        withOpenLegs(61L, leg(610L, 61L, 1, "brk-1", "stop-new", new BigDecimal("5")));
+
+        ratchet(List.of(p), Map.of("SYNT", new BigDecimal("2.0")),
+                Map.of("SYNT", new BigDecimal("135")), "run1");
+
+        assertThat(gateway.modifyCalls).singleElement().satisfies(c -> {
+            assertThat(c.stopOrderId()).isEqualTo("stop-new");
+            assertThat(c.stop()).isEqualByComparingTo("98.00");
+        });
+        verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(61L),
+                org.mockito.ArgumentMatchers.eq(new BigDecimal("140")), any(),
+                org.mockito.ArgumentMatchers.eq(0),
+                org.mockito.ArgumentMatchers.argThat((BigDecimal s) -> s.compareTo(new BigDecimal("98.00")) == 0),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.argThat((BigDecimal s) -> s.compareTo(new BigDecimal("98.00")) == 0));
+        ArgumentCaptor<DecisionLog> row = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(row.capture());
+        assertThat(row.getValue().orderJson().path("stop_basis").asString())
+                .isEqualTo("conviction trail: highestClose x (1 - 0.30)");
+    }
+
+    /** The trail is monotonic (StopRatchetGuard): a lower candidate never moves the stop. */
+    @Test
+    void convictionTrailNeverLowersTheStop() {
+        ExecutorPosition p = conviction(62L, new BigDecimal("140"), new BigDecimal("99.00"), 1);
+
+        ratchet(List.of(p), Map.of("SYNT", new BigDecimal("2.0")),
+                Map.of("SYNT", new BigDecimal("135")), "run1");
+
+        assertThat(gateway.modifyCalls).isEmpty();
+    }
+
+    /** Wrong side of the market (close below the candidate): skipped, the hard stop owns it. */
+    @Test
+    void convictionTrailOnTheWrongSideOfTheMarketIsSkipped() {
+        ExecutorPosition p = conviction(63L, new BigDecimal("140"), new BigDecimal("65"), 1);
+
+        ratchet(List.of(p), Map.of("SYNT", new BigDecimal("2.0")),
+                Map.of("SYNT", new BigDecimal("97")), "run1");
+
+        assertThat(gateway.modifyCalls).isEmpty();
+    }
+
+    /** The profile trail needs no ATR (a missing ATR still skips a STANDARD row). */
+    @Test
+    void convictionTrailNeedsNoAtr() {
+        ExecutorPosition p = conviction(64L, new BigDecimal("140"), new BigDecimal("65"), 1);
+
+        ratchet(List.of(p), Map.of(), Map.of("SYNT", new BigDecimal("135")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(1);
     }
 }

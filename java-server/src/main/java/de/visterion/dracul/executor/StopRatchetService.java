@@ -78,6 +78,11 @@ import java.util.Map;
  *
  * <p><b>Broker first, book second.</b> {@code positionRepo.updateMaintenance} runs only after
  * {@code modifyBracket} returned — the book never claims a stop the broker did not confirm.
+ *
+ * <p><b>Exit profile {@code CONVICTION}</b> (spec 2026-10-03 §5.5): no ratchet before the
+ * half-sale; afterwards the candidate is highest close × (1 − trail-pct), through the same
+ * guard and the same leg rows (repointed by {@code PartialExitService}), with the broker leg at
+ * the trail level (no ATR buffer).
  */
 @Service
 @ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
@@ -101,6 +106,7 @@ public class StopRatchetService {
     private final long retryBackoffMs;
     private final long retryBudgetMs;
     private final BigDecimal brokerStopBufferAtr;
+    private final ConvictionProfile convictionProfile;
 
     public StopRatchetService(
             ExecutionGateway gateway,
@@ -115,7 +121,8 @@ public class StopRatchetService {
             @Value("${dracul.executor.ratchet-retry-attempts:3}") int retryAttempts,
             @Value("${dracul.executor.ratchet-retry-backoff-ms:500}") long retryBackoffMs,
             @Value("${dracul.executor.ratchet-retry-budget-ms:5000}") long retryBudgetMs,
-            @Value("${dracul.executor.broker-stop-buffer-atr:1.0}") BigDecimal brokerStopBufferAtr) {
+            @Value("${dracul.executor.broker-stop-buffer-atr:1.0}") BigDecimal brokerStopBufferAtr,
+            ConvictionProfile convictionProfile) {
         this.gateway = gateway;
         this.positionRepo = positionRepo;
         this.legRepo = legRepo;
@@ -129,6 +136,7 @@ public class StopRatchetService {
         this.retryBackoffMs = Math.max(0, retryBackoffMs);
         this.retryBudgetMs = Math.max(0, retryBudgetMs);
         this.brokerStopBufferAtr = brokerStopBufferAtr;
+        this.convictionProfile = convictionProfile;
     }
 
     /**
@@ -175,13 +183,27 @@ public class StopRatchetService {
 
         for (ExecutorPosition p : openPositions) {
             if (p.highestPrice() == null) continue;
+            boolean conviction = p.exitProfile() == ExitProfile.CONVICTION;
+            // Exit profile CONVICTION (spec 2026-10-03 §5.5): no ratchet before the half-sale —
+            // the active stop stays at the emergency stop however far the price runs. This also
+            // covers the STALE in-memory row MaintenancePipeline hands in after a same-pass
+            // TARGET_HALF: HardTriggerService's survivors list still carries the PRE-trim row
+            // (trimCount 0), so it is skipped here exactly like a genuine pre-half-sale row — the
+            // real trail starts only once a later pass re-reads the position from the book.
+            if (conviction && p.trimCount() == 0) continue;
             BigDecimal atr = atrBySymbol.get(p.symbol());
-            if (atr == null) continue;
+            // The profile trail is a fraction of the highest close and needs no ATR.
+            if (atr == null && !conviction) continue;
             // atrEff is filled from the SAME Levels as atr, so a fallback is defence only.
-            BigDecimal atrEff = atrEffBySymbol.getOrDefault(p.symbol(), atr);
+            BigDecimal atrEff = atr == null ? null : atrEffBySymbol.getOrDefault(p.symbol(), atr);
             BigDecimal atrShort = atrShortBySymbol.get(p.symbol());
 
-            BigDecimal chandelier = computeChandelier(p, atrEff);
+            // The logical candidate: the chandelier, or for CONVICTION after the half-sale the
+            // profile trail (highest close x (1 - trail-pct)). Both go through the same guard,
+            // wrong-side check and leg addressing below.
+            BigDecimal chandelier = conviction
+                    ? convictionProfile.trailStop(p.side(), p.highestPrice())
+                    : computeChandelier(p, atrEff);
             if (!guard.permit(p.activeStop(), chandelier, p.side())) continue;
 
             // The guard only compares against the OLD stop, never against the market. If the price
@@ -204,8 +226,10 @@ public class StopRatchetService {
             // never moves against the position -- BrokerStop.forRatchet holds both rules.
             // previousBrokerStop is null on rows opened before V48; their leg really does rest at
             // active_stop, so that is the monotonic floor.
-            BrokerStop.Result brokerStop = BrokerStop.forRatchet(p.side(), chandelier, atrEff,
-                    brokerStopBufferAtr, p.brokerStop(), p.activeStop());
+            BrokerStop.Result brokerStop = conviction
+                    ? convictionBrokerLeg(p, chandelier)
+                    : BrokerStop.forRatchet(p.side(), chandelier, atrEff,
+                            brokerStopBufferAtr, p.brokerStop(), p.activeStop());
             BigDecimal stopToSend = brokerStop.price();
             BigDecimal oldBrokerStop = p.brokerStop() != null ? p.brokerStop() : p.activeStop();
 
@@ -830,6 +854,16 @@ public class StopRatchetService {
                 : p.highestPrice().subtract(offset).setScale(2, RoundingMode.FLOOR);
     }
 
+    /** CONVICTION broker leg on a trail move: the trail level itself, no ATR buffer — the 30 %
+     *  band is already wider than any intraday wick the buffer exists for — and never walked back
+     *  below where the leg already rests (BrokerStop rule 4). */
+    private static BrokerStop.Result convictionBrokerLeg(ExecutorPosition p, BigDecimal trail) {
+        BigDecimal floor = p.brokerStop() != null ? p.brokerStop() : p.activeStop();
+        boolean sell = "SELL".equalsIgnoreCase(p.side());
+        BigDecimal price = floor == null ? trail : (sell ? trail.min(floor) : trail.max(floor));
+        return new BrokerStop.Result(price, false, false, price.compareTo(trail) != 0);
+    }
+
     private void recordRatchet(ExecutorPosition p, BigDecimal atr, BigDecimal atrShort,
             BigDecimal atrEff, BigDecimal chandelier, BigDecimal oldBrokerStop,
             BrokerStop.Result brokerStop, String runId) {
@@ -849,8 +883,12 @@ public class StopRatchetService {
         inputs.put("broker_stop_lags", brokerStop.lags());
 
         String basisSide = "SELL".equals(p.side()) ? "lowestLow + " : "highestHigh - ";
+        String stopBasis = p.exitProfile() == ExitProfile.CONVICTION
+                ? "conviction trail: highestClose x (1 - "
+                        + convictionProfile.trailPct().toPlainString() + ")"
+                : "chandelier: " + basisSide + chandelierMult + "xATR";
         ObjectNode order = mapper.createObjectNode();
-        order.put("stop_basis", "chandelier: " + basisSide + chandelierMult + "xATR");
+        order.put("stop_basis", stopBasis);
         order.put("new_stop", chandelier);
         order.put("broker_stop", brokerStop.price());
 

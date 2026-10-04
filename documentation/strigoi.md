@@ -1445,7 +1445,17 @@ the LLM, which owns only the soft judgment call. Every call to
    updated, never the other way round. A transient broker failure (rate
    limit / HTTP 429) is retried inside the same run
    (`dracul.executor.ratchet-retry-attempts`, backoff, pass-wide time
-   budget); any other failure escalates immediately.
+   budget); any other failure escalates immediately. For exit profile
+   CONVICTION (`exec-v1.0`) the ratchet does nothing before the half-sale
+   (`trim_count == 0`) — this also covers the stale pre-trim row
+   `MaintenancePipeline` hands in right after a same-pass `HARD_TARGET_HALF`,
+   so a second maintenance pass never acts on it either. After the half-sale
+   the candidate is `highest close × (1 − dracul.executor.profiles.conviction.trail-pct)`
+   (default 0.30) instead of the chandelier — no ATR needed — through the
+   same monotonic guard, the same leg rows (repointed by `PartialExitService`
+   after the trim), with the broker leg resting at the trail level itself
+   (no ATR buffer). `decision_log.order_json.stop_basis` reads
+   `"conviction trail: highestClose x (1 - 0.30)"` for these rows.
 
 Only after that does the LLM see the (now current) open positions, each
 carrying a `soft_trigger` block (`chandelier_breach`, `ma_break`,

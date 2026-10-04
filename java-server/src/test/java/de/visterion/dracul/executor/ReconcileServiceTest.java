@@ -2273,7 +2273,7 @@ class ReconcileServiceTest {
 
         StopRatchetService ratchet = new StopRatchetService(gateway, positionRepo, legRepo,
                 decisionRepo, ruleVersions, new StopRatchetGuard(), mapper, executorNotifier,
-                3.0, 1, 0L, 0L, BigDecimal.ZERO);
+                3.0, 1, 0L, 0L, BigDecimal.ZERO, ConvictionProfile.defaults());
         ratchet.ratchet(survivors, Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("2.0")), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run-1");
