@@ -540,8 +540,8 @@ class EntryContextAssemblerTest {
         EntryContext ctx = assembler.assemble(
                 signal("ACME", new BigDecimal("100.00"), "2026-07-10T00:00:00Z"));
 
-        // 10000 EUR x 0.033 = 330 EUR -> 363 USD
-        assertThat(ctx.convictionNotional()).isEqualByComparingTo("363");
+        // 10000 EUR x 0.03 = 300 EUR -> 330 USD
+        assertThat(ctx.convictionNotional()).isEqualByComparingTo("330");
     }
 
     /** Spec 2026-10-03 §5.3 (R2 Minor 8): openHeat sums STANDARD positions only — the basket's

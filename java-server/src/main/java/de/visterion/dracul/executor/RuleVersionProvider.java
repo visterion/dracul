@@ -146,7 +146,7 @@ public class RuleVersionProvider {
                             + "rest trailed 30 % below the highest close, a flagged catastrophe "
                             + "flattens (HARD_CATASTROPHE); CORRELATED, CONCENTRATION and HEAT_LIMIT "
                             + "skipped for the profile, BUDGET and MECHANISM_BUDGET charge the profile "
-                            + "notional (TECH_CONVICTION 0.44); exit_position rejects the profile "
+                            + "notional (TECH_CONVICTION 0.33); exit_position rejects the profile "
                             + "(PROFILE_MANAGED); partial exits repoint the leg rows; STANDARD "
                             + "unchanged from exec-v0.9",
                     null, params));

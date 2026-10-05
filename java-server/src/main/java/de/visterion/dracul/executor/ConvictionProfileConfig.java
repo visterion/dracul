@@ -20,7 +20,7 @@ class ConvictionProfileConfig {
             @Value("${dracul.executor.profiles.conviction.trail-pct:0.30}") BigDecimal trailPct,
             @Value("${dracul.executor.profiles.conviction.min-entry-qty:2}") int minEntryQty,
             @Value("${dracul.executor.profiles.conviction.entry-broker-stop-pct:0.20}") BigDecimal entryBrokerStopPct,
-            @Value("${dracul.strigoi.tech.position-pct:0.033}") BigDecimal positionPct) {
+            @Value("${dracul.strigoi.tech.position-pct:0.03}") BigDecimal positionPct) {
         return new ConvictionProfile(emergencyStopPct, targetPct, targetFraction, trailPct,
                 minEntryQty, entryBrokerStopPct, positionPct);
     }

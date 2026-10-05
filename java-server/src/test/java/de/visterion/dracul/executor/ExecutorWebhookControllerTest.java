@@ -7672,7 +7672,7 @@ class ExecutorWebhookControllerTest {
      *  {@code ctx.trancheAmount()} either. */
     @Test
     void placeEntry_convictionChargesTheRealNotionalThroughTheControllerCapitalChecks() {
-        controller = controller(new MechanismBudget("TECH_CONVICTION:0.44"), 25);
+        controller = controller(new MechanismBudget("TECH_CONVICTION:0.33"), 25);
         when(signalRepo.findById("sig-1")).thenReturn(convictionSignal("sig-1"));
         when(assembler.assemble(any())).thenReturn(
                 withConvictionNotional(happyContext(), new BigDecimal("363")));

@@ -39,7 +39,7 @@ class StrigoiTechWebhookControllerTest {
     private final ExecutorPositionRepository positions = mock(ExecutorPositionRepository.class);
     private final TechBookService book = mock(TechBookService.class);
     private final TechCandidateService candidates = mock(TechCandidateService.class);
-    private final TechSettings settings = new TechSettings(12, 3, new BigDecimal("0.033"),
+    private final TechSettings settings = new TechSettings(10, 3, new BigDecimal("0.03"),
             new BigDecimal("20000"), 90, "depot-1", "depot-1", "USD");
 
     private StrigoiTechWebhookController controller(boolean executor) {
@@ -158,7 +158,7 @@ class StrigoiTechWebhookControllerTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> bookMap = (Map<String, Object>) c.bookPayload(book.snapshot()).get("book");
 
-        assertThat(bookMap.get("slots_free")).isEqualTo(11);
+        assertThat(bookMap.get("slots_free")).isEqualTo(9);
         assertThat(bookMap.get("new_names_allowed_this_week")).isEqualTo(2);
         assertThat(bookMap.get("recently_exited")).isEqualTo(List.of("SYNE"));
         @SuppressWarnings("unchecked")

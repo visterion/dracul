@@ -28,7 +28,7 @@ class TechCandidateServiceTest {
     private final AgoraCompanyData companyData = mock(AgoraCompanyData.class);
     private final InstrumentSearchService search = mock(InstrumentSearchService.class);
     private final TechCandidateService service = new TechCandidateService(agora, companyData, search,
-            new TechSettings(12, 3, new BigDecimal("0.033"), new BigDecimal("20000"), 90,
+            new TechSettings(10, 3, new BigDecimal("0.03"), new BigDecimal("20000"), 90,
                     "depot-1", "depot-1", "USD"));
 
     private static final TechBookService.Snapshot EMPTY = new TechBookService.Snapshot(true,

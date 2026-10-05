@@ -26,9 +26,9 @@ class TechDefaults {
 
     @Bean
     TechSettings techSettings(
-            @Value("${dracul.strigoi.tech.basket-size:12}") int basketSize,
+            @Value("${dracul.strigoi.tech.basket-size:10}") int basketSize,
             @Value("${dracul.strigoi.tech.max-new-per-week:3}") int maxNewPerWeek,
-            @Value("${dracul.strigoi.tech.position-pct:0.033}") BigDecimal positionPct,
+            @Value("${dracul.strigoi.tech.position-pct:0.03}") BigDecimal positionPct,
             @Value("${dracul.strigoi.tech.min-market-cap-usd-millions:20000}") BigDecimal minMarketCap,
             @Value("${dracul.strigoi.tech.reentry-block-days:90}") int reentryBlockDays,
             @Value("${dracul.executor.connection:depot-1}") String executorConnection,

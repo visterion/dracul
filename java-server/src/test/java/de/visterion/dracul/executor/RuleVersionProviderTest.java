@@ -32,7 +32,7 @@ class RuleVersionProviderTest {
             + "rest trailed 30 % below the highest close, a flagged catastrophe "
             + "flattens (HARD_CATASTROPHE); CORRELATED, CONCENTRATION and HEAT_LIMIT "
             + "skipped for the profile, BUDGET and MECHANISM_BUDGET charge the profile "
-            + "notional (TECH_CONVICTION 0.44); exit_position rejects the profile "
+            + "notional (TECH_CONVICTION 0.33); exit_position rejects the profile "
             + "(PROFILE_MANAGED); partial exits repoint the leg rows; STANDARD "
             + "unchanged from exec-v0.9";
 
@@ -60,7 +60,7 @@ class RuleVersionProviderTest {
             assertThat(v.params().path("confidence_min").asDouble()).isEqualTo(0.4);
             assertThat(v.params().path("max_positions").asInt()).isEqualTo(25);
             assertThat(v.params().path("mechanism_budget_pct").asString())
-                    .isEqualTo("MERGER_ARB:0.20,QUALITY_52W_LOW:0.15,TECH_CONVICTION:0.44");
+                    .isEqualTo("MERGER_ARB:0.20,QUALITY_52W_LOW:0.15,TECH_CONVICTION:0.33");
             // SP1 parameters still recorded
             assertThat(v.params().path("broker_stop_buffer_atr").asDouble()).isEqualTo(1.0);
             assertThat(v.params().path("risk_pct").asDouble()).isEqualTo(0.005);
@@ -84,7 +84,7 @@ class RuleVersionProviderTest {
             assertThat(v.params().path("conviction_trail_pct").decimalValue()).isEqualByComparingTo("0.30");
             assertThat(v.params().path("conviction_min_entry_qty").asInt()).isEqualTo(2);
             assertThat(v.params().path("conviction_entry_broker_stop_pct").decimalValue()).isEqualByComparingTo("0.20");
-            assertThat(v.params().path("conviction_position_pct").decimalValue()).isEqualByComparingTo("0.033");
+            assertThat(v.params().path("conviction_position_pct").decimalValue()).isEqualByComparingTo("0.03");
         }
     }
 

@@ -39,11 +39,11 @@ public record ConvictionProfile(BigDecimal emergencyStopPct, BigDecimal targetPc
         }
     }
 
-    /** The spec defaults: 0.35 / 0.30 / 0.5 / 0.30 / 2 / 0.20 / 0.033. */
+    /** The spec defaults: 0.35 / 0.30 / 0.5 / 0.30 / 2 / 0.20 / 0.03. */
     public static ConvictionProfile defaults() {
         return new ConvictionProfile(new BigDecimal("0.35"), new BigDecimal("0.30"),
                 new BigDecimal("0.5"), new BigDecimal("0.30"), 2, new BigDecimal("0.20"),
-                new BigDecimal("0.033"));
+                new BigDecimal("0.03"));
     }
 
     /** Logical emergency stop, tick-rounded toward the entry like every initial stop. */

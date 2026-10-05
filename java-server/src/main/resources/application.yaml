@@ -254,11 +254,11 @@ dracul:
       enabled: ${STRIGOI_TECH_ENABLED:false}
       webhook-token: ${STRIGOI_TECH_TOKEN:dev-token-change-me}
       schedule: ${DRACUL_TECH_SCHEDULE:0 30 22 * * 1-5}
-      basket-size: ${TECH_BASKET_SIZE:12}
+      basket-size: ${TECH_BASKET_SIZE:10}
       max-new-per-week: ${TECH_MAX_NEW_PER_WEEK:3}
       # Fixed size per name as a fraction of dracul.executor.total-budget; also read by the
       # executor's exit profile CONVICTION (one key).
-      position-pct: ${TECH_POSITION_PCT:0.033}
+      position-pct: ${TECH_POSITION_PCT:0.03}
       # Enforced only for a confirmed listing (profile.ticker == symbol); a foreign primary
       # listing (ADR) is reported market_cap_unverified and not blocked.
       min-market-cap-usd-millions: ${TECH_MIN_MARKET_CAP_USD_MILLIONS:20000}
@@ -349,8 +349,9 @@ dracul:
     schedule: ${DRACUL_EXECUTOR_SCHEDULE:}
     min-confidence: ${DRACUL_EXECUTOR_MIN_CONFIDENCE:0.40}
     max-positions: ${DRACUL_EXECUTOR_MAX_POSITIONS:25}
-    # TECH_CONVICTION 0.44 = basket-size 12 x position-pct 0.033 (0.396) + ~10 % headroom for EUR/USD drift (spec 2026-10-03 §5.3).
-    mechanism-budget-pct: ${DRACUL_EXECUTOR_MECHANISM_BUDGET_PCT:MERGER_ARB:0.20,QUALITY_52W_LOW:0.15,TECH_CONVICTION:0.44}
+    # TECH_CONVICTION 0.33 = basket-size 10 x position-pct 0.03 (0.30) + ~10 % headroom for EUR/USD drift
+    # (spec 2026-10-03 §5.3; capital split revised 2026-10-05 from 12 x 3.3 % / 0.44).
+    mechanism-budget-pct: ${DRACUL_EXECUTOR_MECHANISM_BUDGET_PCT:MERGER_ARB:0.20,QUALITY_52W_LOW:0.15,TECH_CONVICTION:0.33}
     atr-period: ${DRACUL_EXECUTOR_ATR_PERIOD:22}
     atr-short-period: ${DRACUL_EXECUTOR_ATR_SHORT_PERIOD:5}
     broker-stop-buffer-atr: ${DRACUL_EXECUTOR_BROKER_STOP_BUFFER_ATR:1.0}

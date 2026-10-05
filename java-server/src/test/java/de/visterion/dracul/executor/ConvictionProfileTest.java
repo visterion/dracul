@@ -19,7 +19,7 @@ class ConvictionProfileTest {
         assertThat(profile.trailPct()).isEqualByComparingTo("0.30");
         assertThat(profile.minEntryQty()).isEqualTo(2);
         assertThat(profile.entryBrokerStopPct()).isEqualByComparingTo("0.20");
-        assertThat(profile.positionPct()).isEqualByComparingTo("0.033");
+        assertThat(profile.positionPct()).isEqualByComparingTo("0.03");
     }
 
     @Test
