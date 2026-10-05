@@ -39,6 +39,20 @@ class MomentumPromptContractTest {
         assertThat(missing).isEmpty();
     }
 
+    /** Every field {@code MomentumRankingService} emits on the {@code held} entries, plus the
+     *  two informational-only fields ({@code rebalance_missed}, {@code data_source_health.partial})
+     *  it can carry elsewhere — the recurring prompt/schema drift bug class (a field the tool
+     *  returns that no prompt sentence ever names). */
+    @Test
+    void everyHeldEntryFieldAndEveryInformationalFlagIsNamedInThePrompt() {
+        List<String> missing = new ArrayList<>();
+        for (String field : List.of("entry_filled", "rebalance_exit_pending", "unranked_reason",
+                "rebalance_missed", "partial")) {
+            if (!prompt.contains("`" + field + "`")) missing.add(field);
+        }
+        assertThat(missing).isEmpty();
+    }
+
     @Test
     void promptNamesTheToolTheEmptyAnswerAndNoKillLevel() {
         assertThat(prompt).contains("`fetch_momentum_ranking`")

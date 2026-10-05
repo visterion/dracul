@@ -55,7 +55,7 @@ import static org.springframework.boot.test.context.SpringBootTest.WebEnvironmen
 /** T6, the guard that outlives the change: no hunter tool endpoint (`/api/strigoi-*&#47;tools/**`)
  *  may ever answer with a status other than 200 or 401 (design doc §4.1).
  *
- *  <p>All six hunters run in one context (pattern: {@code AgentRegistrationParityTest}); all six
+ *  <p>All eight hunters run in one context (pattern: {@code AgentRegistrationParityTest}); all
  *  webhook tokens share the same default {@code dev-token-change-me} (application.yaml), so one
  *  bearer works for every endpoint — {@link #noTokenIs401} and friends exercise every path with
  *  the SAME {@link #TOKEN} constant, which is itself the verification that the shared default
@@ -64,7 +64,7 @@ import static org.springframework.boot.test.context.SpringBootTest.WebEnvironmen
  *  <p>Two things make this test worth having rather than decorative:
  *  <ol>
  *    <li>The endpoint list is derived from {@link RequestMappingHandlerMapping} and then pinned
- *        against an explicit, hand-written expectation ({@link #derivedToolEndpointListMatchesTheNineExpectedPaths}).
+ *        against an explicit, hand-written expectation ({@link #derivedToolEndpointListMatchesTheTenExpectedPaths}).
  *        Every hunter is {@code @ConditionalOnProperty} with default {@code false}; a forgotten
  *        property in this class's {@code @TestPropertySource} would silently shrink the derived
  *        list — in the worst case to zero — and every {@code @MethodSource}-driven test below
@@ -80,12 +80,12 @@ import static org.springframework.boot.test.context.SpringBootTest.WebEnvironmen
  *  </ol>
  *
  *  <p>{@code fetch-news} (StrigoiEchoWebhookController's second tool endpoint) is the one
- *  endpoint that cannot share the generic "benign body" list: unlike the other six, a missing
- *  {@code symbol} is not tolerated input — it is the endpoint's own deliberate validation (design
- *  doc §3.3), answered with the SAME 200/unavailable/{@value #GUARD_MARKER} envelope as the
- *  structural guard, by design. It gets its own benign-input test ({@code symbol} supplied) and
- *  its own absent-body test (asserting the guarded shape, not "healthy") instead of being folded
- *  into the six-endpoint generic rows. */
+ *  endpoint that cannot share the generic "benign body" list: unlike the generic candidate
+ *  endpoints, a missing {@code symbol} is not tolerated input — it is the endpoint's own
+ *  deliberate validation (design doc §3.3), answered with the SAME
+ *  200/unavailable/{@value #GUARD_MARKER} envelope as the structural guard, by design. It gets
+ *  its own benign-input test ({@code symbol} supplied) and its own absent-body test (asserting
+ *  the guarded shape, not "healthy") instead of being folded into the generic candidate rows. */
 @SpringBootTest(webEnvironment = RANDOM_PORT)
 @Import(ContainerConfig.class)
 @ActiveProfiles("dev")

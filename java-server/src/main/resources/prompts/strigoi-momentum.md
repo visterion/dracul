@@ -31,7 +31,12 @@ Call `fetch_momentum_ranking` exactly once (no arguments). It returns `ranking` 
 `return_1m_pct` (the skipped last month), `market_cap_millions`, `held_momentum` (already in this
 book), `held_elsewhere`, `pending_signal`, `possible_corporate_action` (a one-day drop of 15 % or
 more inside the window) and `worst_1d_return_pct` — plus `held` (this book: `symbol`, `rank`,
-`status`), `suspects` and `counts`.
+`status` (`ranked`, `unranked` with `unranked_reason`, or `not_in_universe`), `entry_filled` (the
+code-placed entry order is filled) and `rebalance_exit_pending` (code already queued its exit)),
+`suspects` and `counts`. Informational only, never a reason to change how you veto: `ranking` may
+also carry `rebalance_missed` (a previous month's rebalance did not complete in time — vote
+normally, this is a code/ops matter) and `data_source_health` may carry `partial` (today's
+ranking is incomplete but still usable — vote normally).
 
 ## When to veto (rare)
 
