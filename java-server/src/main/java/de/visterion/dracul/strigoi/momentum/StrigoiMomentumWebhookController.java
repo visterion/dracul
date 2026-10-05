@@ -26,7 +26,8 @@ import java.util.Map;
  * strigoi-momentum (spec 2026-10-04 §5): code ranks the S&P 500 by 12-1 momentum and decides the
  * monthly rebalance; the LLM may only veto. One uncached tool, {@code fetch_momentum_ranking},
  * whose answer is stored per Vistierie run ({@code X-Vistierie-Run-Id}) as the snapshot the
- * completion reads. LLM prey are never persisted — the completion builds the prey itself.
+ * completion reads. LLM prey are never persisted — {@link MomentumCompletionService} builds the
+ * prey from the stored snapshot.
  */
 @RestController
 @ConditionalOnProperty(value = "dracul.strigoi.momentum.enabled", havingValue = "true")
@@ -36,6 +37,7 @@ public class StrigoiMomentumWebhookController extends HuntController {
     static final String AGENT = MomentumSettings.AGENT;
 
     private final MomentumRankingService ranking;
+    private final MomentumCompletionService completion;
 
     public StrigoiMomentumWebhookController(
             @Value("${dracul.strigoi.momentum.webhook-token}") String token,
@@ -43,9 +45,11 @@ public class StrigoiMomentumWebhookController extends HuntController {
             ToolFetchCache cache,
             HiveMemResearchService memory,
             ResearchMemoryLinkRepository memoryLinks,
-            MomentumRankingService ranking) {
+            MomentumRankingService ranking,
+            MomentumCompletionService completion) {
         super(token, preyRepo, cache, memory, memoryLinks);
         this.ranking = ranking;
+        this.completion = completion;
     }
 
     @Override protected String agentName() { return AGENT; }
@@ -82,13 +86,18 @@ public class StrigoiMomentumWebhookController extends HuntController {
         }
     }
 
-    /** LLM prey are ignored: momentum prey are built by code from the stored ranking (Task 7). */
+    /** The whole completion (spec §5.3) runs here — never in onCompletionAccepted, whose
+     *  exceptions HuntController swallows. LLM prey are only counted: momentum prey are built by
+     *  code from the stored ranking. Any failure persists nothing and never answers 5xx: the
+     *  month stays open and the next weekday's catch-up retries it. */
     @Override
     protected List<Prey> selectForPersist(List<Prey> mapped, JsonNode body, String runId) {
-        if (!mapped.isEmpty()) {
-            log.warn("{} run {}: {} LLM prey ignored — momentum prey are built by code from the "
-                    + "ranking snapshot", AGENT, runId, mapped.size());
+        try {
+            return completion.complete(body.path("output"), runId, mapped.size()).prey();
+        } catch (RuntimeException e) {
+            log.warn("{} run {}: completion failed — nothing persisted, the month stays open: {}",
+                    AGENT, runId, e.toString(), e);
+            return List.of();
         }
-        return List.of();
     }
 }

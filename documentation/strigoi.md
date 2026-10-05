@@ -732,8 +732,25 @@ reasoning tier with one tool and `max_turns` 6.
 - **Calendar.** Target month M on the last weekday of M, and on weekdays 1–3 of M+1 (catch-up);
   due while `momentum_rebalance` has no row for M and M ≥ `momentum_state.start_month` (written
   by the first run, so enabling mid-month never back-fires).
-- **Completion** (`POST /api/strigoi-momentum/complete`): see "Completion" below (Task 7 of the
-  build; until it ships the completion persists nothing).
+- **Completion** (`POST /api/strigoi-momentum/complete`, all steps in `selectForPersist`):
+  (1) status; (2) the run's stored snapshot is the ONLY input — none, not due or `unavailable` ⇒
+  no-op (`no_snapshot` is logged); (3) `output.vetoes[]` are accepted only for the offered 20 names
+  with a reason (`veto_invalid` otherwise); (4) final Top 10 = rank order minus vetoes, skipping
+  names held or pending under another profile (`held_elsewhere`), refilled from the offered names
+  only (`short_book` when fewer remain); (5) every filled MOMENTUM position that is ranked but not
+  in the final Top 10, or no longer in the index, gets `executor_position.rebalance_exit_at`
+  (idempotent) and is flattened by the executor's next maintenance pass (`HARD_REBALANCE`); a
+  held name without a valid rank is carried (`held_unranked`) and exited only when it was unranked
+  in the last three due snapshots (`carried_too_long`); a flag on a name back in the Top 10 is
+  cleared; unfilled entries are left to their GTD expiry; (6) the remaining final names not held
+  or pending as MOMENTUM become code-built prey (`anomalyType=MOMENTUM_12_1`, confidence 0.50,
+  thesis `12-1 momentum rank k of n: +x.x % (t−252..t−21)`, horizon `1m`, kill criterion
+  "managed by exit profile MOMENTUM: monthly rebalance exit or emergency stop") and executor
+  signals; (7) `momentum_rebalance` is marked for the target month — only after step 5 succeeded
+  (a failure leaves the month open for the next weekday); (8) one line
+  `strigoi-momentum completion notes: run=… vetoed=… …` (WARN only when an anomaly count is > 0).
+  LLM `prey` are ignored. A disabled executor ⇒ no-op (`executor_disabled`). A re-delivered
+  completion re-runs the idempotent steps; prey dedup on the day prevents a second emission.
 
 Known deviations from the backtested strategy (documented, accepted for the measurement): held
 names that stay in the Top 10 are not resized; a wide emergency stop exists; entries are
