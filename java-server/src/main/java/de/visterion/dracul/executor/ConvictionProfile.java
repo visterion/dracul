@@ -6,8 +6,8 @@ import java.math.RoundingMode;
 /**
  * Parameters of the wide-stop exit profiles CONVICTION and MOMENTUM (shared stop arithmetic under
  * dracul.executor.profiles.conviction.*; rename to a wide-stop key is out of scope, spec 2026-10-04
- * §3; CONVICTION spec 2026-10-03 §5.2) and the price arithmetic every consumer shares, so place-entry, the hard trigger and the stop ratchet can
- * never disagree about a level.
+ * §3; CONVICTION spec 2026-10-03 §5.2) and the price arithmetic every consumer shares, so
+ * place-entry, the hard trigger and the stop ratchet can never disagree about a level.
  *
  * @param emergencyStopPct logical stop distance below (BUY) the entry
  * @param targetPct a close at or above entry x (1 + targetPct) sells {@code targetFraction}

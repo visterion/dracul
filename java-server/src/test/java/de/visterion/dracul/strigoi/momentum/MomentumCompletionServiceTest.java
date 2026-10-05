@@ -266,6 +266,25 @@ class MomentumCompletionServiceTest {
         verify(repo).markRebalanced(OCT, RUN);
     }
 
+    /** Plan decision 14 / prompt promise: a vetoed name is excluded from the final Top N just
+     *  like any other skip, so a held MOMENTUM position on it is NOT in finalSymbols — but it is
+     *  still ranked (the veto does not remove it from the snapshot), so step 5 flags it for a
+     *  rebalance exit via the ordinary "ranked-not-final" path, same as a name that fell out of
+     *  rank naturally. */
+    @Test
+    void aVetoedHeldNameStillRankedIsFlaggedForRebalanceExit() {
+        when(positionRepo.findOpen()).thenReturn(List.of(row(1L, "SYNB", ExitProfile.MOMENTUM, true, null)));
+
+        var result = service.complete(output("""
+                {"prey": [], "vetoes": [{"symbol": "SYNB", "reason": "synthetic concern"}]}
+                """), RUN, 0);
+
+        verify(positionRepo).markRebalanceExit(eq(1L), eq("depot-1"), any());
+        assertThat(result.notes()).containsEntry("vetoed", 1).containsEntry("rebalance_exits", 1);
+        assertThat(symbols(result.prey())).doesNotContain("SYNB");
+        verify(repo).markRebalanced(OCT, RUN);
+    }
+
     /** Fix round 1: a re-ranked name whose flatten is already submitted is not "cleared". */
     @Test
     void aSubmittedFlattenIsNotCountedAsCleared() {

@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import tools.jackson.databind.ObjectMapper;
@@ -22,11 +23,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 class MomentumRepositoryTest {
 
     @Autowired MomentumRepository repo;
+    @Autowired JdbcClient jdbc;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    /** A synthetic far-future year per test run keeps months unique in the reused container. */
+    /** A synthetic far-future year per test run keeps months unique in the reused container.
+     *  Derived from a fresh UUID (not nanoTime, which can repeat across calls in the same
+     *  test/JVM at this resolution) spread uniformly over the full disjoint range (ruling m7:
+     *  3000–3999). */
     private static YearMonth month(int m) {
-        int year = 3000 + (int) ((System.nanoTime() / 1000) % 1000);   // ruling m7: 3000–3999
+        int year = 3000 + (int) (Math.floorMod(UUID.randomUUID().getLeastSignificantBits(), 1000L));
         return YearMonth.of(year, m);
     }
 
@@ -69,6 +74,10 @@ class MomentumRepositoryTest {
     @Test
     void theMonthMarkIsIdempotent() {
         YearMonth m = month(7);
+        // Belt-and-suspenders against a collision with an earlier test run on the reused
+        // Testcontainers DB: the UUID-derived year already makes a collision unlikely, but a
+        // clean slate for THIS exact month key is what the assertion below actually needs.
+        jdbc.sql("DELETE FROM momentum_rebalance WHERE month = :m").param("m", m.toString()).update();
         assertThat(repo.rebalanceCompleted(m)).isFalse();
         assertThat(repo.markRebalanced(m, "run-a")).isTrue();
         assertThat(repo.markRebalanced(m, "run-b")).isFalse();

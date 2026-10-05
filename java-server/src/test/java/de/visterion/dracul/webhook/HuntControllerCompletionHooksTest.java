@@ -75,6 +75,25 @@ class HuntControllerCompletionHooksTest {
         }
     }
 
+    /** A run id that arrives padded (e.g. a tool call's header normalized by an intermediary)
+     *  must resolve to the same key the run was first seen under: StrigoiMomentumWebhookController
+     *  stores the ranking snapshot under runId.trim(), so HuntController#complete must trim the
+     *  same way before the hooks and before the insertAll keying — a mismatch here means the
+     *  completion can never find the snapshot it just stored. */
+    @Test
+    void aPaddedRunIdIsTrimmedBeforeTheHooksSeeIt() {
+        try (var ctx = new AnnotationConfigApplicationContext()) {
+            PreyRepository preyRepo = Mockito.mock(PreyRepository.class);
+            when(preyRepo.insertAll(anyList(), any())).thenAnswer(inv -> inv.getArgument(0));
+            HookedHunter h = hunter(ctx, preyRepo);
+
+            h.complete("Bearer test-token", "  run-padded  ",
+                    JSON.readTree("{\"status\":\"done\",\"output\":{\"prey\":[]}}"));
+
+            assertThat(h.accepted).containsExactly("run-padded");
+        }
+    }
+
     @Test
     void selectForPersistDecidesWhatIsInserted() {
         try (var ctx = new AnnotationConfigApplicationContext()) {

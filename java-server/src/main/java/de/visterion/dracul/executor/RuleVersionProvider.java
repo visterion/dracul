@@ -175,8 +175,9 @@ public class RuleVersionProvider {
                             + "with PROFILE_MANAGED; a position flagged by the strigoi-momentum completion is "
                             + "flattened fully (HARD_REBALANCE: without a close before the close-null skip, with a "
                             + "close after the stop, which wins the reason code); for a MOMENTUM signal, MOMENTUM "
-                            + "rows with a committed rebalance exit are excluded from MECHANISM_BUDGET, BUDGET and "
-                            + "MAX_POSITIONS; LOW_CONFIDENCE, CHASED_AWAY and BELOW_ANCHOR skipped for MOMENTUM; "
+                            + "rows with a committed rebalance exit are excluded from MECHANISM_BUDGET and BUDGET "
+                            + "open exposure and from MAX_POSITIONS (the BUDGET cash check still requires cash >= "
+                            + "charge); LOW_CONFIDENCE, CHASED_AWAY and BELOW_ANCHOR skipped for MOMENTUM; "
                             + "PACE_LIMIT counts STANDARD entries only and is skipped for CONVICTION and MOMENTUM; "
                             + "max_positions 25 -> 35; MECHANISM_BUDGET MOMENTUM_12_1 0.28; executor max_turns "
                             + "25 -> 40; all other exec-v1.1 gates unchanged",

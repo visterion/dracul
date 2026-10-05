@@ -51,7 +51,7 @@ your `stop_price` and `take_profit` (emergency stop 35 % below the entry, no tak
 fixed notional per name) — send `reference_price` × 0.65 as `stop_price`. LOW_CONFIDENCE,
 CHASED_AWAY, BELOW_ANCHOR, CORRELATED, CONCENTRATION, HEAT_LIMIT and PACE_LIMIT do not apply to
 momentum entries; names the strategy sells tonight do not count against MAX_POSITIONS or the
-budgets of a momentum entry.
+budget exposure of a momentum entry (the cash leg still applies).
 
 ## Hard guarantees on entries (enforced in CODE — not yours to override)
 

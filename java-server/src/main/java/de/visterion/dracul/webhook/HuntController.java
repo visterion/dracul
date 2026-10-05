@@ -390,6 +390,11 @@ public abstract class HuntController {
             @RequestHeader(value = "X-Vistierie-Run-Id", required = false) String runId,
             @RequestBody JsonNode body) {
         if (!verifier.verify(auth)) return ResponseEntity.status(401).build();
+        // Trimmed to match the keying used when the run id was first seen (e.g. a tool call
+        // header): StrigoiMomentumWebhookController#fetchRanking stores the ranking snapshot
+        // under runId.trim(), so a padded header here must resolve to the same key or
+        // MomentumCompletionService can never find the snapshot it just stored.
+        runId = runId == null ? null : runId.trim();
         String status = body.path("status").asText("");
         if (!"done".equals(status) && !"succeeded".equals(status)) {
             log.warn("{} run {} status={} — acknowledging without persisting", agentName(), runId, status);

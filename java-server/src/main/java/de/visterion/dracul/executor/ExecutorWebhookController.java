@@ -823,12 +823,6 @@ public class ExecutorWebhookController {
                 "profile " + profile.name() + ": emergency stop", qty, null, "PROFILE_NOTIONAL", null);
     }
 
-    /** {@link #profileSizing} for CONVICTION (kept for its existing callers). */
-    static Sizing convictionSizing(String side, BigDecimal entry, BigDecimal stop,
-            BigDecimal notional, BigDecimal fxToAccount) {
-        return profileSizing(ExitProfile.CONVICTION, side, entry, stop, notional, fxToAccount);
-    }
-
     /** {@code latency.signal_to_decision_seconds}, omitted entirely (null) when the signal's
      *  {@code createdAt} is missing or unparseable rather than guessed. */
     private ObjectNode latencyNode(String signalCreatedAt, Instant now) {

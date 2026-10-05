@@ -1468,8 +1468,8 @@ class VetoServiceTest {
 
     /** qty 33 at 100 -> a 3 300 profile notional (fx 1). */
     private Sizing convictionSizing() {
-        return ExecutorWebhookController.convictionSizing("BUY", new BigDecimal("100"),
-                new BigDecimal("65"), new BigDecimal("3300"), BigDecimal.ONE);
+        return ExecutorWebhookController.profileSizing(ExitProfile.CONVICTION, "BUY",
+                new BigDecimal("100"), new BigDecimal("65"), new BigDecimal("3300"), BigDecimal.ONE);
     }
 
     private VetoConfig techBudgetCfg() {

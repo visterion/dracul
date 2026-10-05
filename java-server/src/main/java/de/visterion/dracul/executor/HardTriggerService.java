@@ -425,18 +425,18 @@ public class HardTriggerService {
     // Reason codes produced here ("HARD_STOP", "HARD_KILL_CRITERIA", "GIVEBACK_BREACH",
     // "HARD_CATASTROPHE", "HARD_TARGET_HALF", "HARD_REBALANCE") are duplicated in
     // ReconcileService#HARD_REASONS — keep both in sync.
-    //
-    // CONVICTION after the half-sale (final review #2): the breach level is the tighter of
-    // active_stop and the profile trail on highest_price (which already includes tonight's close).
-    // StopRatchetService skips a trail candidate the close is already beyond (wrong-side guard), so
-    // after a >= trail-pct drop between two ratchets active_stop still sits on the old level and
-    // would never fire — the trail must be checked here, against the same close.
+
     /** Spec 2026-10-04 §4: full flatten of a MOMENTUM row committed to a rebalance exit. */
     private static Trigger rebalanceTrigger(ExecutorPosition p) {
         return new Trigger("HARD_REBALANCE", "REBALANCE",
                 "REBALANCE: dropped out of the final momentum Top 10 (flagged " + p.rebalanceExitAt() + ")");
     }
 
+    // CONVICTION after the half-sale (final review #2): the breach level is the tighter of
+    // active_stop and the profile trail on highest_price (which already includes tonight's close).
+    // StopRatchetService skips a trail candidate the close is already beyond (wrong-side guard), so
+    // after a >= trail-pct drop between two ratchets active_stop still sits on the old level and
+    // would never fire — the trail must be checked here, against the same close.
     private Trigger detectStopBreach(ExecutorPosition p, BigDecimal close, boolean sell) {
         BigDecimal trail = convictionTrail(p);
         boolean trailTighter = trail != null && (sell
