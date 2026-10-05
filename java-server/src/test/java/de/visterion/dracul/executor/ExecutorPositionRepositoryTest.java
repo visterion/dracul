@@ -862,7 +862,8 @@ class ExecutorPositionRepositoryTest {
     @Test
     void v53MomentumAndRebalanceExitAtRoundTrip() {
         String symbol = "V53-" + UUID.randomUUID();
-        var base = ExecutorPositionFixtures.withoutKillLevel(null, "depot-1", symbol, "BUY",
+        String conn = "v53-" + UUID.randomUUID();
+        var base = ExecutorPositionFixtures.withoutKillLevel(null, conn, symbol, "BUY",
                 new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("65.00"),
                 new BigDecimal("65.00"), 1, null, List.of("X"), "sig-v53", "strigoi-momentum",
                 null, null, "OPEN", null, null, null, 0, null, null, null, null, null,
