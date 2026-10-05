@@ -183,21 +183,24 @@ public class HardTriggerService {
             }
 
             boolean sell = "SELL".equals(p.side());
-            boolean conviction = p.exitProfile() == ExitProfile.CONVICTION;
+            ExitProfile profile = p.profile();
+            boolean wideStop = profile.isWideStop();
             BigDecimal currentR = computeR(p, close);
 
-            if (!conviction && isBuy(p) && p.killCloseBelow() != null) {
+            if (!wideStop && isBuy(p) && p.killCloseBelow() != null) {
                 levelsEvaluated++;
                 if (close.compareTo(p.killCloseBelow()) < 0) levelsBreached++;
             }
 
-            // 1. stop breach — for CONVICTION the active stop is the emergency stop or the trail.
+            // 1. stop breach — for a wide-stop profile the active stop is the emergency stop (or,
+            // CONVICTION after the half-sale, the trail).
             Trigger trigger = detectStopBreach(p, close, sell);
-            if (trigger == null && conviction) {
-                // 2. TARGET_HALF — exactly once: never after the half-sale, never while a trim is
-                // still pending (a second maintenance pass in the same run re-reads the trimmed
-                // row and stops here). 3. kill level and giveback do not apply to this profile.
-                if (targetHalfDue(p, close)) {
+            if (trigger == null && wideStop) {
+                // Wide-stop profiles (CONVICTION, MOMENTUM): kill level and giveback never apply.
+                // 2. TARGET_HALF (CONVICTION only) — exactly once: never after the half-sale,
+                // never while a trim is still pending (a second maintenance pass in the same run
+                // re-reads the trimmed row and stops here).
+                if (profile.hasTargetHalf() && targetHalfDue(p, close)) {
                     targetsHit++;
                     sellHalf(p, close, runId);
                 }
@@ -423,7 +426,7 @@ public class HardTriggerService {
      *  or no recorded extreme). SELL would trail on the lowest close; the basket is long-only, so
      *  only the BUY side carries an extreme here. */
     private BigDecimal convictionTrail(ExecutorPosition p) {
-        if (p.exitProfile() != ExitProfile.CONVICTION || p.trimCount() <= 0) return null;
+        if (!p.profile().hasTrail() || p.trimCount() <= 0) return null;
         if (!isBuy(p) || p.highestPrice() == null) return null;
         return convictionProfile.trailStop(p.side(), p.highestPrice());
     }

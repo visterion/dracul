@@ -7749,4 +7749,57 @@ class ExecutorWebhookControllerTest {
 
         assertThat(((Map<?, ?>) positions.get(0)).get("exit_profile")).isEqualTo("CONVICTION");
     }
+
+    /** Confidence 0.9, not the production 0.50: this test class's min-confidence is 0.6 and the
+     *  LOW_CONFIDENCE skip for MOMENTUM only arrives in Task 3 (VetoServiceTest pins it). */
+    private ExecutorSignal momentumSignal(String signalId) {
+        return signal(signalId, 0.9, new BigDecimal("100"), "PENDING", "MOMENTUM_12_1");
+    }
+
+    /** Spec 2026-10-04 §3: MOMENTUM uses the wide-stop path — profile stop entry x 0.65, broker
+     *  leg at the −20 % band (narrow), no take-profit, fixed-notional sizing. */
+    @Test
+    void placeEntry_momentumUsesTheWideStopPath() {
+        when(signalRepo.findById("sig-1")).thenReturn(momentumSignal("sig-1"));
+        when(assembler.assemble(any())).thenReturn(
+                withConvictionNotional(happyContext(), new BigDecimal("363")));
+        stubFreshPlacement();
+
+        Map<String, Object> output = outputOf(controller.placeEntry(BEARER, "run-m", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95,"take_profit":130}
+                """)));
+
+        assertThat(output.get("placed")).isEqualTo(true);
+        ArgumentCaptor<BracketRequest> req = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), req.capture());
+        assertThat(req.getValue().stopLossStop()).isEqualByComparingTo("80.00");
+        assertThat(req.getValue().takeProfitLimit()).isNull();
+        ExecutorPosition booked = bookedPosition();
+        assertThat(booked.exitProfile()).isEqualTo(ExitProfile.MOMENTUM);
+        assertThat(booked.initialStop()).isEqualByComparingTo("65.00");
+        assertThat(booked.brokerStopNarrow()).isTrue();
+        JsonNode order = enterLog().orderJson();
+        assertThat(order.path("stop_source").asString()).isEqualTo("profile");
+        assertThat(order.path("exit_profile").asString()).isEqualTo("MOMENTUM");
+        assertThat(order.path("sizing_basis").asString()).isEqualTo("PROFILE_NOTIONAL");
+    }
+
+    /** exit_position on a MOMENTUM position -> PROFILE_MANAGED, text names the profile. */
+    @Test
+    void exitPosition_onMomentumIsProfileManaged() {
+        ExecutorPosition open = ExecutorPositionFixtures.withProfileFields(openPosition(52L, "SYNC",
+                "BUY", new BigDecimal("100"), new BigDecimal("65"), new BigDecimal("10"), 0),
+                ExitProfile.MOMENTUM, null, null, null, false);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+
+        Map<String, Object> output = outputOf(controller.exitPosition(BEARER, "run-1", json("""
+                {"symbol":"SYNC","fraction":1.0,"reason":"SOFT_EXIT"}
+                """)));
+
+        assertThat(output.get("reason")).isEqualTo("PROFILE_MANAGED");
+        verify(gateway, never()).flatten(any(), any(), any());
+        ArgumentCaptor<DecisionLog> row = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(row.capture());
+        assertThat(row.getValue().reasoning()).startsWith("exit_position on MOMENTUM position 52");
+    }
 }

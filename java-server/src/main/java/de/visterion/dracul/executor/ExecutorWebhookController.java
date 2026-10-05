@@ -804,15 +804,15 @@ public class ExecutorWebhookController {
                 .setScale(4, java.math.RoundingMode.HALF_UP);
     }
 
-    /** Exit profile CONVICTION sizing (spec 2026-10-03 §5.3): a fixed notional per basket name,
-     *  NOT risk/stop distance — qty = floor(notional / entry). {@code notional} is already in
+    /** Wide-stop sizing (spec 2026-10-03 §5.3, 2026-10-04 §3): a fixed notional per name, NOT
+     *  risk/stop distance — qty = floor(notional / entry). {@code notional} is already in
      *  INSTRUMENT currency ({@link EntryContext#convictionNotional()}); a missing FX rate is
      *  already caught upstream by the DATA_UNAVAILABLE pre-veto (`FxService` never returns null
      *  for a non-null amount, it serves it unconverted on a cache miss) — the null branch here is
      *  defensive only, sizing zero shares and rejecting SIZE_TOO_SMALL rather than guessing. The
-     *  risk figure is the audit record only — HEAT_LIMIT is skipped for this profile. */
-    static Sizing convictionSizing(String side, BigDecimal entry, BigDecimal stop,
-            BigDecimal notional, BigDecimal fxToAccount) {
+     *  risk figure is the audit record only — HEAT_LIMIT is skipped for these profiles. */
+    static Sizing profileSizing(ExitProfile profile, String side, BigDecimal entry,
+            BigDecimal stop, BigDecimal notional, BigDecimal fxToAccount) {
         BigDecimal qty = notional == null || notional.signum() <= 0
                 ? BigDecimal.ZERO : notional.divide(entry, 0, RoundingMode.FLOOR);
         BigDecimal rPerShare = "SELL".equalsIgnoreCase(side)
@@ -820,7 +820,13 @@ public class ExecutorWebhookController {
         BigDecimal fx = fxToAccount == null ? BigDecimal.ONE : fxToAccount;
         BigDecimal risk = qty.multiply(rPerShare).multiply(fx).setScale(4, RoundingMode.HALF_UP);
         return new Sizing(qty, rPerShare, risk, null, null, true,
-                "profile CONVICTION: emergency stop", qty, null, "PROFILE_NOTIONAL", null);
+                "profile " + profile.name() + ": emergency stop", qty, null, "PROFILE_NOTIONAL", null);
+    }
+
+    /** {@link #profileSizing} for CONVICTION (kept for its existing callers). */
+    static Sizing convictionSizing(String side, BigDecimal entry, BigDecimal stop,
+            BigDecimal notional, BigDecimal fxToAccount) {
+        return profileSizing(ExitProfile.CONVICTION, side, entry, stop, notional, fxToAccount);
     }
 
     /** {@code latency.signal_to_decision_seconds}, omitted entirely (null) when the signal's
@@ -996,7 +1002,7 @@ public class ExecutorWebhookController {
 
         // Exit profile of THIS entry, derived from the signal's mechanism (spec 2026-10-03 §5.1).
         ExitProfile profile = ExitProfile.fromMechanism(signal.mechanism());
-        boolean conviction = profile == ExitProfile.CONVICTION;
+        boolean wideStop = profile.isWideStop();
 
         // -----------------------------------------------------------------
         // Row 0a (case A′) — BEFORE the veto pass, deliberately.
@@ -1064,17 +1070,17 @@ public class ExecutorWebhookController {
             orderPrice = limitPrice != null ? limitPrice : ctx.price();
             orderPriceRounded = TickSize.roundEntry(side, orderPrice);
 
-            if (conviction) {
-                // Exit profile CONVICTION (spec 2026-10-03 §5.3). The logical stop is the profile's
+            if (wideStop) {
+                // Wide-stop profile (spec 2026-10-03 §5.3, 2026-10-04 §3). The logical stop is the profile's
                 // emergency stop: the LLM's proposal, StopWindowRounding's clamp and — through the
                 // null bounds handed to OrderGuard below — the stop-window check do not apply. A
-                // −35 % stop is far outside any 3-ATR window; without the bypass every CONVICTION
+                // −35 % stop is far outside any 3-ATR window; without the bypass every wide-stop
                 // entry would end REJECTED/NO_STOP (R1 M3). OrderGuard still checks the side.
                 stopPrice = convictionProfile.emergencyStop(side, orderPriceRounded);
                 log.info("place_entry {} {}: stop_source=profile, logical stop {} (LLM proposed {})",
                         signalId, signal.symbol(), stopPrice.toPlainString(),
                         proposedStop == null ? "none" : proposedStop.toPlainString());
-                sizing = convictionSizing(side, orderPriceRounded, stopPrice,
+                sizing = profileSizing(profile, side, orderPriceRounded, stopPrice,
                         ctx.convictionNotional(), ctx.fxToAccount());
                 // The broker rejects a bracket leg beyond its proximity band at entry (SIM
                 // 2026-10-03: −20 % accepted, −25 % rejected). The leg starts at the band and the
@@ -1085,9 +1091,8 @@ public class ExecutorWebhookController {
                 if (takeProfit != null) {
                     // A target leg makes the half-sale fail (LEG_RESTORE_UNSUPPORTED_OCO) and a
                     // target fill would close the whole position (R1 M4).
-                    log.info("place_entry {} {}: take_profit {} dropped — exit profile CONVICTION "
-                                    + "never carries a target leg",
-                            signalId, signal.symbol(), takeProfit.toPlainString());
+                    log.info("place_entry {} {}: take_profit {} dropped — exit profile {} never carries a target leg",
+                            signalId, signal.symbol(), takeProfit.toPlainString(), profile);
                     takeProfit = null;
                     takeProfitDropped = true;
                 }
@@ -1185,7 +1190,7 @@ public class ExecutorWebhookController {
                     Map.of("placed", false, "reason", reason, "veto_trace", vetoTrace)));
         }
 
-        if (conviction && sizing.qty().compareTo(BigDecimal.valueOf(convictionProfile.minEntryQty())) < 0) {
+        if (wideStop && sizing.qty().compareTo(BigDecimal.valueOf(convictionProfile.minEntryQty())) < 0) {
             // A position this small can never be half-sold: the broker floors the fraction
             // (QTY_ROUNDED_TO_ZERO), so the profile's target-half could never fire (R1 Minor 4).
             String reason = RejectReason.SIZE_TOO_SMALL.name();
@@ -1510,12 +1515,12 @@ public class ExecutorWebhookController {
         }
 
         // broker_stop_narrow: the protective leg rests TIGHTER than the logical stop (spec §5.3).
-        // A fresh CONVICTION bracket starts at the band; an adopted fill is narrow when the leg it
+        // A fresh wide-stop bracket starts at the band; an adopted fill is narrow when the leg it
         // bound rests on the market side of the logical stop.
         boolean bookedNarrow;
         if (adoptedFill != null) {
             BigDecimal boundLeg = adoptedStopLeg == null ? null : adoptedStopLeg.stopPrice();
-            bookedNarrow = conviction && boundLeg != null && ("buy".equalsIgnoreCase(entrySide)
+            bookedNarrow = wideStop && boundLeg != null && ("buy".equalsIgnoreCase(entrySide)
                     ? boundLeg.compareTo(stopPrice) > 0 : boundLeg.compareTo(stopPrice) < 0);
         } else {
             bookedNarrow = brokerStopNarrow;
@@ -1642,9 +1647,9 @@ public class ExecutorWebhookController {
                 orderJson.put("qty_risk", sizing.qtyRisk());
                 orderJson.put("sizing_basis", sizing.sizingBasis());
                 orderJson.put("exit_profile", profile.name());
-                orderJson.put("stop_source", conviction ? "profile" : "llm_window");
+                orderJson.put("stop_source", wideStop ? "profile" : "llm_window");
                 orderJson.put("broker_stop_narrow", bookedNarrow);
-                if (conviction) orderJson.put("profile_notional", ctx.convictionNotional());
+                if (wideStop) orderJson.put("profile_notional", ctx.convictionNotional());
                 orderJson.put("reject_cause",
                         sizing.rejectCause() == null ? null : sizing.rejectCause().name());
                 orderJson.put("risk_pct", riskPct);
@@ -1887,7 +1892,7 @@ public class ExecutorWebhookController {
                 node.put("kill_close_below_dropped", p.killCloseBelowDropped());
             }
             node.put("trim_count", p.trimCount());
-            // Exit profile (spec 2026-10-03 §5.1). A CONVICTION row is code-managed: never call
+            // Exit profile (spec 2026-10-03 §5.1). A wide-stop row (CONVICTION, MOMENTUM) is code-managed: never call
             // exit_position or add_tranche for it.
             node.put("exit_profile", p.exitProfile() == null
                     ? ExitProfile.STANDARD.name() : p.exitProfile().name());
@@ -2018,13 +2023,14 @@ public class ExecutorWebhookController {
                     Map.of("exited", false, "reason", "NO_OPEN_POSITION")));
         }
 
-        // Exit profile CONVICTION is code-managed end to end — emergency stop, target-half, trail,
-        // catastrophe (spec 2026-10-03 §5.6). Terminal for this call, logged, no gateway call.
-        if (position.exitProfile() == ExitProfile.CONVICTION) {
+        // Wide-stop profiles are code-managed end to end — CONVICTION: emergency stop,
+        // target-half, trail, catastrophe (spec 2026-10-03 §5.6); MOMENTUM: emergency stop and
+        // the monthly rebalance (spec 2026-10-04 §3). Terminal for this call, logged, no gateway call.
+        if (position.profile().isWideStop()) {
             decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                     "SOFT_TRIGGER", null, null, null, symbol, null, null,
                     "REJECT", "PROFILE_MANAGED", null,
-                    "exit_position on CONVICTION position " + position.id()
+                    "exit_position on " + position.profile().name() + " position " + position.id()
                             + " — exits of this profile are code-managed",
                     confidence, null, null));
             return ResponseEntity.ok(Map.of("output",

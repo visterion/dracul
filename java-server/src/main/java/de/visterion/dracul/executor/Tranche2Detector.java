@@ -48,9 +48,8 @@ public class Tranche2Detector {
 
     public Tranche2Status detect(ExecutorPosition p, BigDecimal price, List<ExecutorSignal> pendings,
             String positionMechanism) {
-        // Spec 2026-10-03 §5.6 (R1 Minor 2): exit profile CONVICTION is bought exactly once.
-        // One gate covers both the fetch-open-positions eligibility and /tools/add-tranche.
-        if (p.exitProfile() == ExitProfile.CONVICTION) return NOT_ELIGIBLE;
+        // Wide-stop profiles (CONVICTION, MOMENTUM) are bought exactly once (spec 2026-10-03 §5.6, 2026-10-04 §3). One gate covers both the fetch-open-positions eligibility and /tools/add-tranche.
+        if (p.profile().isWideStop()) return NOT_ELIGIBLE;
         if (p.tranche() != 1 || !"OPEN".equals(p.status()) || price == null) return NOT_ELIGIBLE;
 
         // Never add to a position the broker has not filled. A second bracket resting next to an

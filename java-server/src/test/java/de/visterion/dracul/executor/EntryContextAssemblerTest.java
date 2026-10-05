@@ -568,4 +568,25 @@ class EntryContextAssemblerTest {
         // exposure still counts every position (MECHANISM_BUDGET/BUDGET need the basket)
         assertThat(ctx.openExposure()).isEqualByComparingTo("2000");
     }
+
+    /** Spec 2026-10-04 §3: heat counts STANDARD only — a MOMENTUM row is excluded like CONVICTION. */
+    @Test
+    void openHeatExcludesMomentumPositions() {
+        when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
+                new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
+                new BigDecimal("101.00"), new BigDecimal("100.00")));
+        when(sectorCascade.resolve("ACME")).thenReturn("Technology");
+        when(positionRepo.findOpen()).thenReturn(List.of(
+                ExecutorPositionFixtures.withProfileFields(openPosition("SYNA", new BigDecimal("10"),
+                        new BigDecimal("100"), new BigDecimal("65"), null), ExitProfile.MOMENTUM,
+                        null, null, null, false),                                   // 350, excluded
+                openPosition("SYNB", new BigDecimal("10"), new BigDecimal("50"),
+                        new BigDecimal("45"), null)));                              // +50
+
+        EntryContext ctx = assembler.assemble(
+                signal("ACME", new BigDecimal("100.00"), "2026-07-10T00:00:00Z"));
+
+        assertThat(ctx.openHeat()).isEqualByComparingTo("50");
+        assertThat(ctx.openExposure()).isEqualByComparingTo("1500");
+    }
 }

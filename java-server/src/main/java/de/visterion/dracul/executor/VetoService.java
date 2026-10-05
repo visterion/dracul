@@ -175,18 +175,21 @@ public class VetoService {
         results.add(new VetoResult("MAX_POSITIONS", capacityOk, maxPositionsMeasured));
         if (!capacityOk && firstFailure == null) firstFailure = RejectReason.MAX_POSITIONS;
 
-        // Exit profile of THIS signal, derived from its mechanism (spec 2026-10-03 §5.3).
-        boolean conviction = ExitProfile.fromMechanism(signal == null ? null : signal.mechanism())
-                == ExitProfile.CONVICTION;
+        // Exit profile of THIS signal, derived from its mechanism (spec 2026-10-03 §5.3,
+        // 2026-10-04 §3). Wide-stop profiles (CONVICTION, MOMENTUM) share the capital charge and
+        // the CORRELATED/CONCENTRATION/HEAT_LIMIT skips; the skip text names the profile.
+        ExitProfile signalProfile = ExitProfile.fromMechanism(signal == null ? null : signal.mechanism());
+        boolean wideStop = signalProfile.isWideStop();
+        String skipLabel = "skipped (exit profile " + signalProfile.name() + ")";
 
         // Shared capital arithmetic for 5b, 6 and 7 (hoisted: 5b needs the same tranche as BUDGET).
-        // BUDGET and MECHANISM_BUDGET charge what the entry really buys: a CONVICTION entry is a
+        // BUDGET and MECHANISM_BUDGET charge what the entry really buys: a wide-stop entry is a
         // fixed profile notional (qty x order price x fx, account ccy). Charging the STANDARD
         // tranche instead would leave the 12th basket name PENDING until SIGNAL_EXPIRED (R1 M6).
-        CapitalBounds.Result bounds = conviction
+        CapitalBounds.Result bounds = wideStop
                 ? CapitalBounds.checkCharge(ctx.account(), ctx.openExposure(), ctx.openHeat(),
                         sizing.newRiskAccountCcy(), cfg.totalBudget(),
-                        convictionCharge(sizing, orderPrice, ctx), cfg.heatPct())
+                        profileCharge(sizing, orderPrice, ctx), cfg.heatPct())
                 : CapitalBounds.check(ctx.account(), ctx.openExposure(), ctx.openHeat(),
                         sizing.newRiskAccountCcy(), cfg.totalBudget(), cfg.trancheCount(),
                         cfg.heatPct());
@@ -237,34 +240,34 @@ public class VetoService {
         results.add(new VetoResult("BUDGET", budgetOk, budgetMeasured));
         if (!budgetOk && firstFailure == null) firstFailure = RejectReason.BUDGET;
 
-        // 7 HEAT_LIMIT — skipped for CONVICTION signals: the basket is capped by basket-size and
+        // 7 HEAT_LIMIT — skipped for wide-stop signals: the book is capped by its size and
         // MECHANISM_BUDGET, and openHeat (EntryContextAssembler) counts STANDARD positions only.
-        boolean heatOk = conviction || bounds.heatOk();
-        BigDecimal heatUsed = conviction ? ctx.openHeat() : ctx.openHeat().add(sizing.newRiskAccountCcy());
+        boolean heatOk = wideStop || bounds.heatOk();
+        BigDecimal heatUsed = wideStop ? ctx.openHeat() : ctx.openHeat().add(sizing.newRiskAccountCcy());
         double heatBeforePct = cfg.totalBudget().signum() == 0 ? 0.0
                 : ctx.openHeat().divide(cfg.totalBudget(), 6, RoundingMode.HALF_UP).doubleValue() * 100;
         double usedPct = cfg.totalBudget().signum() == 0 ? 0.0
                 : heatUsed.divide(cfg.totalBudget(), 6, RoundingMode.HALF_UP).doubleValue() * 100;
         double limitPct = cfg.heatPct() * 100;
-        if (conviction) {
+        if (wideStop) {
             results.add(VetoResult.skipped("HEAT_LIMIT", String.format(
-                    "skipped (exit profile CONVICTION); STANDARD heat %.1f%% of %.1f%%", usedPct, limitPct)));
+                    skipLabel + "; STANDARD heat %.1f%% of %.1f%%", usedPct, limitPct)));
         } else {
             String heatMeasured = String.format("%.1f%% %s %.1f%%", usedPct, heatOk ? "<=" : ">", limitPct);
             results.add(new VetoResult("HEAT_LIMIT", heatOk, heatMeasured));
             if (!heatOk && firstFailure == null) firstFailure = RejectReason.HEAT_LIMIT;
         }
 
-        // 8 CONCENTRATION — case-insensitive sector match over STANDARD positions only; CONVICTION
-        // signals skip it (capped by basket-size and MECHANISM_BUDGET).
+        // 8 CONCENTRATION — case-insensitive sector match over STANDARD positions only; wide-stop
+        // signals skip it (capped by their book size and MECHANISM_BUDGET).
         long sameSectorCount = ctx.openPositions().stream()
-                .filter(p -> p.exitProfile() != ExitProfile.CONVICTION)
+                .filter(p -> !p.profile().isWideStop())
                 .filter(p -> p.sector() != null
                         && p.sector().equalsIgnoreCase(ctx.candidateSector()))
                 .count();
-        if (conviction) {
+        if (wideStop) {
             results.add(VetoResult.skipped("CONCENTRATION",
-                    "skipped (exit profile CONVICTION); " + sameSectorCount
+                    skipLabel + "; " + sameSectorCount
                             + " STANDARD in sector " + ctx.candidateSector()));
         } else {
             boolean concentrationOk = sameSectorCount < cfg.maxPerSector();
@@ -274,9 +277,9 @@ public class VetoService {
             if (!concentrationOk && firstFailure == null) firstFailure = RejectReason.CONCENTRATION;
         }
 
-        // 9 CORRELATED — skipped for CONVICTION signals: a basket is correlated by design.
-        if (conviction) {
-            results.add(VetoResult.skipped("CORRELATED", "skipped (exit profile CONVICTION)"));
+        // 9 CORRELATED — skipped for wide-stop signals: a basket is correlated by design.
+        if (wideStop) {
+            results.add(VetoResult.skipped("CORRELATED", skipLabel));
         } else {
             // same sector AND same mechanism as an existing open position
             String candSector = ctx.candidateSector();
@@ -503,8 +506,8 @@ public class VetoService {
         return new Outcome(passed, firstFailure, results, contradictingSignalId, snapshot);
     }
 
-    /** Exit profile CONVICTION's capital charge: the actual profile notional in account ccy. */
-    private static BigDecimal convictionCharge(Sizing sizing, BigDecimal orderPrice, EntryContext ctx) {
+    /** A wide-stop profile's capital charge: the actual profile notional in account ccy. */
+    private static BigDecimal profileCharge(Sizing sizing, BigDecimal orderPrice, EntryContext ctx) {
         BigDecimal price = orderPrice != null ? orderPrice : ctx.price();
         BigDecimal qty = sizing.qty() == null ? BigDecimal.ZERO : sizing.qty();
         BigDecimal fx = ctx.fxToAccount() == null ? BigDecimal.ONE : ctx.fxToAccount();

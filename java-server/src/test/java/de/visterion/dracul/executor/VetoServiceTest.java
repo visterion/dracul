@@ -1589,4 +1589,62 @@ class VetoServiceTest {
                 .isEqualTo(new VetoResult("HEAT_LIMIT", true, "x", "profile"));
         assertThat(new VetoResult("BUDGET", false, "y").skipped()).isNull();
     }
+
+    // ---- exit profile MOMENTUM (spec 2026-10-04 §3) ----
+
+    private ExecutorSignal momentum() {
+        return signalBuilder().mechanism("MOMENTUM_12_1").build();
+    }
+
+    /** qty 25 at 100 -> a 2 500 profile notional (fx 1). */
+    private Sizing momentumSizing() {
+        return ExecutorWebhookController.profileSizing(ExitProfile.MOMENTUM, "BUY",
+                new BigDecimal("100"), new BigDecimal("65"), new BigDecimal("2500"), BigDecimal.ONE);
+    }
+
+    /** CORRELATED, CONCENTRATION and HEAT_LIMIT are skipped for MOMENTUM like CONVICTION, and the
+     *  skip text names the profile. */
+    @Test
+    void momentumSkipsCorrelatedConcentrationAndHeatWithAProfileNamedLabel() {
+        var book = ctx().candidateSector("Tech")
+                .openPositions(List.of(position("SYNB", "Tech"), position("SYNC", "Tech"),
+                        position("SYND", "Tech"), position("SYNE", "Tech"), position("SYNF", "Tech")))
+                .openMechanisms(Map.of("SYNB", "MOMENTUM_12_1"))
+                .openHeat(BigDecimal.valueOf(10000));
+
+        var out = vetoService.evaluate(momentum(), book.build(), momentumSizing(), cfg(),
+                new BigDecimal("100"));
+
+        assertThat(named(out, "CORRELATED").skipped()).isEqualTo("profile");
+        assertThat(named(out, "CORRELATED").measured()).isEqualTo("skipped (exit profile MOMENTUM)");
+        assertThat(named(out, "CONCENTRATION").skipped()).isEqualTo("profile");
+        assertThat(named(out, "CONCENTRATION").measured()).startsWith("skipped (exit profile MOMENTUM); 5 STANDARD");
+        assertThat(named(out, "HEAT_LIMIT").skipped()).isEqualTo("profile");
+        assertThat(named(out, "HEAT_LIMIT").measured()).startsWith("skipped (exit profile MOMENTUM)");
+        assertThat(out.results()).hasSize(18);
+    }
+
+    /** MOMENTUM positions do not count toward a STANDARD signal's CONCENTRATION. */
+    @Test
+    void momentumPositionsDoNotCountForStandardConcentration() {
+        List<ExecutorPosition> momentumBook = List.of(
+                ExecutorPositionFixtures.withProfileFields(position("SYNA", "Tech"), ExitProfile.MOMENTUM, null, null, null, false),
+                ExecutorPositionFixtures.withProfileFields(position("SYNB", "Tech"), ExitProfile.MOMENTUM, null, null, null, false),
+                ExecutorPositionFixtures.withProfileFields(position("SYNC", "Tech"), ExitProfile.MOMENTUM, null, null, null, false));
+
+        var std = vetoService.evaluate(signal(), ctx().candidateSector("Tech").openPositions(momentumBook).build(),
+                sizing(), cfg());
+
+        assertThat(named(std, "CONCENTRATION").passed()).isTrue();
+        assertThat(named(std, "CONCENTRATION").measured()).startsWith("0 < 3");
+    }
+
+    /** CONVICTION skip texts stay byte-identical. */
+    @Test
+    void convictionSkipTextsAreUnchanged() {
+        var out = vetoService.evaluate(conviction(), ctx().build(), convictionSizing(), cfg(),
+                new BigDecimal("100"));
+        assertThat(named(out, "CORRELATED").measured()).isEqualTo("skipped (exit profile CONVICTION)");
+        assertThat(named(out, "HEAT_LIMIT").measured()).startsWith("skipped (exit profile CONVICTION); STANDARD heat ");
+    }
 }

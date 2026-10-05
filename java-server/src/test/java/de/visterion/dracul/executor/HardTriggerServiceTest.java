@@ -844,4 +844,68 @@ class HardTriggerServiceTest {
 
         assertThat(survivors).containsExactly(base);
     }
+
+    // ---------------------------------------------------------------------------------------
+    // Exit profile MOMENTUM (spec 2026-10-04 §3): wide stop only — no giveback, no kill level,
+    // no target-half.
+    // ---------------------------------------------------------------------------------------
+
+    /** MOMENTUM BUY, entry 100, emergency stop 65 (R = 35/share), qty 10. */
+    private ExecutorPosition momentum(long id, String symbol, BigDecimal mfeR) {
+        return ExecutorPositionFixtures.withProfileFields(conviction(id, symbol, 0, null, null, mfeR),
+                ExitProfile.MOMENTUM, null, null, null, false);
+    }
+
+    /** mfeR 3 / currentR 1 (close 135) is a GIVEBACK_BREACH for STANDARD; MOMENTUM holds. */
+    @Test
+    void momentumHasNoGiveback() {
+        ExecutorPosition p = momentum(60L, "SYNM", new BigDecimal("3"));
+
+        List<ExecutorPosition> survivors = service.apply(List.of(p),
+                Map.of("SYNM", new BigDecimal("135")), "run1");
+
+        assertThat(survivors).containsExactly(p);
+        assertThat(gateway.flattenedSymbols).isEmpty();
+        verify(decisionRepo, never()).insert(any());
+    }
+
+    @Test
+    void momentumIgnoresAKillLevel() {
+        ExecutorPosition p = ExecutorPositionFixtures.withKillLevel(momentum(61L, "SYNN", null),
+                new BigDecimal("110"), null);
+
+        service.apply(List.of(p), Map.of("SYNN", new BigDecimal("101")), "run1");
+
+        assertThat(gateway.flattenedSymbols).isEmpty();
+    }
+
+    @Test
+    void momentumHasNoTargetHalf() {
+        ExecutorPosition p = momentum(62L, "SYNO", null);
+
+        service.apply(List.of(p), Map.of("SYNO", new BigDecimal("140")), "run1");
+
+        verify(partialExit, never()).execute(any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void momentumStopBreachIsAHardStop() {
+        ExecutorPosition p = momentum(63L, "SYNP", null);
+
+        service.apply(List.of(p), Map.of("SYNP", new BigDecimal("64.99")), "run1");
+
+        assertThat(onlyRow().reasonCode()).isEqualTo("HARD_STOP");
+    }
+
+    /** No trail exists for MOMENTUM even with trim_count > 0 (never reachable, pinned anyway). */
+    @Test
+    void momentumNeverChecksATrail() {
+        ExecutorPosition trimmed = ExecutorPositionFixtures.withProfileFields(
+                convictionWithHighest(64L, "SYNQ", 1, new BigDecimal("200")), ExitProfile.MOMENTUM,
+                null, null, null, false);
+
+        service.apply(List.of(trimmed), Map.of("SYNQ", new BigDecimal("139")), "run1");
+
+        assertThat(gateway.flattenedSymbols).isEmpty();
+    }
 }

@@ -1940,4 +1940,44 @@ class StopRatchetServiceTest {
         assertThat(gateway.modifyCalls).isEmpty();
         verify(positionRepo, never()).markBrokerStopWidened(anyLong(), any());
     }
+
+    // ---------------------------------------------------------------------------------------
+    // Exit profile MOMENTUM (spec 2026-10-04 §3): widening only, never a chandelier ratchet
+    // ---------------------------------------------------------------------------------------
+
+    private ExecutorPosition momentumRow(long id, BigDecimal highest) {
+        return ExecutorPositionFixtures.withProfileFields(
+                conviction(id, highest, new BigDecimal("65"), 0), ExitProfile.MOMENTUM, null,
+                null, null, false);
+    }
+
+    /** Highest 200, ATR 2: a STANDARD row would ratchet to the 194 chandelier. MOMENTUM sends nothing. */
+    @Test
+    void momentumNeverRatchets() {
+        ExecutorPosition p = momentumRow(80L, new BigDecimal("200"));
+
+        ratchet(List.of(p), Map.of("SYNT", new BigDecimal("2.0")),
+                Map.of("SYNT", new BigDecimal("200")), "run1");
+
+        assertThat(gateway.modifyCalls).isEmpty();
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class),
+                any(), any(), any());
+    }
+
+    /** The post-fill widening applies to MOMENTUM exactly as to CONVICTION. */
+    @Test
+    void momentumNarrowLegIsWidenedToTheLogicalStop() {
+        ExecutorPosition n = ExecutorPositionFixtures.withProfileFields(
+                withBrokerStop(momentumRow(81L, new BigDecimal("110")), new BigDecimal("80")),
+                ExitProfile.MOMENTUM, null, null, null, true);
+        when(positionRepo.findById(81L)).thenReturn(n);
+        withOpenLegs(81L, leg(810L, 81L, 1, "brk-1", "stop-old", new BigDecimal("5")));
+
+        ratchet(List.of(n), Map.of("SYNT", new BigDecimal("2.0")),
+                Map.of("SYNT", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).singleElement()
+                .satisfies(c -> assertThat(c.stop()).isEqualByComparingTo("65"));
+        verify(positionRepo).markBrokerStopWidened(81L, new BigDecimal("65"));
+    }
 }

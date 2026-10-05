@@ -189,28 +189,29 @@ public class StopRatchetService {
 
         for (ExecutorPosition p : openPositions) {
             if (p.highestPrice() == null) continue;
-            boolean conviction = p.exitProfile() == ExitProfile.CONVICTION;
-            // Exit profile CONVICTION (spec 2026-10-03 §5.5): no ratchet before the half-sale —
-            // the active stop stays at the emergency stop however far the price runs. This also
-            // covers the STALE in-memory row MaintenancePipeline hands in after a same-pass
-            // TARGET_HALF: HardTriggerService's survivors list still carries the PRE-trim row
-            // (trimCount 0), so it is skipped here exactly like a genuine pre-half-sale row — the
-            // real trail starts only once a later pass re-reads the position from the book.
+            ExitProfile profile = p.profile();
+            // Wide-stop profiles (spec 2026-10-03 §5.5, 2026-10-04 §3): CONVICTION is not ratcheted
+            // before its half-sale — the active stop stays at the emergency stop however far the
+            // price runs — and MOMENTUM never is (no trail at all). This also covers the STALE
+            // in-memory CONVICTION row MaintenancePipeline hands in after a same-pass TARGET_HALF:
+            // HardTriggerService's survivors list still carries the PRE-trim row (trimCount 0),
+            // so it is skipped here exactly like a genuine pre-half-sale row — the real trail
+            // starts only once a later pass re-reads the position from the book.
             //
-            // The one thing a pre-half-sale CONVICTION row does get is the post-fill widening of
-            // a narrow entry leg out to the logical stop (spec 2026-10-03 §5.3) — see
-            // widenNarrowLeg. It must NOT fire on the stale same-pass row above: by then
-            // PartialExitService has repointed the legs to the remainder, and widening would move
-            // the remainder's leg AWAY from the market after the half-sale — or send a modify while
-            // an unconfirmed trim's broker outcome is unknown. widenNarrowLeg therefore re-reads
-            // the row from the book and widens only a row that is still un-trimmed there.
-            if (conviction && p.trimCount() == 0) {
+            // The one thing such a row does get is the post-fill widening of a narrow entry leg
+            // out to the logical stop (spec 2026-10-03 §5.3) — see widenNarrowLeg. It must NOT fire
+            // on the stale same-pass row above: by then PartialExitService has repointed the legs
+            // to the remainder, and widening would move the remainder's leg AWAY from the market
+            // after the half-sale — or send a modify while an unconfirmed trim's broker outcome is
+            // unknown. widenNarrowLeg therefore re-reads the row from the book and widens only a
+            // row that is still un-trimmed there.
+            if (profile.isWideStop() && (!profile.hasTrail() || p.trimCount() == 0)) {
                 if (p.brokerStopNarrow()) widenNarrowLeg(p, runId);
                 continue;
             }
             BigDecimal atr = atrBySymbol.get(p.symbol());
             // The profile trail is a fraction of the highest close and needs no ATR.
-            if (atr == null && !conviction) continue;
+            if (atr == null && !profile.hasTrail()) continue;
             // atrEff is filled from the SAME Levels as atr, so a fallback is defence only.
             BigDecimal atrEff = atr == null ? null : atrEffBySymbol.getOrDefault(p.symbol(), atr);
             BigDecimal atrShort = atrShortBySymbol.get(p.symbol());
@@ -218,7 +219,7 @@ public class StopRatchetService {
             // The logical candidate: the chandelier, or for CONVICTION after the half-sale the
             // profile trail (highest close x (1 - trail-pct)). Both go through the same guard,
             // wrong-side check and leg addressing below.
-            BigDecimal chandelier = conviction
+            BigDecimal chandelier = profile.hasTrail()
                     ? convictionProfile.trailStop(p.side(), p.highestPrice())
                     : computeChandelier(p, atrEff);
             if (!guard.permit(p.activeStop(), chandelier, p.side())) continue;
@@ -243,7 +244,7 @@ public class StopRatchetService {
             // never moves against the position -- BrokerStop.forRatchet holds both rules.
             // previousBrokerStop is null on rows opened before V48; their leg really does rest at
             // active_stop, so that is the monotonic floor.
-            BrokerStop.Result brokerStop = conviction
+            BrokerStop.Result brokerStop = profile.hasTrail()
                     ? convictionBrokerLeg(p, chandelier)
                     : BrokerStop.forRatchet(p.side(), chandelier, atrEff,
                             brokerStopBufferAtr, p.brokerStop(), p.activeStop());
@@ -989,7 +990,7 @@ public class StopRatchetService {
         inputs.put("broker_stop_lags", brokerStop.lags());
 
         String basisSide = "SELL".equals(p.side()) ? "lowestLow + " : "highestHigh - ";
-        String stopBasis = p.exitProfile() == ExitProfile.CONVICTION
+        String stopBasis = p.profile().hasTrail()
                 ? "conviction trail: highestClose x (1 - "
                         + convictionProfile.trailPct().toPlainString() + ")"
                 : "chandelier: " + basisSide + chandelierMult + "xATR";

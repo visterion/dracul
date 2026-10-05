@@ -113,4 +113,10 @@ public record ExecutorPosition(
         /** True while the protective leg rests TIGHTER than the logical stop because the broker
          *  rejects a bracket leg beyond its proximity band at entry (V52, spec §5.3). */
         boolean brokerStopNarrow) {
+
+    /** {@link #exitProfile()}, never null: a record built without a profile is STANDARD, exactly
+     *  like every pre-V52 row. Every capability check reads this, never the raw component. */
+    public ExitProfile profile() {
+        return exitProfile == null ? ExitProfile.STANDARD : exitProfile;
+    }
 }

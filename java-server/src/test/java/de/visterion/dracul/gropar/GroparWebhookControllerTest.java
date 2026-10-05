@@ -615,6 +615,49 @@ class GroparWebhookControllerTest {
                 .getBeanProvider(de.visterion.dracul.executor.ExecutorPositionRepository.class));
     }
 
+    private void momentumManaged(String symbol) {
+        var repo = mock(de.visterion.dracul.executor.ExecutorPositionRepository.class);
+        var row = de.visterion.dracul.executor.ExecutorPositionFixtures.withProfileFields(
+                de.visterion.dracul.executor.ExecutorPositionFixtures.withoutKillLevel(1L,
+                        CONNECTION, symbol, "BUY", BigDecimal.TEN, new BigDecimal("100"),
+                        new BigDecimal("65"), new BigDecimal("65"), 1, null, List.of(), "sig-1",
+                        "strigoi-momentum", "2026-07-01", null, "OPEN", null, null, null, 0, null,
+                        null, null, null, null, null, null, null, null, 0, null, null, null, null,
+                        null, null, false, null, null),
+                de.visterion.dracul.executor.ExitProfile.MOMENTUM, null, null, null, false);
+        when(repo.findOpenBySymbolIgnoreCase(CONNECTION, symbol)).thenReturn(row);
+        controller.setExecutorPositions(new StaticListableBeanFactory(java.util.Map.of("repo", repo))
+                .getBeanProvider(de.visterion.dracul.executor.ExecutorPositionRepository.class));
+    }
+
+    @Test
+    void fetchHeldPositions_momentumPositionIsLabelledWithItsProfile() throws Exception {
+        momentumManaged("SYNA");
+        when(heldPositionService.openPositions(CONNECTION)).thenReturn(List.of(taOnly("SYNA", "200", "10")));
+        when(marketData.dailyOhlcHistory(eq("SYNA"), anyInt())).thenReturn(multiBars());
+
+        var resp = controller.fetchHeldPositions(BEARER, null);
+
+        @SuppressWarnings("unchecked")
+        var output = (Map<String, Object>) ((Map<?, ?>) resp.getBody()).get("output");
+        var view = (HeldPositionView) ((List<?>) output.get("positions")).get(0);
+        assertThat(view.firedRules()).isEmpty();
+        assertThat(view.thesis()).containsEntry("exitProfile", "managed by exit profile MOMENTUM");
+    }
+
+    @Test
+    void complete_skipsExitSignalsForMomentumPositions() throws Exception {
+        momentumManaged("SYNA");
+        when(heldPositionService.openPositions(CONNECTION)).thenReturn(List.of(taOnly("SYNA", "200", "10")));
+
+        controller.complete(BEARER, "run-g", mapper.readTree("""
+                {"status":"done","output":{"signals":[{"position_id":"SYNA","symbol":"SYNA",
+                 "action":"EXIT","rationale":"stop","confidence":0.8}]}}
+                """));
+
+        verify(exitSignalRepo, never()).insert(any(), any());
+    }
+
     /** The −15 % / +40 % advisory rules do not apply to a CONVICTION position: no fired rules, no
      *  profit targets, and the view says who manages it. */
     @Test

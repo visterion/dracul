@@ -65,11 +65,14 @@ public class GroparWebhookController {
     /** Optional (executor-gated bean), field-injected so the constructor and its tests stay
      *  unchanged — the HuntController pattern (spec 2026-10-03 §5.6, R2 Minor 7). Gropar does not
      *  read executor_position otherwise; this one lookup tells it which held symbols are managed
-     *  by exit profile CONVICTION. */
+     *  by a wide-stop exit profile (CONVICTION, MOMENTUM). */
     @Autowired
     private ObjectProvider<ExecutorPositionRepository> executorPositions;
 
-    static final String CONVICTION_LABEL = "managed by exit profile CONVICTION";
+    /** {@code thesis.exitProfile} of a position a wide-stop profile manages; names the profile. */
+    static String managedLabel(ExitProfile profile) {
+        return "managed by exit profile " + profile.name();
+    }
 
     public GroparWebhookController(
             @Value("${dracul.gropar.webhook-token}") String token,
@@ -112,20 +115,21 @@ public class GroparWebhookController {
         this.executorPositions = executorPositions;
     }
 
-    /** True when the executor holds {@code symbol} as an OPEN CONVICTION position on this
-     *  connection. Fail-soft: any lookup failure means "not managed" (gropar keeps advising). */
-    private boolean convictionManaged(String symbol) {
-        if (executorPositions == null) return false;
+    /** The wide-stop exit profile (CONVICTION, MOMENTUM) that manages {@code symbol} on this
+     *  connection, or null when none does (no OPEN executor row, a STANDARD row, or no executor).
+     *  Fail-soft: any lookup failure means "not managed" (gropar keeps advising). */
+    private ExitProfile managedProfile(String symbol) {
+        if (executorPositions == null) return null;
         try {
             // Resolving the bean is part of the lookup: a creation failure is fail-soft too.
             ExecutorPositionRepository repo = executorPositions.getIfAvailable();
-            if (repo == null) return false;
+            if (repo == null) return null;
             ExecutorPosition p = repo.findOpenBySymbolIgnoreCase(connection, symbol);
-            return p != null && p.exitProfile() == ExitProfile.CONVICTION;
+            return p != null && p.profile().isWideStop() ? p.profile() : null;
         } catch (RuntimeException e) {
             log.warn("gropar: exit-profile lookup for {} failed — treating as unmanaged: {}",
                     symbol, e.getMessage());
-            return false;
+            return null;
         }
     }
 
@@ -154,13 +158,15 @@ public class GroparWebhookController {
                     // position with no matching verdict) simply yields thesis=null below --
                     // never dropped, never erroring.
                     Map<String, Object> thesis = buildThesis(hp);
-                    boolean managed = convictionManaged(hp.symbol());
+                    ExitProfile managedBy = managedProfile(hp.symbol());
+                    boolean managed = managedBy != null;
                     if (managed) {
-                        // Exit profile CONVICTION owns every exit of this position (emergency
-                        // stop, target-half, trail, catastrophe) — gropar's advisory rules and
-                        // ladder do not apply; say so instead of silently dropping them.
+                        // A wide-stop exit profile owns every exit of this position (CONVICTION:
+                        // emergency stop, target-half, trail, catastrophe; MOMENTUM: emergency stop
+                        // and the monthly rebalance) — gropar's advisory rules and ladder do not
+                        // apply; say so instead of silently dropping them.
                         thesis = thesis == null ? new LinkedHashMap<>() : new LinkedHashMap<>(thesis);
-                        thesis.put("exitProfile", CONVICTION_LABEL);
+                        thesis.put("exitProfile", managedLabel(managedBy));
                     }
 
                     // position_context.opened_at is the best-effort anchor for both TIME_STOP
@@ -330,10 +336,11 @@ public class GroparWebhookController {
             }
 
             // The validated position_id (a held symbol), never the LLM-echoed symbol: an echo that
-            // differs would otherwise slip an advisory signal past the CONVICTION skip.
-            if (convictionManaged(positionId)) {
+            // differs would otherwise slip an advisory signal past the wide-stop skip.
+            ExitProfile managedBy = managedProfile(positionId);
+            if (managedBy != null) {
                 log.info("gropar run {}: {} is {} — {} signal not persisted", runId, symbol,
-                        CONVICTION_LABEL, action);
+                        managedLabel(managedBy), action);
                 continue;
             }
 

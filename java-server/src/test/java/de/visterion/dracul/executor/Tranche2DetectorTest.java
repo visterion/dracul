@@ -237,4 +237,14 @@ class Tranche2DetectorTest {
                 ExitProfile.STANDARD, null, null, null, false), new BigDecimal("140"), List.of(),
                 "TECH_CONVICTION").eligible()).isTrue();
     }
+
+    @Test
+    void momentumIsNeverEligible() {
+        ExecutorPosition p = ExecutorPositionFixtures.withProfileFields(position(1, "BUY",
+                new BigDecimal("100"), new BigDecimal("65"), new BigDecimal("101"), "SYNA", "OPEN"),
+                ExitProfile.MOMENTUM, null, null, null, false);
+
+        assertThat(detector.detect(p, new BigDecimal("140"), List.of(), "MOMENTUM_12_1")
+                .eligible()).isFalse();
+    }
 }

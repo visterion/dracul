@@ -292,7 +292,7 @@ public class StrigoiTechWebhookController extends HuntController {
                 continue;
             }
             ExecutorPosition p = repo.findOpenBySymbolIgnoreCase(settings.executorConnection(), symbol);
-            if (p == null || p.exitProfile() != ExitProfile.CONVICTION) {
+            if (p == null || !p.profile().acceptsCatastropheFlag()) {
                 rejected++;
                 log.warn("{} run {}: catastrophe exit for {} rejected — no OPEN CONVICTION position "
                         + "on {}", AGENT, runId, symbol, settings.executorConnection());

@@ -25,7 +25,7 @@ final class CapitalBounds {
                 trancheAccountCcy, heatPct);
     }
 
-    /** Same arithmetic with an explicit charge: exit profile CONVICTION charges its actual
+    /** Same arithmetic with an explicit charge: the wide-stop profiles (CONVICTION, MOMENTUM) charge their actual
      *  profile notional instead of total-budget / tranche-count (spec 2026-10-03 §5.3, R1 M6).
      *  The charge is reported back as {@code trancheAccountCcy} so every consumer keeps one
      *  field to read. */
