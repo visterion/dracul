@@ -1474,7 +1474,8 @@ class StopRatchetServiceTest {
                 p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(),
                 p.stopLegsCollapsed(), brokerStop, p.entryFilledAt(), p.killCloseBelow(), p.killCloseBelowDropped(),
                 p.exitProfile(), p.catastropheReason(), p.catastropheFlaggedAt(),
-                p.pendingTrimOrderId(), p.brokerStopNarrow());
+                p.pendingTrimOrderId(), p.brokerStopNarrow(),
+                p.rebalanceExitAt());
     }
 
     /** Test 15. The broker leg rests a buffer BELOW the logical chandelier, and the book records

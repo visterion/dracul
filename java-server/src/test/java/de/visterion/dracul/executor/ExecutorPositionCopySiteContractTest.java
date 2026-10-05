@@ -28,7 +28,8 @@ import static org.mockito.Mockito.when;
 /**
  * Spec 2026-10-03 §5.1/§9: every ReconcileService path that REBUILDS an {@link ExecutorPosition}
  * (withTrim, the RECONCILE_GONE {@code effective} copy in resolveExit, withQty, the
- * ENTRY_PRICE_SYNC copy and the updateMaintenance return) must forward the five V52 fields. A
+ * ENTRY_PRICE_SYNC copy and the updateMaintenance return) must forward the five V52 fields and
+ * the V53 rebalance_exit_at. A
  * dropped forward is not a one-pass glitch: a CONVICTION row read back as STANDARD gets the
  * chandelier for that pass and the monotonic ratchet guard makes it permanent (R1 Minor 8).
  * Every field is set to a distinct NON-default value so a dropped OR swapped forward fails.
@@ -39,6 +40,7 @@ class ExecutorPositionCopySiteContractTest {
     private static final String REASON = "synthetic thesis-destroying event";
     private static final String FLAGGED_AT = "2026-07-07 22:30:00+00";
     private static final String PENDING_TRIM = "trim-ord-1";
+    private static final String REBALANCE_AT = "2026-07-07 22:40:00+00";
 
     private final FakeExecutionGateway gateway = new FakeExecutionGateway();
     private final ExecutorPositionRepository positionRepo = mock(ExecutorPositionRepository.class);
@@ -62,8 +64,10 @@ class ExecutorPositionCopySiteContractTest {
     }
 
     private static ExecutorPosition marked(ExecutorPosition p) {
-        return ExecutorPositionFixtures.withProfileFields(p, ExitProfile.CONVICTION, REASON,
-                FLAGGED_AT, PENDING_TRIM, true);
+        return ExecutorPositionFixtures.withRebalanceExitAt(
+                ExecutorPositionFixtures.withProfileFields(p, ExitProfile.CONVICTION, REASON,
+                        FLAGGED_AT, PENDING_TRIM, true),
+                REBALANCE_AT);
     }
 
     private static void assertCarried(ExecutorPosition p) {
@@ -72,6 +76,9 @@ class ExecutorPositionCopySiteContractTest {
         assertThat(p.catastropheFlaggedAt()).isEqualTo(FLAGGED_AT);
         assertThat(p.pendingTrimOrderId()).isEqualTo(PENDING_TRIM);
         assertThat(p.brokerStopNarrow()).isTrue();
+        // V53 (spec 2026-10-04 §4): a dropped forward would make a committed rebalance exit
+        // vanish for one pass — the hard trigger would not flatten it and capacity would count it.
+        assertThat(p.rebalanceExitAt()).isEqualTo(REBALANCE_AT);
     }
 
     /** A filled BUY at 100 with logical stop 95 and a leg resting at 93. */

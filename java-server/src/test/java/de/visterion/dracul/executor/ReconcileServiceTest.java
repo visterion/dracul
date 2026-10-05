@@ -2564,7 +2564,8 @@ class ReconcileServiceTest {
                 p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(),
                 p.stopLegsCollapsed(), brokerStop, entryFilledAt, p.killCloseBelow(), p.killCloseBelowDropped(),
                 p.exitProfile(), p.catastropheReason(), p.catastropheFlaggedAt(),
-                p.pendingTrimOrderId(), p.brokerStopNarrow());
+                p.pendingTrimOrderId(), p.brokerStopNarrow(),
+                p.rebalanceExitAt());
     }
 
     /** Test 27. A protective leg filled with no reported price: the estimate must be the price the
@@ -2733,7 +2734,8 @@ class ReconcileServiceTest {
                 base.exitOrderId(), base.pendingExitFillPrice(), base.stopLegsCollapsed(),
                 null, "2026-07-01T09:00:00Z", base.killCloseBelow(), base.killCloseBelowDropped(),
                 base.exitProfile(), base.catastropheReason(), base.catastropheFlaggedAt(),
-                base.pendingTrimOrderId(), base.brokerStopNarrow());
+                base.pendingTrimOrderId(), base.brokerStopNarrow(),
+                base.rebalanceExitAt());
         when(positionRepo.findOpen()).thenReturn(List.of(p));
         gateway.seedPosition(new BrokerPosition("ACME", "BUY", BigDecimal.TEN,
                 new BigDecimal("100"), new BigDecimal("101"), 1));
@@ -2764,7 +2766,8 @@ class ReconcileServiceTest {
                 base.exitOrderId(), base.pendingExitFillPrice(), base.stopLegsCollapsed(),
                 new BigDecimal("93.00"), "2026-07-01T09:00:00Z", base.killCloseBelow(), base.killCloseBelowDropped(),
                 base.exitProfile(), base.catastropheReason(), base.catastropheFlaggedAt(),
-                base.pendingTrimOrderId(), base.brokerStopNarrow());
+                base.pendingTrimOrderId(), base.brokerStopNarrow(),
+                base.rebalanceExitAt());
         when(positionRepo.findOpen()).thenReturn(List.of(p));
         // A broker holding whose avg entry price differs from the book forces the ENTRY_PRICE_SYNC
         // rebuild AND the updateMaintenance rebuild on one pass.

@@ -1548,7 +1548,7 @@ public class ExecutorWebhookController {
                         (adoptedFill.filledAt() != null ? adoptedFill.filledAt() : clock.instant())
                                 .toString(),
                         killResult.effectiveLevel(), killResult.droppedReason(),
-                        profile, null, null, null, bookedNarrow));
+                        profile, null, null, null, bookedNarrow, null));
                 // No setEntryExpiresAt: the entry is already filled, and
                 // findOpenUnfilledPastExpiry filters on entry_expires_at IS NOT NULL only.
                 if (adoptedStopLeg == null) {
@@ -1587,7 +1587,7 @@ public class ExecutorWebhookController {
                         orderPriceRounded, null, null, null, false,
                         brokerStopResult.price(), null,
                         killResult.effectiveLevel(), killResult.droppedReason(),
-                        profile, null, null, null, bookedNarrow));
+                        profile, null, null, null, bookedNarrow, null));
 
                 positionRepo.setEntryExpiresAt(positionId, entryExpiry(clock.instant(), entryGtdDays));
             }

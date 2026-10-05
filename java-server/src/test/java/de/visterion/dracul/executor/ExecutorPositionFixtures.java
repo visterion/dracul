@@ -7,17 +7,17 @@ import java.util.List;
  * Test-only construction helpers for {@link ExecutorPosition}.
  *
  * <p>The record deliberately has NO back-compat constructor, so every production copy site is
- * forced by the compiler to carry the V51 kill-level and V52 exit-profile components. Tests that
- * predate them build their fixtures through {@link #withoutKillLevel}, which takes the 39
- * pre-V51 components in their original order and defaults everything newer: no kill level,
- * {@link ExitProfile#STANDARD}, no catastrophe flag, no pending trim, broker leg not narrow —
- * exactly the state of a pre-V52 row.
+ * forced by the compiler to carry the V51 kill-level, V52 exit-profile and V53 rebalance
+ * components. Tests that predate them build their fixtures through {@link #withoutKillLevel},
+ * which takes the 39 pre-V51 components in their original order and defaults everything newer:
+ * no kill level, {@link ExitProfile#STANDARD}, no catastrophe flag, no pending trim, broker leg
+ * not narrow, no rebalance exit — exactly the state of a pre-V52 row.
  */
 public final class ExecutorPositionFixtures {
 
     private ExecutorPositionFixtures() {}
 
-    /** The 39 pre-V51 components, in record order; V51 + V52 components defaulted. */
+    /** The 39 pre-V51 components, in record order; V51 + V52 + V53 components defaulted. */
     public static ExecutorPosition withoutKillLevel(Long id, String connection, String symbol,
             String side, BigDecimal qty, BigDecimal entryPrice, BigDecimal initialStop,
             BigDecimal activeStop, int tranche, BigDecimal rValue, List<String> killCriteria,
@@ -36,7 +36,7 @@ public final class ExecutorPositionFixtures {
                 tranche2OrderId, tranche2StopOrderId, trimCount, lowestPrice, entryExpiresAt,
                 submittedLimitPrice, pendingExitReason, exitOrderId, pendingExitFillPrice,
                 stopLegsCollapsed, brokerStop, entryFilledAt, null, null,
-                ExitProfile.STANDARD, null, null, null, false);
+                ExitProfile.STANDARD, null, null, null, false, null);
     }
 
     /** Copy of {@code p} with the two V51 kill-level components replaced, everything else kept. */
@@ -53,7 +53,7 @@ public final class ExecutorPositionFixtures {
                 p.stopLegsCollapsed(), p.brokerStop(), p.entryFilledAt(),
                 killCloseBelow, killCloseBelowDropped,
                 p.exitProfile(), p.catastropheReason(), p.catastropheFlaggedAt(),
-                p.pendingTrimOrderId(), p.brokerStopNarrow());
+                p.pendingTrimOrderId(), p.brokerStopNarrow(), p.rebalanceExitAt());
     }
 
     /** Copy of {@code p} with the five V52 components replaced, everything else kept. */
@@ -71,11 +71,33 @@ public final class ExecutorPositionFixtures {
                 p.stopLegsCollapsed(), p.brokerStop(), p.entryFilledAt(),
                 p.killCloseBelow(), p.killCloseBelowDropped(),
                 exitProfile, catastropheReason, catastropheFlaggedAt, pendingTrimOrderId,
-                brokerStopNarrow);
+                brokerStopNarrow, p.rebalanceExitAt());
+    }
+
+    /** Copy of {@code p} with the V53 rebalance flag replaced, everything else kept. */
+    public static ExecutorPosition withRebalanceExitAt(ExecutorPosition p, String rebalanceExitAt) {
+        return new ExecutorPosition(p.id(), p.connection(), p.symbol(), p.side(), p.qty(),
+                p.entryPrice(), p.initialStop(), p.activeStop(), p.tranche(), p.rValue(),
+                p.killCriteria(), p.sourceSignalId(), p.sourceAgent(), p.entryDate(), p.mfe(),
+                p.status(), p.brokerOrderId(), p.highestPrice(), p.mfeR(), p.softConfirmCount(),
+                p.exitPrice(), p.realizedR(), p.exitReason(), p.closedAt(), p.stopOrderId(),
+                p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
+                p.trimCount(), p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
+                p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(),
+                p.stopLegsCollapsed(), p.brokerStop(), p.entryFilledAt(),
+                p.killCloseBelow(), p.killCloseBelowDropped(),
+                p.exitProfile(), p.catastropheReason(), p.catastropheFlaggedAt(),
+                p.pendingTrimOrderId(), p.brokerStopNarrow(), rebalanceExitAt);
     }
 
     /** Copy of {@code p} as a plain CONVICTION row: no flag, no pending trim, leg not narrow. */
     public static ExecutorPosition conviction(ExecutorPosition p) {
         return withProfileFields(p, ExitProfile.CONVICTION, null, null, null, false);
+    }
+
+    /** Copy of {@code p} as a plain MOMENTUM row: leg not narrow, no rebalance flag. */
+    public static ExecutorPosition momentum(ExecutorPosition p) {
+        return withRebalanceExitAt(
+                withProfileFields(p, ExitProfile.MOMENTUM, null, null, null, false), null);
     }
 }

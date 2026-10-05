@@ -112,7 +112,12 @@ public record ExecutorPosition(
         String pendingTrimOrderId,
         /** True while the protective leg rests TIGHTER than the logical stop because the broker
          *  rejects a bracket leg beyond its proximity band at entry (V52, spec §5.3). */
-        boolean brokerStopNarrow) {
+        boolean brokerStopNarrow,
+        /** When strigoi-momentum committed this MOMENTUM position to a rebalance exit (V53, spec
+         *  2026-10-04 §4); null = not flagged. HardTriggerService flattens a flagged row
+         *  (HARD_REBALANCE); for a MOMENTUM signal it is excluded from MECHANISM_BUDGET, BUDGET and
+         *  MAX_POSITIONS (capital being freed tonight). Every copy site must forward it. */
+        String rebalanceExitAt) {
 
     /** {@link #exitProfile()}, never null: a record built without a profile is STANDARD, exactly
      *  like every pre-V52 row. Every capability check reads this, never the raw component. */

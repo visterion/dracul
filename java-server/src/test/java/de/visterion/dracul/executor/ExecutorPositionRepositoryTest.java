@@ -847,4 +847,96 @@ class ExecutorPositionRepositoryTest {
         assertThat(read.brokerStopNarrow()).isFalse();
         assertThat(read.brokerStop()).isEqualByComparingTo("65.00");
     }
+
+    private long insertMomentum(String connection, String symbol, String entryFilledAt) {
+        var base = ExecutorPositionFixtures.withoutKillLevel(null, connection, symbol, "BUY",
+                new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("65.00"),
+                new BigDecimal("65.00"), 1, null, List.of("X"), "sig-" + symbol,
+                "strigoi-momentum", null, null, "OPEN", null, null, null, 0, null, null, null,
+                null, null, null, null, null, null, 0, null, null, null, null, null, null, false,
+                null, entryFilledAt);
+        return repo.insert(ExecutorPositionFixtures.momentum(base));
+    }
+
+    /** V53: MOMENTUM passes the widened CHECK and rebalance_exit_at round-trips. */
+    @Test
+    void v53MomentumAndRebalanceExitAtRoundTrip() {
+        String symbol = "V53-" + UUID.randomUUID();
+        var base = ExecutorPositionFixtures.withoutKillLevel(null, "depot-1", symbol, "BUY",
+                new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("65.00"),
+                new BigDecimal("65.00"), 1, null, List.of("X"), "sig-v53", "strigoi-momentum",
+                null, null, "OPEN", null, null, null, 0, null, null, null, null, null,
+                null, null, null, null, 0, null, null, null, null, null, null, false,
+                null, "2026-10-01T14:30:00Z");
+        long id = repo.insert(ExecutorPositionFixtures.withRebalanceExitAt(
+                ExecutorPositionFixtures.momentum(base), "2026-10-30T22:40:00Z"));
+
+        ExecutorPosition read = repo.findById(id);
+        assertThat(read.exitProfile()).isEqualTo(ExitProfile.MOMENTUM);
+        assertThat(read.rebalanceExitAt()).isNotNull();
+    }
+
+    /** V53: the CHECK still rejects a profile the enum does not know. */
+    @Test
+    void v53CheckStillRejectsAnUnknownProfile() {
+        assertThatThrownBy(() -> jdbc.sql("""
+                INSERT INTO executor_position (connection, symbol, side, qty, entry_price,
+                                               initial_stop, active_stop, status, exit_profile)
+                VALUES ('depot-1', :s, 'BUY', 1, 10, 9, 9, 'CLOSED', 'AGGRESSIVE')
+                """).param("s", "V53BAD-" + UUID.randomUUID()).update())
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    /** Spec §4: the flag is set only on an OPEN, FILLED MOMENTUM row of the connection, and only
+     *  once; clearing works and is idempotent. */
+    @Test
+    void rebalanceExitFlagIsIdempotentAndScoped() {
+        String conn = "rb-" + UUID.randomUUID();
+        long filled = insertMomentum(conn, "RBF-" + UUID.randomUUID(), "2026-10-01T14:30:00Z");
+        long unfilled = insertMomentum(conn, "RBU-" + UUID.randomUUID(), null);
+        Instant at = Instant.parse("2026-10-30T22:40:00Z");
+
+        assertThat(repo.markRebalanceExit(filled, "other-conn", at)).isFalse();
+        assertThat(repo.markRebalanceExit(unfilled, conn, at)).isFalse();
+        assertThat(repo.markRebalanceExit(filled, conn, at)).isTrue();
+        assertThat(repo.markRebalanceExit(filled, conn, at.plusSeconds(60))).isFalse();
+        assertThat(repo.findById(filled).rebalanceExitAt()).isNotNull();
+
+        assertThat(repo.clearRebalanceExit(filled, conn)).isTrue();
+        assertThat(repo.clearRebalanceExit(filled, conn)).isFalse();
+        assertThat(repo.findById(filled).rebalanceExitAt()).isNull();
+    }
+
+    /** Spec §4: only MOMENTUM rows can carry the flag. */
+    @Test
+    void rebalanceExitFlagRejectsAConvictionRow() {
+        String conn = "rbc-" + UUID.randomUUID();
+        var base = ExecutorPositionFixtures.withoutKillLevel(null, conn, "RBC-" + UUID.randomUUID(),
+                "BUY", new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("65.00"),
+                new BigDecimal("65.00"), 1, null, List.of("X"), "sig-rbc", "strigoi-tech", null,
+                null, "OPEN", null, null, null, 0, null, null, null, null, null, null, null, null,
+                null, 0, null, null, null, null, null, null, false, null, "2026-10-01T14:30:00Z");
+        long id = repo.insert(ExecutorPositionFixtures.conviction(base));
+
+        assertThat(repo.markRebalanceExit(id, conn, Instant.now())).isFalse();
+    }
+
+    /** V53: the three momentum tables exist with their keys. */
+    @Test
+    void v53MomentumTablesExist() {
+        String run = "v53-run-" + UUID.randomUUID();
+        jdbc.sql("""
+                INSERT INTO momentum_ranking_snapshot (run_id, month, rebalance_due, health, payload)
+                VALUES (:r, NULL, false, 'not_due', '{}'::jsonb)
+                """).param("r", run).update();
+        assertThatThrownBy(() -> jdbc.sql("""
+                INSERT INTO momentum_ranking_snapshot (run_id, month, rebalance_due, health, payload)
+                VALUES (:r, NULL, false, 'bogus', '{}'::jsonb)
+                """).param("r", run + "-x").update())
+                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThat(jdbc.sql("SELECT count(*) FROM momentum_rebalance WHERE month = 'none'")
+                .query(Integer.class).single()).isZero();
+        assertThat(jdbc.sql("SELECT count(*) FROM momentum_state WHERE key = 'none'")
+                .query(Integer.class).single()).isZero();
+    }
 }

@@ -53,7 +53,8 @@ public class ExecutorPositionRepository {
                    entry_expires_at, submitted_limit_price, pending_exit_reason, exit_order_id,
                    pending_exit_fill_price, stop_legs_collapsed, broker_stop, entry_filled_at,
                    kill_close_below, kill_close_below_dropped, exit_profile, catastrophe_reason,
-                   catastrophe_flagged_at, pending_trim_order_id, broker_stop_narrow)
+                   catastrophe_flagged_at, pending_trim_order_id, broker_stop_narrow,
+                   rebalance_exit_at)
                 VALUES (:connection, :symbol, :side, :qty, :entryPrice, :initialStop, :activeStop,
                         :tranche, :rValue, CAST(:killCriteria AS jsonb), :sourceSignalId, :sourceAgent,
                         :mfe, :status, :brokerOrderId, :highestPrice, :mfeR, :softConfirmCount,
@@ -63,7 +64,7 @@ public class ExecutorPositionRepository {
                         :exitOrderId, :pendingExitFillPrice, :stopLegsCollapsed, :brokerStop,
                         CAST(:entryFilledAt AS timestamptz), :killCloseBelow, :killCloseBelowDropped,
                         :exitProfile, :catastropheReason, CAST(:catastropheFlaggedAt AS timestamptz),
-                        :pendingTrimOrderId, :brokerStopNarrow)
+                        :pendingTrimOrderId, :brokerStopNarrow, CAST(:rebalanceExitAt AS timestamptz))
                 """)
                 .param("connection", p.connection())
                 .param("symbol", p.symbol())
@@ -108,6 +109,7 @@ public class ExecutorPositionRepository {
                 .param("catastropheFlaggedAt", p.catastropheFlaggedAt())
                 .param("pendingTrimOrderId", p.pendingTrimOrderId())
                 .param("brokerStopNarrow", p.brokerStopNarrow())
+                .param("rebalanceExitAt", p.rebalanceExitAt())
                 .update(keyHolder, "id");
         return ((Number) keyHolder.getKeys().get("id")).longValue();
     }
@@ -707,6 +709,37 @@ public class ExecutorPositionRepository {
                 .update() == 1;
     }
 
+    /** Commits an OPEN, FILLED MOMENTUM position of {@code connection} to a rebalance exit (spec
+     *  2026-10-04 §4). Idempotent: an already flagged, unfilled, foreign-connection or
+     *  non-MOMENTUM row is untouched (an unfilled entry is left to its GTD expiry).
+     *  @return true when THIS call set the flag */
+    public boolean markRebalanceExit(long id, String connection, Instant at) {
+        return jdbc.sql("""
+                UPDATE executor_position SET rebalance_exit_at = :at
+                WHERE id = :id AND connection = :conn AND status = 'OPEN'
+                  AND exit_profile = 'MOMENTUM' AND entry_filled_at IS NOT NULL
+                  AND rebalance_exit_at IS NULL
+                """)
+                .param("at", java.sql.Timestamp.from(at))
+                .param("id", id)
+                .param("conn", connection)
+                .update() == 1;
+    }
+
+    /** Clears a rebalance flag of an OPEN MOMENTUM row that is back in the final Top 10 — a flag
+     *  from an earlier month whose flatten kept failing must not sell a re-ranked name.
+     *  @return true when a flag was cleared */
+    public boolean clearRebalanceExit(long id, String connection) {
+        return jdbc.sql("""
+                UPDATE executor_position SET rebalance_exit_at = NULL
+                WHERE id = :id AND connection = :conn AND status = 'OPEN'
+                  AND exit_profile = 'MOMENTUM' AND rebalance_exit_at IS NOT NULL
+                """)
+                .param("id", id)
+                .param("conn", connection)
+                .update() == 1;
+    }
+
     /** Upper-cased symbols of {@code profile} rows CLOSED at or after {@code since} — the
      *  strigoi-tech re-entry block (R2 Minor 9). */
     public java.util.Set<String> findSymbolsClosedSince(ExitProfile profile, Instant since) {
@@ -768,7 +801,8 @@ public class ExecutorPositionRepository {
                 rs.getString("catastrophe_reason"),
                 catastropheFlaggedAtOrNull(rs),
                 rs.getString("pending_trim_order_id"),
-                rs.getBoolean("broker_stop_narrow"));
+                rs.getBoolean("broker_stop_narrow"),
+                rebalanceExitAtOrNull(rs));
     }
 
     private String entryExpiresAtOrNull(ResultSet rs) throws SQLException {
@@ -789,6 +823,11 @@ public class ExecutorPositionRepository {
     private String catastropheFlaggedAtOrNull(ResultSet rs) throws SQLException {
         Object flaggedAt = rs.getObject("catastrophe_flagged_at");
         return flaggedAt == null ? null : flaggedAt.toString();
+    }
+
+    private String rebalanceExitAtOrNull(ResultSet rs) throws SQLException {
+        Object at = rs.getObject("rebalance_exit_at");
+        return at == null ? null : at.toString();
     }
 
     private String writeJson(List<String> v) {
