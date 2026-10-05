@@ -1586,9 +1586,16 @@ the LLM, which owns only the soft judgment call. Every call to
    verify at the broker and reset `trim_count` to 0 if nothing was sold. A
    catastrophe or stop flatten while a target-half order is still queued
    (orders placed at 23:00 UTC fill at the next open) may be rejected by the
-   broker; it escalates and is retried by the next run — a one-day delay. Kill level and giveback are STANDARD only; CONVICTION rows carry no
+   broker; it escalates and is retried by the next run — a one-day delay. Kill level and giveback are STANDARD only; CONVICTION and MOMENTUM rows carry no
    soft trigger. Each run logs one INFO line
-   `kill levels evaluated: n of m filled positions (breached: k); catastrophe flagged: c, targets hit: t`.
+   `kill levels evaluated: n of m filled positions (breached: k); catastrophe flagged: c, targets hit: t, rebalance exits: r`.
+   For exit profile MOMENTUM (`exec-v1.2`) a row whose `rebalance_exit_at` the
+   strigoi-momentum completion set is flattened fully with `HARD_REBALANCE`:
+   without a close it is evaluated before the missing-close skip (like the
+   catastrophe, `close`/`current_r` null); with a close the stop is checked first
+   and wins the reason code. A row whose flatten is already pending is never
+   flattened again; a flatten without a broker verdict escalates and the flag makes
+   the next run try again.
 3. **`StopRatchetService`** — ratchets the active stop up to the chandelier
    level (`dracul.executor.chandelier-mult` × ATR below the highest price
    reached), never down. The broker confirms the modify before the book is

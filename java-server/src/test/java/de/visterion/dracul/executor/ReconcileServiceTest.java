@@ -3406,4 +3406,23 @@ class ReconcileServiceTest {
         verify(positionRepo).restoreLostTrim(eq(92L), argThatComparesTo("10"), eq(0));
         assertThat(reasonCodes()).contains("TRIM_ORDER_LOST");
     }
+
+    /** Spec 2026-10-04 §4: HARD_REBALANCE is a hard reason — the finalized close is a
+     *  LOG_HARD_EXIT row like HARD_STOP. */
+    @Test
+    void pendingRebalanceExitFinalizesAsLogHardExit() {
+        ExecutorPosition p = pendingExitPosition(32L, "SYNQ", new BigDecimal("100.00"),
+                new BigDecimal("65.00"), "stop-32", "HARD_REBALANCE", "close-32", null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        gateway.seedOrder(new BrokerOrder("close-32", "ref-32", "SYNQ", OrderRole.OTHER,
+                OrderStatus.FILLED, BigDecimal.TEN, BigDecimal.TEN, new BigDecimal("112.40"), null));
+
+        service.reconcile("c", "run1");
+
+        verify(positionRepo).close(eq(32L), any(), any(), eq("HARD_REBALANCE"), eq("FILL"), any());
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().action()).isEqualTo("LOG_HARD_EXIT");
+        assertThat(logCaptor.getValue().reasonCode()).isEqualTo("HARD_REBALANCE");
+    }
 }

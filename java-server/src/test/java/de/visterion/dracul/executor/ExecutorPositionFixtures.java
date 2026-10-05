@@ -90,6 +90,23 @@ public final class ExecutorPositionFixtures {
                 p.pendingTrimOrderId(), p.brokerStopNarrow(), rebalanceExitAt);
     }
 
+    /** Copy of {@code p} with a pending-exit marker stamped under {@code reason}, everything else
+     *  kept — a row whose flatten is already in flight. */
+    public static ExecutorPosition withPendingExit(ExecutorPosition p, String reason) {
+        return new ExecutorPosition(p.id(), p.connection(), p.symbol(), p.side(), p.qty(),
+                p.entryPrice(), p.initialStop(), p.activeStop(), p.tranche(), p.rValue(),
+                p.killCriteria(), p.sourceSignalId(), p.sourceAgent(), p.entryDate(), p.mfe(),
+                p.status(), p.brokerOrderId(), p.highestPrice(), p.mfeR(), p.softConfirmCount(),
+                p.exitPrice(), p.realizedR(), p.exitReason(), p.closedAt(), p.stopOrderId(),
+                p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
+                p.trimCount(), p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
+                reason, "close-" + p.id(), p.pendingExitFillPrice(),
+                p.stopLegsCollapsed(), p.brokerStop(), p.entryFilledAt(),
+                p.killCloseBelow(), p.killCloseBelowDropped(),
+                p.exitProfile(), p.catastropheReason(), p.catastropheFlaggedAt(),
+                p.pendingTrimOrderId(), p.brokerStopNarrow(), p.rebalanceExitAt());
+    }
+
     /** Copy of {@code p} as a plain CONVICTION row: no flag, no pending trim, leg not narrow. */
     public static ExecutorPosition conviction(ExecutorPosition p) {
         return withProfileFields(p, ExitProfile.CONVICTION, null, null, null, false);

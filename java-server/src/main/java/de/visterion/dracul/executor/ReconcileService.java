@@ -132,7 +132,7 @@ public class ReconcileService {
      *  webhook soft/LLM exit reason) is a RECONCILE_CLOSE. */
     private static final Set<String> HARD_REASONS =
             Set.of("HARD_STOP", "HARD_KILL_CRITERIA", "GIVEBACK_BREACH", "HARD_CATASTROPHE",
-                    "HARD_TARGET_HALF");
+                    "HARD_TARGET_HALF", "HARD_REBALANCE");
 
     private static final Logger log = LoggerFactory.getLogger(ReconcileService.class);
 

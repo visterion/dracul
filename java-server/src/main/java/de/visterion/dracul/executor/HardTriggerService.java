@@ -40,6 +40,11 @@ import java.util.Map;
  * (evaluated before the close-null skip), the stop, then the target-half (a 0.5 partial exit
  * through {@link PartialExitService}); kill level and giveback are STANDARD only.
  *
+ * <p>For exit profile MOMENTUM (spec 2026-10-04 §4) a row with {@code rebalance_exit_at} set is
+ * flattened fully ({@code HARD_REBALANCE}): without a close it is evaluated before the close-null
+ * skip like CATASTROPHE; with a close the stop breach is checked first and wins the reason code.
+ * A row whose flatten is already pending is never flattened again.
+ *
  * <p>On {@link BrokerUnavailableException} while flattening, this deliberately does nothing
  * to the book — a transient broker outage must never be mistaken for a closed position — and
  * escalates via the decision log instead. That includes a {@link BrokerRejectedException}: a
@@ -147,6 +152,7 @@ public class HardTriggerService {
         int levelsBreached = 0;
         int catastrophesFlagged = 0;
         int targetsHit = 0;
+        int rebalanceExits = 0;
         for (ExecutorPosition p : openPositions) {
             BigDecimal close = currentCloseBySymbol.get(p.symbol());
 
@@ -165,6 +171,25 @@ public class HardTriggerService {
                 }
                 recordHardExit(p, close, close == null ? null : computeR(p, close), catastrophe,
                         runId, detectedAt, cr);
+                continue;
+            }
+
+            // REBALANCE (spec 2026-10-04 §4): a MOMENTUM row strigoi-momentum committed to a
+            // rebalance exit. Never on a row whose flatten is already pending (MaintenancePipeline
+            // filters those too; this keeps the service safe on its own).
+            boolean rebalance = p.committedRebalanceExit() && p.pendingExitReason() == null;
+            if (close == null && rebalance) {
+                // Like CATASTROPHE, BEFORE the close-null skip: a name the strategy has already
+                // sold on paper must not be kept because a price is missing tonight.
+                rebalanceExits++;
+                Trigger t = rebalanceTrigger(p);
+                Instant detectedAt = clock.instant();
+                CloseResult cr = flattenOrEscalate(p, t, runId);
+                if (cr == null) {
+                    survivors.add(p);
+                    continue;
+                }
+                recordHardExit(p, null, null, t, runId, detectedAt, cr);
                 continue;
             }
 
@@ -195,6 +220,11 @@ public class HardTriggerService {
             // 1. stop breach — for a wide-stop profile the active stop is the emergency stop (or,
             // CONVICTION after the half-sale, the trail).
             Trigger trigger = detectStopBreach(p, close, sell);
+            // The stop wins the reason code; the rebalance comes right after it.
+            if (trigger == null && rebalance) {
+                rebalanceExits++;
+                trigger = rebalanceTrigger(p);
+            }
             if (trigger == null && wideStop) {
                 // Wide-stop profiles (CONVICTION, MOMENTUM): kill level and giveback never apply.
                 // 2. TARGET_HALF (CONVICTION only) — exactly once: never after the half-sale,
@@ -236,9 +266,9 @@ public class HardTriggerService {
         // kill path saw nothing to enforce" is distinguishable from "the path did not run". Breached
         // counts every close below its level, including one where HARD_STOP took precedence.
         log.info("kill levels evaluated: {} of {} filled positions (breached: {}); "
-                        + "catastrophe flagged: {}, targets hit: {}",
+                        + "catastrophe flagged: {}, targets hit: {}, rebalance exits: {}",
                 levelsEvaluated, openPositions.size(), levelsBreached, catastrophesFlagged,
-                targetsHit);
+                targetsHit, rebalanceExits);
         return survivors;
     }
 
@@ -393,14 +423,20 @@ public class HardTriggerService {
     }
 
     // Reason codes produced here ("HARD_STOP", "HARD_KILL_CRITERIA", "GIVEBACK_BREACH",
-    // "HARD_CATASTROPHE", "HARD_TARGET_HALF") are duplicated in ReconcileService#HARD_REASONS —
-    // keep both in sync.
+    // "HARD_CATASTROPHE", "HARD_TARGET_HALF", "HARD_REBALANCE") are duplicated in
+    // ReconcileService#HARD_REASONS — keep both in sync.
     //
     // CONVICTION after the half-sale (final review #2): the breach level is the tighter of
     // active_stop and the profile trail on highest_price (which already includes tonight's close).
     // StopRatchetService skips a trail candidate the close is already beyond (wrong-side guard), so
     // after a >= trail-pct drop between two ratchets active_stop still sits on the old level and
     // would never fire — the trail must be checked here, against the same close.
+    /** Spec 2026-10-04 §4: full flatten of a MOMENTUM row committed to a rebalance exit. */
+    private static Trigger rebalanceTrigger(ExecutorPosition p) {
+        return new Trigger("HARD_REBALANCE", "REBALANCE",
+                "REBALANCE: dropped out of the final momentum Top 10 (flagged " + p.rebalanceExitAt() + ")");
+    }
+
     private Trigger detectStopBreach(ExecutorPosition p, BigDecimal close, boolean sell) {
         BigDecimal trail = convictionTrail(p);
         boolean trailTighter = trail != null && (sell

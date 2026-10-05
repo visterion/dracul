@@ -279,7 +279,7 @@ class HardTriggerServiceTest {
                         "BRCH", new BigDecimal("39.50"), "HOLD", new BigDecimal("50"),
                         "NOLV", new BigDecimal("50")), "run1"));
 
-        assertThat(infos).containsExactly("kill levels evaluated: 2 of 3 filled positions (breached: 1); catastrophe flagged: 0, targets hit: 0");
+        assertThat(infos).containsExactly("kill levels evaluated: 2 of 3 filled positions (breached: 1); catastrophe flagged: 0, targets hit: 0, rebalance exits: 0");
     }
 
     private List<String> linesWhile(Class<?> loggerClass, ch.qos.logback.classic.Level level,
@@ -730,7 +730,7 @@ class HardTriggerServiceTest {
                         "SYNM", new BigDecimal("131")), "run1"));
 
         assertThat(infos).containsExactly("kill levels evaluated: 0 of 2 filled positions "
-                + "(breached: 0); catastrophe flagged: 1, targets hit: 1");
+                + "(breached: 0); catastrophe flagged: 1, targets hit: 1, rebalance exits: 0");
     }
 
     /** Final review #1: a TARGET_HALF call that got no verdict (e.g. a read timeout after the POST
@@ -909,4 +909,111 @@ class HardTriggerServiceTest {
 
         assertThat(gateway.flattenedSymbols).isEmpty();
     }
+
+    // ---------------------------------------------------------------------------------------
+    // HARD_REBALANCE (spec 2026-10-04 §4)
+    // ---------------------------------------------------------------------------------------
+
+    private static final String FLAGGED = "2026-10-30 22:40:00+00";
+
+    private ExecutorPosition flaggedMomentum(long id, String symbol) {
+        return ExecutorPositionFixtures.withRebalanceExitAt(momentum(id, symbol, null), FLAGGED);
+    }
+
+    @Test
+    void rebalanceFlagFlattensFully() {
+        ExecutorPosition p = flaggedMomentum(70L, "SYNR");
+
+        List<ExecutorPosition> survivors = service.apply(List.of(p),
+                Map.of("SYNR", new BigDecimal("120")), "run1");
+
+        assertThat(survivors).isEmpty();
+        assertThat(gateway.flattenFractions).containsExactly(BigDecimal.ONE);
+        verify(positionRepo).markPendingExit(org.mockito.ArgumentMatchers.eq(70L),
+                org.mockito.ArgumentMatchers.eq("HARD_REBALANCE"), any(), any(),
+                org.mockito.ArgumentMatchers.eq(NOW));
+        DecisionLog row = onlyRow();
+        assertThat(row.action()).isEqualTo("LOG_HARD_EXIT");
+        assertThat(row.reasonCode()).isEqualTo("HARD_REBALANCE");
+        assertThat(row.vetoResults().get(0).path("check").asString()).isEqualTo("REBALANCE");
+        assertThat(row.vetoResults().get(0).path("measured").asString())
+                .isEqualTo("REBALANCE: dropped out of the final momentum Top 10 (flagged " + FLAGGED + ")");
+    }
+
+    /** Like CATASTROPHE: evaluated before the null-close skip — close and current_r recorded null. */
+    @Test
+    void rebalanceFlagFlattensWithoutAClose() {
+        ExecutorPosition p = flaggedMomentum(71L, "SYNS");
+
+        List<ExecutorPosition> survivors = service.apply(List.of(p), Map.of(), "run1");
+
+        assertThat(survivors).isEmpty();
+        assertThat(gateway.flattenedSymbols).containsExactly("SYNS");
+        DecisionLog row = onlyRow();
+        assertThat(row.reasonCode()).isEqualTo("HARD_REBALANCE");
+        assertThat(row.inputsSnapshot().path("close").isNull()).isTrue();
+        assertThat(row.inputsSnapshot().path("current_r").isNull()).isTrue();
+    }
+
+    /** With a close, the stop wins the reason code. */
+    @Test
+    void stopBreachWinsOverTheRebalance() {
+        ExecutorPosition p = flaggedMomentum(72L, "SYNT");
+
+        service.apply(List.of(p), Map.of("SYNT", new BigDecimal("64.99")), "run1");
+
+        assertThat(gateway.flattenFractions).containsExactly(BigDecimal.ONE);
+        assertThat(onlyRow().reasonCode()).isEqualTo("HARD_STOP");
+    }
+
+    /** A row whose flatten is already pending is never flattened again — with or without a close. */
+    @Test
+    void pendingExitRowIsNotReflattened() {
+        ExecutorPosition pending = ExecutorPositionFixtures.withPendingExit(
+                flaggedMomentum(73L, "SYNU"), "HARD_REBALANCE");
+        ExecutorPosition pendingNoClose = ExecutorPositionFixtures.withPendingExit(
+                flaggedMomentum(74L, "SYNV"), "HARD_REBALANCE");
+
+        List<ExecutorPosition> survivors = service.apply(List.of(pending, pendingNoClose),
+                Map.of("SYNU", new BigDecimal("120")), "run1");
+
+        assertThat(survivors).containsExactly(pending, pendingNoClose);
+        assertThat(gateway.flattenedSymbols).isEmpty();
+    }
+
+    /** The flag only means something on a MOMENTUM row. */
+    @Test
+    void aFlagOnAStandardRowIsIgnored() {
+        ExecutorPosition std = ExecutorPositionFixtures.withRebalanceExitAt(openPosition(75L, "SYNW",
+                "BUY", new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), null), FLAGGED);
+
+        service.apply(List.of(std), Map.of("SYNW", new BigDecimal("101")), "run1");
+
+        assertThat(gateway.flattenedSymbols).isEmpty();
+    }
+
+    /** No broker verdict: escalated, the row survives with its flag — the next run retries. */
+    @Test
+    void rebalanceFlattenOutageEscalatesAndKeepsTheFlag() {
+        ExecutorPosition p = flaggedMomentum(76L, "SYNX");
+        gateway.unavailable = true;
+
+        List<ExecutorPosition> survivors = service.apply(List.of(p),
+                Map.of("SYNX", new BigDecimal("120")), "run1");
+
+        assertThat(survivors).containsExactly(p);
+        assertThat(onlyRow().reasonCode()).isEqualTo("BROKER_UNAVAILABLE");
+        verify(positionRepo, never()).markPendingExit(org.mockito.ArgumentMatchers.anyLong(), any(), any(), any(), any());
+    }
+
+    @Test
+    void infoLineCountsRebalanceExits() {
+        var infos = linesWhile(HardTriggerService.class, ch.qos.logback.classic.Level.INFO,
+                () -> service.apply(List.of(flaggedMomentum(77L, "SYNY"), flaggedMomentum(78L, "SYNZ")),
+                        Map.of("SYNY", new BigDecimal("120")), "run1"));
+
+        assertThat(infos).containsExactly("kill levels evaluated: 0 of 2 filled positions "
+                + "(breached: 0); catastrophe flagged: 0, targets hit: 0, rebalance exits: 2");
+    }
+
 }
