@@ -250,6 +250,34 @@ class MomentumCompletionServiceTest {
         verify(repo).markRebalanced(OCT, RUN);
     }
 
+    /** Fix round 1: a stray pending signal of another hunter on a name momentum already holds
+     *  must not push the holding out of the final list (and into a rebalance exit). */
+    @Test
+    void aHeldMomentumNameIsNeverHeldElsewhere() {
+        when(positionRepo.findOpen()).thenReturn(List.of(row(1L, "SYNA", ExitProfile.MOMENTUM, true, null)));
+        when(signalRepo.findPending(anyInt())).thenReturn(List.of(pending("SYNA", "PEAD")));
+
+        var result = service.complete(output("{\"prey\": []}"), RUN, 0);
+
+        verify(positionRepo, never()).markRebalanceExit(anyLong(), anyString(), any());
+        assertThat(result.notes()).containsEntry("held_elsewhere", 0).containsEntry("rebalance_exits", 0)
+                .containsEntry("refilled", 0);
+        assertThat(symbols(result.prey())).doesNotContain("SYNA").hasSize(9);
+        verify(repo).markRebalanced(OCT, RUN);
+    }
+
+    /** Fix round 1: a re-ranked name whose flatten is already submitted is not "cleared". */
+    @Test
+    void aSubmittedFlattenIsNotCountedAsCleared() {
+        when(positionRepo.findOpen()).thenReturn(List.of(ExecutorPositionFixtures.withPendingExit(
+                row(1L, "SYNA", ExitProfile.MOMENTUM, true, "2026-09-30 22:40:00+00"), "HARD_REBALANCE")));
+
+        var result = service.complete(output("{\"prey\": []}"), RUN, 0);
+
+        assertThat(result.notes()).containsEntry("flags_cleared", 0).containsEntry("clear_too_late", 1);
+        assertThat(MomentumCompletionService.WARN_KEYS).contains("clear_too_late");
+    }
+
     /** §5.3: a failure in step 5 leaves the month open — no prey, no mark. */
     @Test
     void aFlagFailureLeavesTheMonthOpen() {

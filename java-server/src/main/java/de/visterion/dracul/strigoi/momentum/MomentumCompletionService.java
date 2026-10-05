@@ -48,11 +48,11 @@ public class MomentumCompletionService {
     static final List<String> NOTE_KEYS = List.of("vetoed", "veto_invalid", "refilled",
             "held_elsewhere", "short_book", "rebalance_exits", "flags_cleared", "held_unranked",
             "carried_too_long", "not_in_universe", "suspect_excluded", "llm_prey_ignored",
-            "no_snapshot", "executor_disabled", "rebalance_exit_failed");
+            "no_snapshot", "executor_disabled", "rebalance_exit_failed", "clear_too_late");
     /** Notes that are anomalies (WARN); the rest are a normal month's activity (INFO). */
     static final Set<String> WARN_KEYS = Set.of("veto_invalid", "short_book", "held_unranked",
             "carried_too_long", "not_in_universe", "llm_prey_ignored", "no_snapshot",
-            "executor_disabled", "rebalance_exit_failed");
+            "executor_disabled", "rebalance_exit_failed", "clear_too_late");
     static final List<String> RISKS = List.of("momentum crash", "data: spin-off artefacts possible");
     static final List<String> KILL_CRITERIA = List.of(
             "managed by exit profile MOMENTUM: monthly rebalance exit or emergency stop");
@@ -138,7 +138,10 @@ public class MomentumCompletionService {
         for (MomentumSnapshot.Offered o : offered.values()) {
             if (fin.size() >= settings.topN()) break;
             if (vetoed.contains(o.symbol())) continue;
-            if (book.heldElsewhere().contains(o.symbol())) {
+            // A name this book already holds as MOMENTUM is never "held elsewhere": a stray
+            // pending signal of another hunter (REDUNDANCY-vetoed anyway) must not push our own
+            // holding out of the final list and into a rebalance exit.
+            if (!book.heldMomentum(o.symbol()) && book.heldElsewhere().contains(o.symbol())) {
                 notes.merge("held_elsewhere", 1, Integer::sum);
                 continue;
             }
@@ -184,8 +187,17 @@ public class MomentumCompletionService {
             if (finalSymbols.contains(symbol)) {
                 // Back in (or still in) the final Top N: a flag from an earlier month whose
                 // flatten kept failing must not sell a re-ranked name.
-                if (p.rebalanceExitAt() != null && pos.clearRebalanceExit(p.id(), conn)) {
-                    notes.merge("flags_cleared", 1, Integer::sum);
+                if (p.rebalanceExitAt() != null) {
+                    boolean cleared = pos.clearRebalanceExit(p.id(), conn);
+                    if (p.pendingExitReason() != null) {
+                        // The flatten is already submitted; clearing the flag cannot recall it.
+                        notes.merge("clear_too_late", 1, Integer::sum);
+                        log.warn("{} run {}: {} is back in the final Top {} but its flatten is "
+                                + "already submitted ({}) — re-ranked name will still be sold",
+                                AGENT, runId, symbol, settings.topN(), p.pendingExitReason());
+                    } else if (cleared) {
+                        notes.merge("flags_cleared", 1, Integer::sum);
+                    }
                 }
                 continue;
             }
