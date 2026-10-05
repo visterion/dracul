@@ -42,7 +42,7 @@ public class RuleVersionProvider {
     private final ConvictionProfile convictionProfile;
 
     public RuleVersionProvider(
-            @Value("${dracul.executor.rule-version:exec-v1.1}") String active,
+            @Value("${dracul.executor.rule-version:exec-v1.2}") String active,
             RuleVersionRepository repo,
             ObjectMapper mapper,
             @Value("${dracul.executor.broker-stop-buffer-atr:1.0}") BigDecimal brokerStopBufferAtr,
@@ -104,17 +104,32 @@ public class RuleVersionProvider {
                     .put("heat_pct", heatPct)
                     .put("pace_per_week", pacePerWeek)
                     .put("max_per_sector", maxPerSector)
-                    .put("exit_profiles", "STANDARD,CONVICTION")
+                    .put("exit_profiles", "STANDARD,CONVICTION,MOMENTUM")
                     .put("conviction_emergency_stop_pct", convictionProfile.emergencyStopPct())
                     .put("conviction_target_pct", convictionProfile.targetPct())
                     .put("conviction_target_fraction", convictionProfile.targetFraction())
                     .put("conviction_trail_pct", convictionProfile.trailPct())
                     .put("conviction_min_entry_qty", convictionProfile.minEntryQty())
                     .put("conviction_entry_broker_stop_pct", convictionProfile.entryBrokerStopPct())
-                    .put("conviction_position_pct", convictionProfile.positionPct());
+                    .put("conviction_position_pct", convictionProfile.positionPct())
+                    .put("momentum_position_pct", convictionProfile.momentumPositionPct())
+                    .put("momentum_min_entry_qty", convictionProfile.momentumMinEntryQty());
             // seed() only inserts when the version string is NEW, so this text is written once and
             // is then permanent for the version it describes -- it is the audit record of what
             // that version changed, and prod verification asserts it verbatim.
+            //
+            // exec-v1.1 history (no longer seeded; never reached prod on its own -- it shipped
+            // together with exec-v1.2): "on top of exec-v1.0 (exit profile CONVICTION for mechanism
+            // TECH_CONVICTION, strigoi-tech basket): (1) post-fill widening -- the entry-band broker
+            // leg of a filled CONVICTION position is widened to the logical stop by the first
+            // maintenance pass after the fill (BROKER_STOP_WIDENED); a broker rejection escalates
+            // BROKER_STOP_WIDEN_REJECTED once, is never retried, and leaves the narrow entry-band
+            // leg as the effective emergency stop; (2) capital split revision 2026-10-05 --
+            // basket-size 12 -> 10, position-pct 0.033 -> 0.03 (ten names at 3 % each),
+            // MECHANISM_BUDGET cap TECH_CONVICTION 0.44 -> 0.33 (10 x 3 % + ~10 % headroom for
+            // EUR/USD drift); all other exec-v1.0 gates (CORRELATED, CONCENTRATION and HEAT_LIMIT
+            // skipped for the profile, exit_position rejects the profile with PROFILE_MANAGED,
+            // partial exits repoint the leg rows) unchanged"
             //
             // exec-v1.0 history (no longer seeded; prod seeded this verbatim on 2026-10-04, insert-
             // if-absent means changing this string never reaches that row -- so it is restored here
@@ -151,19 +166,20 @@ public class RuleVersionProvider {
             // entry cap (MERGER_ARB 20%, QUALITY_52W_LOW 15% of budget), transient like
             // MAX_POSITIONS; max_positions 8"
             repo.upsert(new RuleVersion(active, LocalDate.now().toString(),
-                    "on top of exec-v1.0 (exit profile CONVICTION for mechanism TECH_CONVICTION, "
-                            + "strigoi-tech basket): (1) post-fill widening -- the entry-band broker "
-                            + "leg of a filled CONVICTION position is widened to the logical stop by "
-                            + "the first maintenance pass after the fill (BROKER_STOP_WIDENED); a "
-                            + "broker rejection escalates BROKER_STOP_WIDEN_REJECTED once, is never "
-                            + "retried, and leaves the narrow entry-band leg as the effective "
-                            + "emergency stop; (2) capital split revision 2026-10-05 -- basket-size "
-                            + "12 -> 10, position-pct 0.033 -> 0.03 (ten names at 3 % each), "
-                            + "MECHANISM_BUDGET cap TECH_CONVICTION 0.44 -> 0.33 (10 x 3 % + ~10 % "
-                            + "headroom for EUR/USD drift); all other exec-v1.0 gates (CORRELATED, "
-                            + "CONCENTRATION and HEAT_LIMIT skipped for the profile, exit_position "
-                            + "rejects the profile with PROFILE_MANAGED, partial exits repoint the "
-                            + "leg rows) unchanged",
+                    "on top of exec-v1.1: exit profile MOMENTUM for mechanism "
+                            + "MOMENTUM_12_1 (strigoi-momentum, monthly 12-1 rebalance) -- CONVICTION's wide "
+                            + "emergency stop (35 % below entry, broker leg at the entry band, widened after the "
+                            + "fill) and fixed notional per name (momentum position-pct 0.025 of total-budget, "
+                            + "FX-converted, SIZE_TOO_SMALL below min-entry-qty 1), no take-profit, no target-half, "
+                            + "no trail, no catastrophe flag, no soft exit, no tranche 2, exit_position rejects it "
+                            + "with PROFILE_MANAGED; a position flagged by the strigoi-momentum completion is "
+                            + "flattened fully (HARD_REBALANCE: without a close before the close-null skip, with a "
+                            + "close after the stop, which wins the reason code); for a MOMENTUM signal, MOMENTUM "
+                            + "rows with a committed rebalance exit are excluded from MECHANISM_BUDGET, BUDGET and "
+                            + "MAX_POSITIONS; LOW_CONFIDENCE, CHASED_AWAY and BELOW_ANCHOR skipped for MOMENTUM; "
+                            + "PACE_LIMIT counts STANDARD entries only and is skipped for CONVICTION and MOMENTUM; "
+                            + "max_positions 25 -> 35; MECHANISM_BUDGET MOMENTUM_12_1 0.28; executor max_turns "
+                            + "25 -> 40; all other exec-v1.1 gates unchanged",
                     null, params));
         }
     }

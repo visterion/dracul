@@ -2449,7 +2449,7 @@ Response:
 ] } }
 ```
 
-`exit_profile` is derived from `mechanism` (`TECH_CONVICTION` ⇒ `CONVICTION`).
+`exit_profile` is derived from `mechanism` (`TECH_CONVICTION` ⇒ `CONVICTION`, `MOMENTUM_12_1` ⇒ `MOMENTUM`, anything else ⇒ `STANDARD`).
 
 ### `POST /api/executor/tools/get-account`
 
@@ -2740,7 +2740,7 @@ ladder (see below): `suggested_fraction` is the code-computed ladder floor
 for the position's current `trim_count` (0 → 0.33, 1 → 0.5, ≥2 → 1.0) — the
 minimum `fraction` `exit-position` will accept for a partial exit right now.
 
-`exit_profile` (`STANDARD` | `CONVICTION`): CONVICTION rows are code-managed —
+`exit_profile` (`STANDARD` | `CONVICTION` | `MOMENTUM`): CONVICTION and MOMENTUM rows are code-managed —
 `exit-position` answers `PROFILE_MANAGED`, `tranche2.eligible` is always false
 and the soft trigger stays empty.
 
@@ -2856,7 +2856,7 @@ rejected with `{ "output": { "exited": false, "reason": "SCHEMA_INVALID",
 "reasoning": "ladder floor is <floor> (trim_count=<n>); fraction <f> would
 undercut it" } }`, no broker call.
 
-A CONVICTION position (mechanism `TECH_CONVICTION`) is code-managed: the call
+A CONVICTION or MOMENTUM position (mechanism `TECH_CONVICTION` / `MOMENTUM_12_1`) is code-managed: the call
 answers `{"exited": false, "reason": "PROFILE_MANAGED"}` without a broker call
 and writes a `SOFT_TRIGGER/REJECT/PROFILE_MANAGED` decision row.
 

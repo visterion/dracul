@@ -37,4 +37,9 @@ class PayoffFamilyTest {
     void techConvictionIsADriftSetup() {
         assertThat(PayoffFamily.of("TECH_CONVICTION")).isEqualTo(PayoffFamily.DRIFT);
     }
+
+    @Test
+    void momentumIsADriftSetup() {
+        assertThat(PayoffFamily.of("MOMENTUM_12_1")).isEqualTo(PayoffFamily.DRIFT);
+    }
 }

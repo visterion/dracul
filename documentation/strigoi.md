@@ -1251,8 +1251,8 @@ On each run:
    position with **no** open context row (e.g. opened by the executor before a matching
    verdict was linked) degrades to **TA-only**: indicators are still computed, but `thesis`
    is `null` — it is never dropped from the feed.
-   Positions the executor holds with exit profile CONVICTION are labelled
-   `managed by exit profile CONVICTION` (`thesis.exitProfile`), carry no fired rules or profit
+   Positions the executor holds with a wide-stop exit profile (CONVICTION, MOMENTUM) are labelled
+   `managed by exit profile <PROFILE>` (`thesis.exitProfile`), carry no fired rules or profit
    targets, and no exit signal is persisted for them (lookup by connection + symbol through the
    optional executor repository).
 2. `GroparExitIndicators` assembles the exit-indicator bundle for each position. The technical
@@ -1578,6 +1578,13 @@ call is made:
   and MECHANISM_BUDGET charge the actual profile notional; `openHeat` and
   CONCENTRATION count STANDARD positions only, so the basket never consumes
   other strategies' heat or sector slots.
+- **Exit profile MOMENTUM (exec-v1.2).** For a `MOMENTUM_12_1` signal the same wide-stop rules
+  apply (CORRELATED, CONCENTRATION, HEAT_LIMIT skipped, profile-notional charge at
+  `strigoi.momentum.position-pct`), plus LOW_CONFIDENCE, CHASED_AWAY and BELOW_ANCHOR are
+  skipped; MOMENTUM rows with a committed rebalance exit (`rebalance_exit_at`) are left out of
+  MAX_POSITIONS, BUDGET and MECHANISM_BUDGET for a MOMENTUM signal. PACE_LIMIT counts STANDARD
+  entries only and is skipped for CONVICTION and MOMENTUM (exec-v1.2, intended change for
+  CONVICTION too).
 - **`OrderGuard`** (pure, deterministic) is the final check on the LLM's own
   `place_entry` request: it requires a valid protective stop on the correct
   side of the reference price, a strictly positive quantity, and that the
@@ -1682,7 +1689,8 @@ the LLM, which owns only the soft judgment call. Every call to
    after a same-pass `HARD_TARGET_HALF` the in-memory row is stale and the
    legs already belong to the remainder, which is never widened. This is the
    only move of a broker leg away from the market; it does not pass the
-   ratchet guard.
+   ratchet guard. Exit profile MOMENTUM (`exec-v1.2`) is never ratcheted at all; only the
+   post-fill widening of its entry-band leg to the logical stop applies.
 
 Only after that does the LLM see the (now current) open positions, each
 carrying a `soft_trigger` block (`chandelier_breach`, `ma_break`,
@@ -1725,7 +1733,7 @@ ordinary `QTY_SYNC`/leg sync); neither, shares gone, older than 72 h →
 `TRIM_FILL_UNRESOLVED`. CLOSED rows still carrying the marker are swept the
 same way. Without a fill history in that pass nothing is decided.
 
-A CONVICTION position (mechanism `TECH_CONVICTION`) is
+A CONVICTION or MOMENTUM position (mechanism `TECH_CONVICTION` / `MOMENTUM_12_1`) is
 code-managed: `exit_position` answers `PROFILE_MANAGED` without a broker call
 and writes a `SOFT_TRIGGER/REJECT/PROFILE_MANAGED` decision row.
 

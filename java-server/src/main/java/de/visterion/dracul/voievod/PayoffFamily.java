@@ -16,7 +16,8 @@ public enum PayoffFamily {
             "SPINOFF", DRIFT,
             "MERGER_ARB", EVENT,
             "INDEX_INCLUSION", EVENT,
-            "TECH_CONVICTION", DRIFT);
+            "TECH_CONVICTION", DRIFT,
+            "MOMENTUM_12_1", DRIFT);
 
     /** Maps a strigoi anomalyType string to its payoff family. null/blank/unknown -> UNKNOWN. */
     public static PayoffFamily of(String anomalyType) {
