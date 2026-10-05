@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "required": ["prey"],
+  "properties": {
+    "prey": {
+      "type": "array",
+      "items": {"type": "object"}
+    },
+    "vetoes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["symbol", "reason"],
+        "properties": {
+          "symbol": {"type": "string"},
+          "reason": {"type": "string"}
+        }
+      }
+    },
+    "data_source_health": {"type": "object"}
+  }
+}

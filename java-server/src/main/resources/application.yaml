@@ -264,10 +264,29 @@ dracul:
       min-market-cap-usd-millions: ${TECH_MIN_MARKET_CAP_USD_MILLIONS:20000}
       reentry-block-days: ${TECH_REENTRY_BLOCK_DAYS:90}
     momentum:
-      # Textbook 12-1 momentum, Top 10, monthly rebalance (spec 2026-10-04). position-pct and
-      # min-entry-qty are ALSO read by the executor's exit profile MOMENTUM (ConvictionProfile).
+      # Textbook 12-1 momentum, Top 10, monthly rebalance (spec 2026-10-04). Runs every weekday after
+      # strigoi-tech (22:30) and before the executor (23:00); code decides whether a rebalance is
+      # due (last weekday of the month, catch-up on the first catch-up-weekdays weekdays of the next).
+      enabled: ${STRIGOI_MOMENTUM_ENABLED:false}
+      webhook-token: ${STRIGOI_MOMENTUM_TOKEN:dev-token-change-me}
+      schedule: ${DRACUL_MOMENTUM_SCHEDULE:0 40 22 * * 1-5}
+      catch-up-weekdays: ${MOMENTUM_CATCH_UP_WEEKDAYS:3}
+      # Fewer raw index members than this = a truncated source -> unavailable, nothing traded.
+      universe-min: ${MOMENTUM_UNIVERSE_MIN:480}
+      # Share of the universe that must get a valid rank, else unavailable.
+      completeness-floor: ${MOMENTUM_COMPLETENESS_FLOOR:0.95}
+      top-n: ${MOMENTUM_TOP_N:10}
+      refill-n: ${MOMENTUM_REFILL_N:10}
+      # position-pct and min-entry-qty are ALSO read by the executor's exit profile MOMENTUM.
       position-pct: ${MOMENTUM_POSITION_PCT:0.025}
       min-entry-qty: ${MOMENTUM_MIN_ENTRY_QTY:1}
+      lookback-days: ${MOMENTUM_LOOKBACK_DAYS:252}
+      skip-days: ${MOMENTUM_SKIP_DAYS:21}
+      # One-day move <= -gap or >= 1/(1-gap)-1 (+53.8 %) marks an unadjusted corporate action.
+      gap-suspect-pct: ${MOMENTUM_GAP_SUSPECT_PCT:0.35}
+      min-price: ${MOMENTUM_MIN_PRICE:5}
+      # Dual share classes: the primary share class stays in the universe, as in the backtest.
+      exclude-symbols: ${MOMENTUM_EXCLUDE_SYMBOLS:GOOG,FOX,NWS}
     merger:
       enabled: ${STRIGOI_MERGER_ENABLED:false}
       webhook-token: ${STRIGOI_MERGER_TOKEN:dev-token-change-me}

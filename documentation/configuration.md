@@ -505,6 +505,29 @@ The executor connection, depot connection and instrument currency it reads are t
 | `TECH_MIN_MARKET_CAP_USD_MILLIONS` | `dracul.strigoi.tech.min-market-cap-usd-millions` | `20000` | Minimum market cap (USD millions). Enforced only for a confirmed listing (`profile.ticker` equals the symbol); a foreign primary listing (ADR) gets the non-blocking note `market_cap_unverified`. |
 | `TECH_REENTRY_BLOCK_DAYS` | `dracul.strigoi.tech.reentry-block-days` | `90` | A symbol whose CONVICTION position was CLOSED within this many days is ineligible (`recently_exited`). |
 
+## Strigoi Momentum
+
+Textbook 12-1 momentum hunter (see `documentation/strigoi.md`, "Strigoi-Momentum"). It reads the
+executor connection `dracul.executor.connection`. `position-pct` and `min-entry-qty` are listed in
+the executor table (`MOMENTUM_POSITION_PCT`, `MOMENTUM_MIN_ENTRY_QTY`) — one key each, read by the
+hunter and by the executor's exit profile MOMENTUM.
+
+| Env var | Property | Default | Purpose |
+|---|---|---|---|
+| `STRIGOI_MOMENTUM_ENABLED` | `dracul.strigoi.momentum.enabled` | `false` | Register the agent + activate the webhook controller and its services. |
+| `STRIGOI_MOMENTUM_TOKEN` | `dracul.strigoi.momentum.webhook-token` | `dev-token-change-me` | Bearer token shared with Vistierie for the tool and completion webhooks. **Change in production.** |
+| `DRACUL_MOMENTUM_SCHEDULE` | `dracul.strigoi.momentum.schedule` | `0 40 22 * * 1-5` | Every weekday 22:40 UTC — after strigoi-tech, before the executor; code decides whether a rebalance is due. |
+| `MOMENTUM_CATCH_UP_WEEKDAYS` | `dracul.strigoi.momentum.catch-up-weekdays` | `3` | A month whose last-weekday rebalance did not complete is retried on this many first weekdays of the next month; weekday N+1 raises `MOMENTUM_REBALANCE_MISSED`. |
+| `MOMENTUM_UNIVERSE_MIN` | `dracul.strigoi.momentum.universe-min` | `480` | Fewer raw index members ⇒ truncated source ⇒ `unavailable`. |
+| `MOMENTUM_COMPLETENESS_FLOOR` | `dracul.strigoi.momentum.completeness-floor` | `0.95` | Minimum share of the universe (after exclusions) with a valid rank, else `unavailable`. |
+| `MOMENTUM_TOP_N` | `dracul.strigoi.momentum.top-n` | `10` | Size of the momentum book. |
+| `MOMENTUM_REFILL_N` | `dracul.strigoi.momentum.refill-n` | `10` | Refill candidates offered after the Top N (the LLM may veto any of the offered names). |
+| `MOMENTUM_LOOKBACK_DAYS` | `dracul.strigoi.momentum.lookback-days` | `252` | 12-1 momentum window start (bars). |
+| `MOMENTUM_SKIP_DAYS` | `dracul.strigoi.momentum.skip-days` | `21` | Skipped most recent bars (momentum = roc(lookback − skip) at t − skip). |
+| `MOMENTUM_GAP_SUSPECT_PCT` | `dracul.strigoi.momentum.gap-suspect-pct` | `0.35` | One-day move ≤ −gap or ≥ 1/(1−gap) − 1 (+53.8 %) ⇒ `data_suspect` (no new entry, never an exit reason). |
+| `MOMENTUM_MIN_PRICE` | `dracul.strigoi.momentum.min-price` | `5` | Last close below ⇒ unranked. |
+| `MOMENTUM_EXCLUDE_SYMBOLS` | `dracul.strigoi.momentum.exclude-symbols` | `GOOG,FOX,NWS` | Removed from the universe (second share classes). |
+
 ## Strigoi Merger
 
 | Env var | Default | Purpose |

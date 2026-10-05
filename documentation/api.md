@@ -1864,6 +1864,49 @@ capped at `min(free slots, weekly allowance)`; the survivors are persisted as Pr
 Prey without a `symbol` are skipped. Returns 204; non-success is acknowledged without
 processing anything.
 
+## Strigoi-Momentum Webhooks
+
+Called by Vistierie during a `strigoi-momentum` agent run. Both require
+`Authorization: Bearer <STRIGOI_MOMENTUM_TOKEN>`; only registered when
+`STRIGOI_MOMENTUM_ENABLED=true`. The tool is not cached and never answers 4xx except 401.
+
+### `POST /api/strigoi-momentum/tools/fetch-ranking`
+
+Tool webhook (`fetch_momentum_ranking`). The request body is ignored; the header
+`X-Vistierie-Run-Id` is required (without it: `data_source_health.status = "unavailable"`,
+`detail` starting `tool-guard: missing X-Vistierie-Run-Id`). Not due:
+
+```json
+{"output": {"ranking": {"rebalance_due": false, "today": "2026-10-29", "target_month": null,
+  "reason": "no rebalance day: …"}, "data_source_health": {"status": "healthy", "source": "dracul"}}}
+```
+
+Due (abridged):
+
+```json
+{"output": {"ranking": {"rebalance_due": true, "target_month": "2026-10",
+  "as_of_bar_date": "2026-10-30", "universe_size": 500, "ranked_count": 493,
+  "top": [{"rank": 1, "symbol": "ACME", "company_name": "Acme Corp", "sector": "Technology",
+           "momentum_12_1_pct": 85.31, "last_close": 120.5, "return_1m_pct": 4.2,
+           "market_cap_millions": 50000, "held_momentum": false, "held_elsewhere": false,
+           "pending_signal": false, "possible_corporate_action": false,
+           "worst_1d_return_pct": -6.1}],
+  "refill": [], "held": [{"symbol": "ACME", "rank": 1, "status": "ranked",
+           "entry_filled": true, "rebalance_exit_pending": false}],
+  "suspects": [{"symbol": "SYNX", "worst_1d_return_pct": -51.2, "best_1d_return_pct": 3.0}],
+  "counts": {"excluded": 3, "missing": 0, "too_few_bars": 2, "below_min_price": 0,
+             "data_suspect": 1, "failed_chunks": 0, "market_cap_unavailable": 0}},
+  "data_source_health": {"status": "healthy", "source": "agora"}}}
+```
+`unavailable` (truncated universe, completeness below the floor, source outage) answers
+`ranking.unavailable` with the reason and `data_source_health.status = "unavailable"`.
+
+### `POST /api/strigoi-momentum/complete`
+
+Completion webhook. Headers: `Authorization: Bearer ...`, `X-Vistierie-Run-Id: ...`. Output
+`{"prey": [], "vetoes": [{"symbol", "reason"}]}`; LLM `prey` are ignored. Returns 204.
+Processing: see `documentation/strigoi.md`, "Strigoi-Momentum".
+
 ## Daywalker Webhooks
 
 These endpoints are called by Vistierie for the `daywalker` StreamingBee. Both

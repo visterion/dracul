@@ -16,6 +16,7 @@ logic and the hunt pattern.
 | 5 | strigoi-index | Index-inclusion drift | routine | S&P / Russell studies |
 | 6 | strigoi-merger | M&A arbitrage | reasoning | Mitchell & Pulvino 2001 |
 | 7 | strigoi-tech | Conviction basket (large tech / "future" names) | reasoning | — (breadth + staying invested; spec 2026-10-03) |
+| 8 | strigoi-momentum | Textbook 12-1 momentum, Top 10, monthly rebalance | reasoning | Jegadeesh & Titman 1993 (spec 2026-10-04) |
 
 ## Implementation status
 
@@ -28,6 +29,7 @@ logic and the hunt pattern.
 | strigoi-index | **implemented 2026-06-06; liquidity enrichment 2026-07-11; announcement-anchored lifecycle 2026-07-12** — routine tier (model_purpose `routine`), agent registered with Vistierie on startup. **As of the 2026-07-12 lifecycle rebuild** the hunter no longer reads the Wikipedia `Date added` column (effective-date-only, i.e. already too late). It ingests announced constituent changes from Agora's `get_index_constituent_changes` (S&P press-release RSS + Russell reconstitution — each change carrying both an **announcement date** and an **effective date**), persists every change to `index_event` (V27) and tracks it through an ANNOUNCED → EFFECTIVE → POST → CLOSED / ABANDONED state machine across hunts. The logic is flipped: the LLM judges whether the **today → `effectiveDate`** forced-buy window is still open (not whether an addition already happened) and emits `INDEX_INCLUSION` Prey **only** from ANNOUNCED rows; EFFECTIVE/POST rows are informational (run-up/reversal observation only). Prey promotion is hard-gated to the still-open ANNOUNCED window (source-aware: S&P 5 trading days, Russell 20). Prompt bumped to `2.0.0` (logic-flip). See "Strigoi-Index: announcement-anchored lifecycle" below for the full flow |
 | strigoi-merger | **implemented 2026-06-05; term-sheet enrichment 2026-07-08; structured deal terms + server-computed spread 2026-07-11; expected-value data (Mitchell & Pulvino) 2026-07-12** — EDGAR EFTS `forms=DEFM14A,SC TO-T` (definitive merger proxies + tender offers, last 45 days), reasoning tier (model_purpose `reasoning`), agent registered with Vistierie on startup; surfaces recent SEC deal filings (DEFM14A definitive merger proxies + SC TO-T tender offers); the reasoning-tier LLM judges the spread and closing probability and emits `MERGER_ARB` Prey. Each candidate carries `termSheetDigest` / `termSheetAvailable` — **a bounded digest of the filing's summary term sheet, no longer the raw text** (see "Strigoi-Merger: term-sheet digest and the derived cap" below) — plus `lastPrice` / `priceAvailable`; the LLM reads the closing-risk sections out of the digest and computes the spread vs `lastPrice`, fail-soft (conservative judgement) when unavailable. A deterministic `DealTermsParser` regex-extracts `offerPrice` / `considerationType` (cash/stock/mixed) / `exchangeRatio` / `breakFee` from the fetched filing text server-side, and `MergerEnrichmentService` computes `spreadPercent = (offerPrice − lastPrice) / lastPrice × 100` when both are available; the LLM prefers these server-extracted fields (verifying rather than recomputing) and falls back to reading `termSheetDigest` itself when any is `null`. `DealTermsParser` also extracts the deal time-axis dates — `agreementDate` (the announcement anchor; the feed's DEFM14A/SC TO-T land weeks/months after announcement, so `lastPrice` is already the arb price), `expectedCloseDate` (quarter/half estimates mapped conservatively to the period end), and a separate `outsideDate` (End Date, never used as the close estimate). `MergerEnrichmentService` then adds the Mitchell & Pulvino (2001) expected-value inputs: `unaffectedPrice` / `unaffectedPriceAvailable` (close of the last trading day before `agreementDate`, from ONE ~400-day Agora daily-OHLC query per candidate, same latency-guard/source-down short-circuit as Lazarus), `daysToClose`, `annualizedSpreadPercent` (`spreadPercent × 365 / daysToClose`, guarded to `daysToClose ≥ 1`), and `breakDownsidePercent` (`(lastPrice − unaffectedPrice) / lastPrice × 100`, the deal-break cliff). The prompt (v1.2.0) reframes the judgement around expected value — weigh `annualizedSpreadPercent` against `breakDownsidePercent`, don't chase wide spreads, dampen stock/mixed deals (unhedged acquirer risk), couple the horizon to `expectedCloseDate`/form type, and treat the payoff as negatively-skewed with an event-based (not trailing-stop) exit. **Degradation reporting (2026-08-04):** the enrichment returns `EnrichedMergerBatch` (candidates + `truncated` + `filingTextFailures` + `oversizedFilings`) instead of a bare list, so its own losses reach `data_source_health` — previously the health came exclusively from `searchMergers` and both losses were invisible. The candidate cap moved from a hard-coded 25 to `dracul.strigoi.merger.max-candidates` (**default 30**, derived from the bridge's tool-result cap — see below) and reports a cut as `truncated`; term sheets that could not be fetched report as `partial`, naming separately how many were Agora refusing an oversized document (not an outage, and it will fail again on retry). **Payload fix (2026-08-04):** the raw term sheet no longer rides the response at all — `termSheet` became `termSheetDigest`, a ≤ `dracul.strigoi.merger.term-sheet-digest-chars` (default 700) digest of the risk-bearing sections |
 | strigoi-tech | **implemented 2026-10 (disabled by default)** — nightly 22:30 UTC Mon–Fri; tools fetch_tech_book / check_tech_candidate / search; picks become TECH_CONVICTION prey → executor signals with exit profile CONVICTION; catastrophe exits flag open CONVICTION positions |
+| strigoi-momentum | **implemented 2026-10 (disabled by default)** — weekdays 22:40 UTC; code ranks the S&P 500 by 12-1 momentum and decides the monthly rebalance (last weekday, catch-up on weekdays 1–3); one tool fetch_momentum_ranking (per-run snapshot); the LLM only vetoes; code builds MOMENTUM_12_1 prey → executor signals with exit profile MOMENTUM; names leaving the Top 10 are flagged for HARD_REBALANCE |
 
 ### Strigoi-Echo SP2: market-reaction signals
 
@@ -704,6 +706,39 @@ maintenance pass after the fill moves that leg out to the logical −35 % stop (
 entry placed at 23:00 UTC — an intraday fall of 20 % fills the narrow leg before the half-sale
 or the close-based −35 % stop can act. If the broker refuses the widening, the position keeps
 the −20 % leg as its effective emergency stop (`BROKER_STOP_WIDEN_REJECTED`, see below).
+
+## Strigoi-Momentum: textbook 12-1 momentum
+
+`strigoi-momentum` (disabled by default, `dracul.strigoi.momentum.enabled`) runs a textbook
+momentum strategy as a paper measurement: hold the ten S&P 500 names with the highest 12-1
+momentum (close one month ago / close twelve months ago − 1), equal fixed size, rebalanced once a
+month. **Code** ranks, decides the rebalance date, builds the prey and exits; the LLM only vetoes.
+The agent runs every weekday at 22:40 UTC (after strigoi-tech, before the executor) on the
+reasoning tier with one tool and `max_turns` 6.
+
+- **`fetch_momentum_ranking`** (`POST /api/strigoi-momentum/tools/fetch-ranking`, no input,
+  uncached, header `X-Vistierie-Run-Id` required). Not due ⇒ `{"ranking": {"rebalance_due":
+  false, …}}` before any Agora call. Due ⇒ the universe (`get_index_constituents` `sp500` minus
+  `exclude-symbols`; fewer than `universe-min` raw members ⇒ `unavailable`), `get_indicators_batch`
+  in chunks of 100 (`roc` 231 and `roc` 1, `series` 250, `fetchDays` 420), the ranking
+  (momentum = roc231 `series[-22]`; unranked: `missing`, `too_few_bars`, `below_min_price`,
+  `data_suspect` = a one-day move ≤ −35 % or ≥ +53.8 %, i.e. an unadjusted spin-off or reverse
+  split; a day ≤ −15 % sets `possible_corporate_action`), the Top 10 and the next 10 with facts,
+  the held MOMENTUM positions and the suspects. Fewer than `completeness-floor` (95 %) ranked ⇒
+  `unavailable` (nothing is traded); a request-scoped chunk failure above the floor ⇒ `partial`.
+  The answer is stored once per run in `momentum_ranking_snapshot`; a second call of the same run
+  returns it unchanged. Weekday `catch-up-weekdays + 1` without a completed rebalance of the
+  previous month ⇒ CRITICAL `MOMENTUM_REBALANCE_MISSED`.
+- **Calendar.** Target month M on the last weekday of M, and on weekdays 1–3 of M+1 (catch-up);
+  due while `momentum_rebalance` has no row for M and M ≥ `momentum_state.start_month` (written
+  by the first run, so enabling mid-month never back-fires).
+- **Completion** (`POST /api/strigoi-momentum/complete`): see "Completion" below (Task 7 of the
+  build; until it ships the completion persists nothing).
+
+Known deviations from the backtested strategy (documented, accepted for the measurement): held
+names that stay in the Top 10 are not resized; a wide emergency stop exists; entries are
+GTD-2-day limit orders at the last close (not market-on-open); the spin-off gap rule excludes some
+genuine names; names held by another profile are skipped.
 
 ## Hunt Pattern
 

@@ -37,6 +37,7 @@ import static org.assertj.core.api.Assertions.assertThat;
     "dracul.strigoi.insider.enabled=true", "dracul.strigoi.spin.enabled=true",
     "dracul.renfield.enabled=true",
     "dracul.strigoi.tech.enabled=true",
+    "dracul.strigoi.momentum.enabled=true",
     "dracul.gropar.enabled=true",
     "dracul.voievod-outcome.enabled=true",
     "dracul.voievod-outcome.webhook-token=test-token",
@@ -67,7 +68,8 @@ class AgentRegistrationParityTest {
             "strigoi-spin", java.util.List.of("fetch_recent_spinoff_candidates", "search"),
             "gropar", java.util.List.of("fetch_held_positions", "search"),
             "voievod", java.util.List.of("fetch_consensus_clusters", "search"),
-            "strigoi-tech", java.util.List.of("fetch_tech_book", "check_tech_candidate", "search")
+            "strigoi-tech", java.util.List.of("fetch_tech_book", "check_tech_candidate", "search"),
+            "strigoi-momentum", java.util.List.of("fetch_momentum_ranking")
     );
 
     @Test

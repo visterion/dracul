@@ -41,6 +41,7 @@ import java.net.http.HttpResponse;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -96,6 +97,7 @@ import static org.springframework.boot.test.context.SpringBootTest.WebEnvironmen
         "dracul.strigoi.insider.enabled=true",
         "dracul.strigoi.lazarus.enabled=true",
         "dracul.strigoi.tech.enabled=true",
+        "dracul.strigoi.momentum.enabled=true",
         "dracul.public-url=http://test.invalid:9090"
 })
 class ToolEndpointResponseRuleIT {
@@ -118,13 +120,15 @@ class ToolEndpointResponseRuleIT {
             "/api/strigoi-insider/tools/fetch-clusters",
             "/api/strigoi-lazarus/tools/fetch-candidates",
             "/api/strigoi-tech/tools/fetch-book",
-            "/api/strigoi-tech/tools/check-candidate");
+            "/api/strigoi-tech/tools/check-candidate",
+            "/api/strigoi-momentum/tools/fetch-ranking");
 
     /** The endpoints that take no required input — everything except {@code fetch-news} and
      *  strigoi-tech's {@code check-candidate}, which both need a {@code symbol} and get their own
-     *  benign-input tests (see class javadoc). */
+     *  benign-input tests (see class javadoc), and strigoi-momentum's fetch-ranking, which needs
+     *  the X-Vistierie-Run-Id header. */
     private static final List<String> CANDIDATE_PATHS = ALL_PATHS.stream()
-            .filter(p -> !p.endsWith("/fetch-news") && !p.endsWith("/check-candidate"))
+            .filter(p -> !p.endsWith("/fetch-news") && !p.endsWith("/check-candidate") && !p.endsWith("/fetch-ranking"))
             .toList();
 
     static List<String> endpoints() { return ALL_PATHS; }
@@ -150,6 +154,7 @@ class ToolEndpointResponseRuleIT {
     @MockitoBean SpinValuationSnapshotter valuation;         // spin
     @MockitoBean TechBookService techBook;                   // tech (fetch-book + check-candidate)
     @MockitoBean TechCandidateService techCandidates;        // tech (check-candidate)
+    @MockitoBean de.visterion.dracul.strigoi.momentum.MomentumRankingService momentumRanking;   // momentum (fetch-ranking)
 
     private final HttpClient http = HttpClient.newHttpClient();
 
@@ -203,6 +208,11 @@ class ToolEndpointResponseRuleIT {
                 new TechCandidateService.Candidate(
                         objectMapper.createObjectNode().put("symbol", (String) inv.getArgument(0)),
                         new TechEligibility.Verdict(true, List.of(), List.of()), false));
+        // strigoi-momentum: a not-due night (no Agora call in the real service either).
+        when(momentumRanking.rank(anyString())).thenReturn(Map.of(
+                "ranking", Map.of("rebalance_due", false),
+                "data_source_health", Map.of("status", "healthy", "source", "dracul",
+                        "checked_at", Instant.now().toString())));
     }
 
     private HttpResponse<String> post(String path, String bearer, String rawBody) throws Exception {
@@ -215,6 +225,18 @@ class ToolEndpointResponseRuleIT {
         if (bearer != null) {
             builder.header("Authorization", bearer);
         }
+        return http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private HttpResponse<String> postWithRunId(String path, String rawBody, String runId) throws Exception {
+        var builder = HttpRequest.newBuilder()
+                .uri(URI.create("http://localhost:" + port + path))
+                .header("Content-Type", "application/json")
+                .header("Authorization", TOKEN)
+                .POST(rawBody == null
+                        ? HttpRequest.BodyPublishers.noBody()
+                        : HttpRequest.BodyPublishers.ofString(rawBody));
+        if (runId != null) builder.header("X-Vistierie-Run-Id", runId);
         return http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
     }
 
@@ -237,13 +259,13 @@ class ToolEndpointResponseRuleIT {
     // --- Step 1: derive the endpoint list and pin it ---
 
     @Test
-    void derivedToolEndpointListMatchesTheNineExpectedPaths() {
+    void derivedToolEndpointListMatchesTheTenExpectedPaths() {
         var paths = handlerMapping.getHandlerMethods().keySet().stream()
                 .flatMap(i -> i.getPathPatternsCondition().getPatternValues().stream())
                 .filter(p -> p.startsWith("/api/strigoi-") && p.contains("/tools/"))
                 .toList();
 
-        assertThat(paths).hasSize(9).containsExactlyInAnyOrderElementsOf(ALL_PATHS);
+        assertThat(paths).hasSize(10).containsExactlyInAnyOrderElementsOf(ALL_PATHS);
     }
 
     // --- Step 2: the matrix ---
@@ -320,6 +342,26 @@ class ToolEndpointResponseRuleIT {
     @Test
     void checkCandidateAbsentBodyIsGuardedByDesign() throws Exception {
         var out = post("/api/strigoi-tech/tools/check-candidate", TOKEN, null);
+        assertThat(out.statusCode()).isEqualTo(200);
+        assertThat(status(out)).isEqualTo("unavailable");
+        assertThat(detail(out)).startsWith(GUARD_MARKER);
+    }
+
+    /** strigoi-momentum {@code fetch-ranking}: with the run id Vistierie always sends, any benign
+     *  body (or none) runs normally. */
+    @Test
+    void fetchRankingWithARunIdRunsNormally() throws Exception {
+        for (String body : java.util.Arrays.asList(null, "{}", "{\"input\":{}}", "{\"input\":{},\"unknown\":1}")) {
+            var out = postWithRunId("/api/strigoi-momentum/tools/fetch-ranking", body, "run-ok");
+            assertThat(out.statusCode()).as("body=%s", body).isEqualTo(200);
+            assertThat(status(out)).as("body=%s", body).isEqualTo("healthy");
+        }
+    }
+
+    /** Without the run id the snapshot cannot be keyed — guarded by design, never a 4xx. */
+    @Test
+    void fetchRankingWithoutARunIdIsGuardedByDesign() throws Exception {
+        var out = postWithRunId("/api/strigoi-momentum/tools/fetch-ranking", "{}", null);
         assertThat(out.statusCode()).isEqualTo(200);
         assertThat(status(out)).isEqualTo("unavailable");
         assertThat(detail(out)).startsWith(GUARD_MARKER);

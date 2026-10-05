@@ -17,8 +17,8 @@ class PromptRegistryTest {
 
     private static final Set<String> AGENTS = Set.of(
             "daywalker", "daywalker-deep", "executor", "gropar", "renfield", "strigoi-echo",
-            "strigoi-index", "strigoi-insider", "strigoi-lazarus", "strigoi-merger", "strigoi-spin", "strigoi-tech",
-            "voievod", "voievod-outcome");
+            "strigoi-index", "strigoi-insider", "strigoi-lazarus", "strigoi-merger", "strigoi-momentum",
+            "strigoi-spin", "strigoi-tech", "voievod", "voievod-outcome");
 
     private final PromptRegistry registry = new PromptRegistry(new ObjectMapper());
 

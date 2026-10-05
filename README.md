@@ -162,11 +162,17 @@ is non-negotiable — see `CLAUDE.md`.
 | 5 | **Strigoi-Index** | Index-inclusion drift | routine | S&P / Russell studies |
 | 6 | **Strigoi-Merger** | M&A arbitrage | reasoning | Mitchell & Pulvino 2001 |
 | 7 | **Strigoi-Tech** | Conviction basket of large tech / "future" names (disabled by default) | reasoning | Breadth + staying invested |
+| 8 | **Strigoi-Momentum** | Textbook 12-1 momentum, Top 10, monthly rebalance (disabled by default) | reasoning | Jegadeesh & Titman 1993 |
 
 Strigoi-Tech is the odd one out: it does not hunt an anomaly but builds and guards a
 fixed-size basket held for the long run. Its picks feed the executor with exit profile
 CONVICTION (emergency stop, half sold at +30 %, trailing rest), and its nightly news check
 can flag a thesis-destroying event for a code-driven exit. See
+[strigoi.md](documentation/strigoi.md).
+
+Strigoi-Momentum is rule-based: code ranks the S&P 500 by 12-1 momentum, decides the monthly
+rebalance and builds the picks; the LLM may only veto a name. Its positions use exit profile
+MOMENTUM (wide emergency stop, sold when they leave the Top 10). See
 [strigoi.md](documentation/strigoi.md).
 
 Each Strigoi follows the same pattern: deterministic pre-screen against
