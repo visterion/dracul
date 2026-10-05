@@ -1552,8 +1552,12 @@ class VetoServiceTest {
         assertThat(named(out, "BUDGET").passed()).isTrue();
     }
 
-    /** P1 #8 (R2 Minor 5): twelve names fit MECHANISM_BUDGET 0.44 including a 2 % adverse FX
-     *  drift of the eleven held names valued at today's rate (11 x 3 300 x 1.02 = 37 026). */
+    /** P1 #8 (R2 Minor 5): an illustrative fixture, not the shipped basket-size/position-pct/
+     *  MECHANISM_BUDGET defaults (those are 10 / 3 % / 0.33 as of 2026-10-05) — twelve names at a
+     *  round 3 300 notional fit a round MECHANISM_BUDGET of 0.44 including a 2 % adverse FX drift
+     *  of the eleven held names valued at today's rate (11 x 3 300 x 1.02 = 37 026); this only
+     *  exercises the charge/cap arithmetic in {@code techBudgetCfg()} above, which is itself an
+     *  independent fixture, not bound to the real Spring-configured defaults. */
     @Test
     void twelveNamesFitTheTechBudgetWithTwoPercentFxDrift() {
         BigDecimal held = new BigDecimal("37026.00");

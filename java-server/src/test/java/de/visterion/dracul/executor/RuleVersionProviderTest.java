@@ -24,17 +24,19 @@ class RuleVersionProviderTest {
     static final String DEFAULTS_VERSION = "exec-test-sp2-" + UUID.randomUUID();
     static final String OVERRIDES_VERSION = "exec-test-sp2-ovr-" + UUID.randomUUID();
 
-    static final String CHANGES = "exit profile CONVICTION for mechanism TECH_CONVICTION (strigoi-tech basket): "
-            + "logical emergency stop 35 % below entry with the broker leg at the "
-            + "entry band until widened, fixed notional per name (position-pct of "
-            + "total-budget, FX-converted, SIZE_TOO_SMALL below min-entry-qty), no "
-            + "take-profit, half sold at a close of +30 % (HARD_TARGET_HALF), the "
-            + "rest trailed 30 % below the highest close, a flagged catastrophe "
-            + "flattens (HARD_CATASTROPHE); CORRELATED, CONCENTRATION and HEAT_LIMIT "
-            + "skipped for the profile, BUDGET and MECHANISM_BUDGET charge the profile "
-            + "notional (TECH_CONVICTION 0.33); exit_position rejects the profile "
-            + "(PROFILE_MANAGED); partial exits repoint the leg rows; STANDARD "
-            + "unchanged from exec-v0.9";
+    static final String CHANGES = "on top of exec-v1.0 (exit profile CONVICTION for mechanism TECH_CONVICTION, "
+            + "strigoi-tech basket): (1) post-fill widening -- the entry-band broker "
+            + "leg of a filled CONVICTION position is widened to the logical stop by "
+            + "the first maintenance pass after the fill (BROKER_STOP_WIDENED); a "
+            + "broker rejection escalates BROKER_STOP_WIDEN_REJECTED once, is never "
+            + "retried, and leaves the narrow entry-band leg as the effective "
+            + "emergency stop; (2) capital split revision 2026-10-05 -- basket-size "
+            + "12 -> 10, position-pct 0.033 -> 0.03 (ten names at 3 % each), "
+            + "MECHANISM_BUDGET cap TECH_CONVICTION 0.44 -> 0.33 (10 x 3 % + ~10 % "
+            + "headroom for EUR/USD drift); all other exec-v1.0 gates (CORRELATED, "
+            + "CONCENTRATION and HEAT_LIMIT skipped for the profile, exit_position "
+            + "rejects the profile with PROFILE_MANAGED, partial exits repoint the "
+            + "leg rows) unchanged";
 
     @Nested
     @SpringBootTest

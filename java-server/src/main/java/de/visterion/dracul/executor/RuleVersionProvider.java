@@ -42,7 +42,7 @@ public class RuleVersionProvider {
     private final ConvictionProfile convictionProfile;
 
     public RuleVersionProvider(
-            @Value("${dracul.executor.rule-version:exec-v1.0}") String active,
+            @Value("${dracul.executor.rule-version:exec-v1.1}") String active,
             RuleVersionRepository repo,
             ObjectMapper mapper,
             @Value("${dracul.executor.broker-stop-buffer-atr:1.0}") BigDecimal brokerStopBufferAtr,
@@ -116,6 +116,19 @@ public class RuleVersionProvider {
             // is then permanent for the version it describes -- it is the audit record of what
             // that version changed, and prod verification asserts it verbatim.
             //
+            // exec-v1.0 history (no longer seeded; prod seeded this verbatim on 2026-10-04, insert-
+            // if-absent means changing this string never reaches that row -- so it is restored here
+            // exactly as main b305cbd8 had it, not edited in place): "exit profile CONVICTION for
+            // mechanism TECH_CONVICTION (strigoi-tech basket): logical emergency stop 35% below
+            // entry with the broker leg at the entry band until widened, fixed notional per name
+            // (position-pct of total-budget, FX-converted, SIZE_TOO_SMALL below min-entry-qty), no
+            // take-profit, half sold at a close of +30% (HARD_TARGET_HALF), the rest trailed 30%
+            // below the highest close, a flagged catastrophe flattens (HARD_CATASTROPHE);
+            // CORRELATED, CONCENTRATION and HEAT_LIMIT skipped for the profile, BUDGET and
+            // MECHANISM_BUDGET charge the profile notional (TECH_CONVICTION 0.44); exit_position
+            // rejects the profile (PROFILE_MANAGED); partial exits repoint the leg rows; STANDARD
+            // unchanged from exec-v0.9"
+            //
             // exec-v0.9 history (no longer seeded): "structured kill level: only the
             // hunter-authored kill_close_below is code-enforced (BUY, one daily close strictly
             // below it -> HARD_KILL_CRITERIA); free-text kill_criteria are no longer parsed by
@@ -138,17 +151,19 @@ public class RuleVersionProvider {
             // entry cap (MERGER_ARB 20%, QUALITY_52W_LOW 15% of budget), transient like
             // MAX_POSITIONS; max_positions 8"
             repo.upsert(new RuleVersion(active, LocalDate.now().toString(),
-                    "exit profile CONVICTION for mechanism TECH_CONVICTION (strigoi-tech basket): "
-                            + "logical emergency stop 35 % below entry with the broker leg at the "
-                            + "entry band until widened, fixed notional per name (position-pct of "
-                            + "total-budget, FX-converted, SIZE_TOO_SMALL below min-entry-qty), no "
-                            + "take-profit, half sold at a close of +30 % (HARD_TARGET_HALF), the "
-                            + "rest trailed 30 % below the highest close, a flagged catastrophe "
-                            + "flattens (HARD_CATASTROPHE); CORRELATED, CONCENTRATION and HEAT_LIMIT "
-                            + "skipped for the profile, BUDGET and MECHANISM_BUDGET charge the profile "
-                            + "notional (TECH_CONVICTION 0.33); exit_position rejects the profile "
-                            + "(PROFILE_MANAGED); partial exits repoint the leg rows; STANDARD "
-                            + "unchanged from exec-v0.9",
+                    "on top of exec-v1.0 (exit profile CONVICTION for mechanism TECH_CONVICTION, "
+                            + "strigoi-tech basket): (1) post-fill widening -- the entry-band broker "
+                            + "leg of a filled CONVICTION position is widened to the logical stop by "
+                            + "the first maintenance pass after the fill (BROKER_STOP_WIDENED); a "
+                            + "broker rejection escalates BROKER_STOP_WIDEN_REJECTED once, is never "
+                            + "retried, and leaves the narrow entry-band leg as the effective "
+                            + "emergency stop; (2) capital split revision 2026-10-05 -- basket-size "
+                            + "12 -> 10, position-pct 0.033 -> 0.03 (ten names at 3 % each), "
+                            + "MECHANISM_BUDGET cap TECH_CONVICTION 0.44 -> 0.33 (10 x 3 % + ~10 % "
+                            + "headroom for EUR/USD drift); all other exec-v1.0 gates (CORRELATED, "
+                            + "CONCENTRATION and HEAT_LIMIT skipped for the profile, exit_position "
+                            + "rejects the profile with PROFILE_MANAGED, partial exits repoint the "
+                            + "leg rows) unchanged",
                     null, params));
         }
     }

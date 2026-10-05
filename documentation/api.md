@@ -1808,7 +1808,7 @@ Response:
         "news_since_last_run": [ { "headline": "...", "source": "...",
                                    "datetime": "2026-01-02T14:00:00Z", "url": "https://example.com/1" } ] } ],
     "pending_signals": [ { "symbol": "SYNB", "signal_id": "...", "created_at": "..." } ],
-    "basket_size": 12, "slots_free": 10, "new_names_allowed_this_week": 1,
+    "basket_size": 10, "slots_free": 8, "new_names_allowed_this_week": 1,
     "accepted_this_week": 1, "recently_exited": ["SYNE"], "executor_available": true,
     "last_completion_notes": "run=... picks_over_cap=0 ineligible_pick=1 catastrophe_rejected=0 executor_disabled=0" },
   "data_source_health": { "status": "healthy", "source": "dracul", "detail": null, "checked_at": "..." } } }
