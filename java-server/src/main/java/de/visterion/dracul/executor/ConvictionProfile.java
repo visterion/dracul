@@ -4,8 +4,9 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 
 /**
- * Parameters of exit profile {@link ExitProfile#CONVICTION} (spec 2026-10-03 §5.2) and the price
- * arithmetic every consumer shares, so place-entry, the hard trigger and the stop ratchet can
+ * Parameters of the wide-stop exit profiles CONVICTION and MOMENTUM (shared stop arithmetic under
+ * dracul.executor.profiles.conviction.*; rename to a wide-stop key is out of scope, spec 2026-10-04
+ * §3; CONVICTION spec 2026-10-03 §5.2) and the price arithmetic every consumer shares, so place-entry, the hard trigger and the stop ratchet can
  * never disagree about a level.
  *
  * @param emergencyStopPct logical stop distance below (BUY) the entry
@@ -18,10 +19,15 @@ import java.math.RoundingMode;
  *        −25 % rejected)
  * @param positionPct fixed size per basket name as a fraction of {@code dracul.executor.total-budget};
  *        bound from {@code dracul.strigoi.tech.position-pct} — ONE key for executor and hunter
+ * @param momentumPositionPct exit profile MOMENTUM's size per name, bound from
+ *        {@code dracul.strigoi.momentum.position-pct} (one key, read by executor and hunter)
+ * @param momentumMinEntryQty MOMENTUM's fewest shares, bound from
+ *        {@code dracul.strigoi.momentum.min-entry-qty}
  */
 public record ConvictionProfile(BigDecimal emergencyStopPct, BigDecimal targetPct,
         BigDecimal targetFraction, BigDecimal trailPct, int minEntryQty,
-        BigDecimal entryBrokerStopPct, BigDecimal positionPct) {
+        BigDecimal entryBrokerStopPct, BigDecimal positionPct,
+        BigDecimal momentumPositionPct, int momentumMinEntryQty) {
 
     public ConvictionProfile {
         requireFraction("emergency-stop-pct", emergencyStopPct);
@@ -37,13 +43,35 @@ public record ConvictionProfile(BigDecimal emergencyStopPct, BigDecimal targetPc
             throw new IllegalArgumentException(
                     "dracul.executor.profiles.conviction.min-entry-qty must be >= 1, got " + minEntryQty);
         }
+        if (momentumPositionPct == null || momentumPositionPct.signum() <= 0
+                || momentumPositionPct.compareTo(BigDecimal.ONE) >= 0) {
+            throw new IllegalArgumentException(
+                    "dracul.strigoi.momentum.position-pct must be in (0, 1), got " + momentumPositionPct);
+        }
+        if (momentumMinEntryQty < 1) {
+            throw new IllegalArgumentException(
+                    "dracul.strigoi.momentum.min-entry-qty must be >= 1, got " + momentumMinEntryQty);
+        }
     }
 
-    /** The spec defaults: 0.35 / 0.30 / 0.5 / 0.30 / 2 / 0.20 / 0.03. */
+    /** The spec defaults: 0.35 / 0.30 / 0.5 / 0.30 / 2 / 0.20 / 0.03, MOMENTUM 0.025 / 1. */
     public static ConvictionProfile defaults() {
         return new ConvictionProfile(new BigDecimal("0.35"), new BigDecimal("0.30"),
                 new BigDecimal("0.5"), new BigDecimal("0.30"), 2, new BigDecimal("0.20"),
-                new BigDecimal("0.03"));
+                new BigDecimal("0.03"), new BigDecimal("0.025"), 1);
+    }
+
+    /** Fixed size per name as a fraction of total-budget (spec 2026-10-04 §3): MOMENTUM reads
+     *  {@code dracul.strigoi.momentum.position-pct}, every other profile the CONVICTION
+     *  {@code dracul.strigoi.tech.position-pct} (STANDARD never reads it). */
+    public BigDecimal pctFor(ExitProfile profile) {
+        return profile == ExitProfile.MOMENTUM ? momentumPositionPct : positionPct;
+    }
+
+    /** Fewest shares a wide-stop entry may buy: CONVICTION 2 (the half-sale needs them),
+     *  MOMENTUM 1 (no half-sale; with 2 a high-priced name would be SIZE_TOO_SMALL). */
+    public int minEntryQtyFor(ExitProfile profile) {
+        return profile == ExitProfile.MOMENTUM ? momentumMinEntryQty : minEntryQty;
     }
 
     /** Logical emergency stop, tick-rounded toward the entry like every initial stop. */

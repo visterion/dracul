@@ -50,7 +50,7 @@ public class RuleVersionProvider {
             @Value("${dracul.executor.atr-short-period:5}") int atrShortPeriod,
             @Value("${dracul.executor.risk-pct:0.005}") double riskPct,
             @Value("${dracul.executor.min-confidence:0.40}") double minConfidence,
-            @Value("${dracul.executor.max-positions:25}") int maxPositions,
+            @Value("${dracul.executor.max-positions:35}") int maxPositions,
             @Value("${dracul.executor.total-budget:100000}") BigDecimal totalBudget,
             @Value("${dracul.executor.tranche-count:25}") int trancheCount,
             @Value("${dracul.executor.heat-pct:0.15}") double heatPct,

@@ -523,7 +523,7 @@ class EntryContextAssemblerTest {
     /** Spec 2026-10-03 §5.3 (R1 M5): the profile notional is total-budget x position-pct in the
      *  ACCOUNT currency, converted into the instrument currency exactly like trancheAmount. */
     @Test
-    void convictionNotionalIsFxConvertedFromTheAccountCurrency() {
+    void profileNotionalIsFxConvertedFromTheAccountCurrency() {
         when(gateway.account("depot-1")).thenReturn(new AccountSnapshot(new BigDecimal("50000"),
                 new BigDecimal("50000"), "EUR"));
         when(fx.hasRate("USD", "EUR")).thenReturn(true);
@@ -541,7 +541,7 @@ class EntryContextAssemblerTest {
                 signal("ACME", new BigDecimal("100.00"), "2026-07-10T00:00:00Z"));
 
         // 10000 EUR x 0.03 = 300 EUR -> 330 USD
-        assertThat(ctx.convictionNotional()).isEqualByComparingTo("330");
+        assertThat(ctx.profileNotional()).isEqualByComparingTo("330");
     }
 
     /** Spec 2026-10-03 §5.3 (R2 Minor 8): openHeat sums STANDARD positions only — the basket's
@@ -588,5 +588,73 @@ class EntryContextAssemblerTest {
 
         assertThat(ctx.openHeat()).isEqualByComparingTo("50");
         assertThat(ctx.openExposure()).isEqualByComparingTo("1500");
+    }
+
+    private ExecutorSignal momentumSignal(String symbol) {
+        return new ExecutorSignal("sig-m", "strigoi-momentum", "v1", symbol, "BUY", 0.5,
+                "MOMENTUM_12_1", List.of("k"), "1 month (rebalance)", new BigDecimal("100.00"),
+                "PENDING", "2026-07-10T00:00:00Z");
+    }
+
+    private ExecutorSignal source(String id, String mechanism) {
+        return new ExecutorSignal(id, "hunter", "v1", "X", "BUY", 0.5, mechanism, List.of("k"),
+                "1m", null, "ACCEPTED", "2026-07-01T00:00:00Z");
+    }
+
+    private void stubIndicators() {
+        when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
+                new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
+                new BigDecimal("101.00"), new BigDecimal("100.00")));
+        when(sectorCascade.resolve("ACME")).thenReturn("Technology");
+    }
+
+    /** Spec 2026-10-04 §3: the MOMENTUM notional is total-budget x momentum position-pct. */
+    @Test
+    void momentumNotionalUsesTheMomentumPct() {
+        stubIndicators();
+
+        EntryContext ctx = assembler.assemble(momentumSignal("ACME"));
+
+        // 10000 x 0.025 = 250 (identity fx)
+        assertThat(ctx.profileNotional()).isEqualByComparingTo("250");
+    }
+
+    /** Spec §3 (R2 M1): for a MOMENTUM signal a flagged MOMENTUM row is capital being freed
+     *  tonight — out of openExposure and openExposureByMechanism, whether its flatten is still
+     *  to come (entries first) or already pending (maintenance first). STANDARD signals see it. */
+    @Test
+    void committedRebalanceExitsAreExcludedForMomentumSignalsOnly() {
+        stubIndicators();
+        ExecutorPosition flagged = ExecutorPositionFixtures.withRebalanceExitAt(
+                ExecutorPositionFixtures.momentum(openPosition("SYNA", new BigDecimal("10"),
+                        new BigDecimal("100"), new BigDecimal("65"), "src-a")),
+                "2026-10-30 22:40:00+00");                                        // 1000
+        ExecutorPosition flaggedPending = ExecutorPositionFixtures.withRebalanceExitAt(
+                ExecutorPositionFixtures.momentum(ExecutorPositionFixtures.withoutKillLevel(2L,
+                        "depot-1", "SYNB", "BUY", new BigDecimal("10"), new BigDecimal("40"),
+                        new BigDecimal("40"), new BigDecimal("26"), 1, null, List.of(), "src-b",
+                        "agent", "2026-07-01", null, "OPEN", "brk-2", null, null, 0, null, null,
+                        null, null, "stop-2", null, null, null, null, 0, null, null, null,
+                        "HARD_REBALANCE", "close-2", null, false, null, null)),
+                "2026-10-30 22:40:00+00");                                        // 400, flatten pending
+        ExecutorPosition held = ExecutorPositionFixtures.momentum(openPosition("SYNC",
+                new BigDecimal("10"), new BigDecimal("50"), new BigDecimal("33"), "src-c")); // 500
+        ExecutorPosition standard = openPosition("SYND", new BigDecimal("10"), new BigDecimal("50"),
+                new BigDecimal("45"), "src-d");                                   // 500
+        when(positionRepo.findOpen()).thenReturn(List.of(flagged, flaggedPending, held, standard));
+        when(signalRepo.findById("src-a")).thenReturn(source("src-a", "MOMENTUM_12_1"));
+        when(signalRepo.findById("src-b")).thenReturn(source("src-b", "MOMENTUM_12_1"));
+        when(signalRepo.findById("src-c")).thenReturn(source("src-c", "MOMENTUM_12_1"));
+        when(signalRepo.findById("src-d")).thenReturn(source("src-d", "PEAD"));
+
+        EntryContext mom = assembler.assemble(momentumSignal("ACME"));
+        assertThat(mom.openExposure()).isEqualByComparingTo("1000");
+        assertThat(mom.openExposureByMechanism().get("MOMENTUM_12_1")).isEqualByComparingTo("500");
+        assertThat(mom.openPositions()).hasSize(4);   // the list itself is untouched (REDUNDANCY)
+
+        EntryContext std = assembler.assemble(signal("ACME", new BigDecimal("100.00"),
+                "2026-07-10T00:00:00Z"));
+        assertThat(std.openExposure()).isEqualByComparingTo("2400");
+        assertThat(std.openExposureByMechanism().get("MOMENTUM_12_1")).isEqualByComparingTo("1900");
     }
 }

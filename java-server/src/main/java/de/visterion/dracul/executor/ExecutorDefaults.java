@@ -27,7 +27,7 @@ class ExecutorDefaults {
      *  (audit params) so the key is read exactly once and the two cannot drift. */
     @Bean
     MechanismBudget mechanismBudget(
-            @Value("${dracul.executor.mechanism-budget-pct:MERGER_ARB:0.20,QUALITY_52W_LOW:0.15,TECH_CONVICTION:0.33}") String spec) {
+            @Value("${dracul.executor.mechanism-budget-pct:MERGER_ARB:0.20,QUALITY_52W_LOW:0.15,TECH_CONVICTION:0.33,MOMENTUM_12_1:0.28}") String spec) {
         return new MechanismBudget(spec);
     }
 
@@ -49,10 +49,11 @@ class ExecutorDefaults {
         return new AgentDefaultProvider() {
             @Override
             public AgentDefinition defaultDefinition() {
+                // max_turns 40 (spec 2026-10-04 §3, R3 Minor 4): one tool call per turn; a first momentum build adds ten place_entry calls on top of the 30-day maximum of 12 turns.
                 return new AgentDefinition(
                         NAME, "reasoning",
                         PromptDocument.bodyFromClasspath("prompts/executor.md"), schema,
-                        resolvedSchedule, 25, 1800,
+                        resolvedSchedule, 40, 1800,
                         "/api/executor/complete",
                         null, null, null, true,
                         List.of(

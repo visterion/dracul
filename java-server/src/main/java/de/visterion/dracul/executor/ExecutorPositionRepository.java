@@ -683,10 +683,14 @@ public class ExecutorPositionRepository {
                 .single();
     }
 
-    /** Count positions ENTERED (entry_date) at or after {@code since}, regardless of current
-     *  status — used for weekly-pace limits (a stopped-out position still counted toward pace). */
+    /** Count STANDARD positions ENTERED (entry_date) at or after {@code since}, regardless of
+     *  current status — the weekly PACE_LIMIT (a stopped-out position still counts). Wide-stop
+     *  entries (CONVICTION, MOMENTUM) never consume STANDARD's pace (spec 2026-10-04 §3, R2 M2). */
     public int countEnteredSince(java.time.Instant since) {
-        return jdbc.sql("SELECT count(*) FROM executor_position WHERE entry_date >= :since")
+        return jdbc.sql("""
+                SELECT count(*) FROM executor_position
+                WHERE entry_date >= :since AND exit_profile = 'STANDARD'
+                """)
                 .param("since", java.sql.Timestamp.from(since))
                 .query(Integer.class)
                 .single();

@@ -149,9 +149,17 @@ public class EntryContextAssembler {
                 totalBudget.divide(BigDecimal.valueOf(trancheCount), 6, RoundingMode.HALF_UP),
                 accountCurrency, instrumentCurrency);
 
-        BigDecimal convictionNotional = fx.convert(
-                totalBudget.multiply(convictionProfile.positionPct()).setScale(6, RoundingMode.HALF_UP),
+        // The wide-stop notional of THIS signal's profile (spec 2026-10-04 §3); STANDARD signals
+        // and assembleForSymbol get the CONVICTION pct, exactly the value they always got (unread).
+        ExitProfile signalProfile = signal == null
+                ? ExitProfile.STANDARD : ExitProfile.fromMechanism(signal.mechanism());
+        BigDecimal profileNotional = fx.convert(
+                totalBudget.multiply(convictionProfile.pctFor(signalProfile)).setScale(6, RoundingMode.HALF_UP),
                 accountCurrency, instrumentCurrency);
+        // Spec 2026-10-04 §3 (R2 M1): for a MOMENTUM signal, MOMENTUM rows already committed to a
+        // rebalance exit are capital being freed tonight — out of BUDGET and MECHANISM_BUDGET
+        // exposure (VetoService drops them from MAX_POSITIONS). Other profiles see every row.
+        boolean momentumSignal = signalProfile == ExitProfile.MOMENTUM;
 
         BigDecimal openExposure = BigDecimal.ZERO;
         BigDecimal openHeat = BigDecimal.ZERO;
@@ -161,7 +169,7 @@ public class EntryContextAssembler {
             ExecutorSignal source = p.sourceSignalId() != null ? signalRepo.findById(p.sourceSignalId()) : null;
             String mechanism = source != null && source.mechanism() != null
                     ? source.mechanism().trim().toUpperCase(Locale.ROOT) : null;
-            if (p.qty() != null && p.entryPrice() != null) {
+            if (p.qty() != null && p.entryPrice() != null && !(momentumSignal && p.committedRebalanceExit())) {
                 BigDecimal exposure = fx.convert(p.qty().multiply(p.entryPrice()), instrumentCurrency, accountCurrency);
                 openExposure = openExposure.add(exposure);
                 openExposureByMechanism.merge(mechanism != null ? mechanism : "UNRESOLVED", exposure, BigDecimal::add);
@@ -202,7 +210,7 @@ public class EntryContextAssembler {
                 ind.atrShort(),
                 ind.atrEff(),
                 openExposureByMechanism,
-                convictionNotional);
+                profileNotional);
     }
 
     /**

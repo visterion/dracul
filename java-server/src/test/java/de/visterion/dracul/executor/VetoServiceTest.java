@@ -56,6 +56,7 @@ class VetoServiceTest {
         SignalBuilder mechanism(String v) { mechanism = v; return this; }
         SignalBuilder direction(String v) { direction = v; return this; }
         SignalBuilder referencePrice(BigDecimal v) { referencePrice = v; return this; }
+        SignalBuilder confidence(Double v) { confidence = v; return this; }
 
         ExecutorSignal build() {
             return new ExecutorSignal(signalId, source, agentVersion, symbol, direction, confidence,
@@ -1646,5 +1647,74 @@ class VetoServiceTest {
                 new BigDecimal("100"));
         assertThat(named(out, "CORRELATED").measured()).isEqualTo("skipped (exit profile CONVICTION)");
         assertThat(named(out, "HEAT_LIMIT").measured()).startsWith("skipped (exit profile CONVICTION); STANDARD heat ");
+    }
+
+    /** Spec §3 (R2 Minor 7): LOW_CONFIDENCE, CHASED_AWAY and BELOW_ANCHOR are skipped for
+     *  MOMENTUM — the same contexts reject a STANDARD signal. */
+    @Test
+    void momentumSkipsLowConfidenceChasedAwayAndBelowAnchor() {
+        ExecutorSignal lowConfidence = signalBuilder().mechanism("MOMENTUM_12_1").confidence(0.3).build();
+        var chased = ctx().price(BigDecimal.valueOf(60)).build();   // ref 50 + 2 x ATR 2 = 54 < 60
+        var below = ctx().price(BigDecimal.valueOf(40)).build();    // ref 50, drift band 0 -> 40 < 50
+
+        assertThat(vetoService.evaluate(signalBuilder().build(), chased, sizing(), cfg())
+                .firstFailure()).isEqualTo(RejectReason.CHASED_AWAY);
+        assertThat(vetoService.evaluate(signalBuilder().build(), below, sizing(), cfg())
+                .firstFailure()).isEqualTo(RejectReason.BELOW_ANCHOR);
+
+        var mChased = vetoService.evaluate(lowConfidence, chased, momentumSizing(), cfg());
+        var mBelow = vetoService.evaluate(lowConfidence, below, momentumSizing(), cfg());
+
+        assertThat(mChased.passed()).isTrue();
+        assertThat(mBelow.passed()).isTrue();
+        assertThat(named(mChased, "LOW_CONFIDENCE").skipped()).isEqualTo("profile");
+        assertThat(named(mChased, "LOW_CONFIDENCE").measured())
+                .isEqualTo("skipped (exit profile MOMENTUM); rule-based confidence 0.3");
+        assertThat(named(mChased, "CHASED_AWAY").skipped()).isEqualTo("profile");
+        assertThat(named(mBelow, "BELOW_ANCHOR").skipped()).isEqualTo("profile");
+        assertThat(mChased.results()).hasSize(18);
+    }
+
+    /** Spec §3 (R2 M2): PACE_LIMIT is skipped for both wide-stop profiles, STANDARD still fails. */
+    @Test
+    void paceLimitIsSkippedForWideStopProfiles() {
+        var fullWeek = ctx().entriesThisWeek(3).build();   // cfg() pace-per-week 3
+
+        assertThat(vetoService.evaluate(signalBuilder().build(), fullWeek, sizing(), cfg())
+                .firstFailure()).isEqualTo(RejectReason.PACE_LIMIT);
+        var conv = vetoService.evaluate(conviction(), fullWeek, convictionSizing(), cfg(),
+                new BigDecimal("100"));
+        var mom = vetoService.evaluate(momentum(), fullWeek, momentumSizing(), cfg(),
+                new BigDecimal("100"));
+
+        assertThat(named(conv, "PACE_LIMIT").skipped()).isEqualTo("profile");
+        assertThat(named(conv, "PACE_LIMIT").measured())
+                .isEqualTo("skipped (exit profile CONVICTION); 3 STANDARD entries this week");
+        assertThat(named(mom, "PACE_LIMIT").skipped()).isEqualTo("profile");
+        // CONVICTION keeps CHASED_AWAY / BELOW_ANCHOR / LOW_CONFIDENCE as real checks
+        assertThat(named(conv, "LOW_CONFIDENCE").skipped()).isNull();
+        assertThat(named(conv, "CHASED_AWAY").skipped()).isNull();
+        assertThat(named(conv, "BELOW_ANCHOR").skipped()).isNull();
+    }
+
+    /** Spec §3 (R2 M1): for a MOMENTUM signal a committed rebalance exit does not count toward
+     *  MAX_POSITIONS; a STANDARD signal still counts it. */
+    @Test
+    void maxPositionsExcludesCommittedRebalanceExitsForMomentumOnly() {
+        List<ExecutorPosition> book = List.of(
+                ExecutorPositionFixtures.withRebalanceExitAt(ExecutorPositionFixtures.momentum(
+                        position("SYNA", "Tech")), "2026-10-30 22:40:00+00"),
+                ExecutorPositionFixtures.momentum(position("SYNB", "Energy")));
+        var cfg2 = cfgWithBudget(MERGER_SPEC, 2);
+
+        var std = vetoService.evaluate(signalBuilder().build(), ctx().openPositions(book).build(),
+                sizing(), cfg2);
+        var mom = vetoService.evaluate(momentum(), ctx().openPositions(book).build(),
+                momentumSizing(), cfg2, new BigDecimal("100"));
+
+        assertThat(std.firstFailure()).isEqualTo(RejectReason.MAX_POSITIONS);
+        assertThat(named(mom, "MAX_POSITIONS").passed()).isTrue();
+        assertThat(named(mom, "MAX_POSITIONS").measured())
+                .isEqualTo("1 < 2 (excl. 1 committed rebalance exit(s))");
     }
 }

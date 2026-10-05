@@ -44,15 +44,17 @@ public record EntryContext(
         /** Account-currency exposure of the open book per mechanism of each position's OWN source
          *  signal (key upper-cased), plus {@code "UNRESOLVED"} for positions whose source signal or
          *  mechanism is missing. Same per-position FX rounding as {@link #openExposure()}, so the two
-         *  agree at every cap boundary. Read by the MECHANISM_BUDGET veto (5b). */
+         *  agree at every cap boundary. Read by the MECHANISM_BUDGET veto (5b). For a MOMENTUM
+         *  signal, MOMENTUM rows with a committed rebalance exit are left out here and in
+         *  {@link #openExposure()} (spec 2026-10-04 §3). */
         Map<String, BigDecimal> openExposureByMechanism,
-        /** Exit profile CONVICTION's fixed per-name notional in INSTRUMENT currency:
-         *  total-budget x position-pct, converted from the account currency exactly like
+        /** The wide-stop fixed per-name notional of THIS signal's profile (total-budget x
+         *  pctFor(profile), spec 2026-10-04 §3) in INSTRUMENT currency, converted from the account currency exactly like
          *  {@link #trancheAmount()} (spec 2026-10-03 §5.3, R1 M5) — same
          *  {@code FxService.convert} call, so a missing rate is already caught upstream:
          *  {@code missing} gets "fx" and the DATA_UNAVAILABLE pre-veto rejects before this value
          *  is ever read. {@code FxService.convert} itself never returns null for a non-null
          *  amount (a cache miss serves the amount unconverted, per {@code trancheAmount}'s same
          *  contract); only a null input could make this null, defensively. */
-        BigDecimal convictionNotional) {
+        BigDecimal profileNotional) {
 }

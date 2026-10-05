@@ -74,8 +74,9 @@ public enum RejectReason {
      *  broker call — never on an adopted working order or fill, where it drops the level instead.
      *  TERMINAL: waiting a run does not move a level the hunter authored. */
     KILL_LEVEL_BREACHED,
-    /** Exit profile CONVICTION: the fixed notional buys fewer than min-entry-qty shares — a
-     *  position that can never be half-sold. Terminal. */
+    /** Wide-stop profiles: the fixed notional buys fewer than the profile's min-entry-qty shares
+     *  (CONVICTION 2 — never half-sellable; MOMENTUM 1) — a position that can never be
+     *  half-sold or bought at all. Terminal. */
     SIZE_TOO_SMALL;
 
     /**

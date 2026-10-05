@@ -711,10 +711,10 @@ pre-veto:**
 |---|---|---|
 | — | `DATA_UNAVAILABLE` | Pre-veto: mandatory `EntryContext` data missing ⇒ reject before any of the 18, audited, never trade blind |
 | 1 | `SCHEMA_INVALID` | Signal missing symbol/direction/confidence/kill-criteria/mechanism/agent-version |
-| 2 | `LOW_CONFIDENCE` | Confidence below `dracul.executor.min-confidence` (0.40) |
+| 2 | `LOW_CONFIDENCE` | Confidence below `dracul.executor.min-confidence` (0.40) — skipped for MOMENTUM signals |
 | 3 | `SIGNAL_EXPIRED` | Signal age exceeds `max-signal-age-days` |
 | 4 | `COOLDOWN` | Active cooldown on the symbol — hard block in v1, no fresh-setup exception (origin mechanism not stored) |
-| 5 | `MAX_POSITIONS` | Open-position count at cap |
+| 5 | `MAX_POSITIONS` | Open-position count at cap (35); for a MOMENTUM signal MOMENTUM rows with a committed rebalance exit are not counted |
 | 6 | `MECHANISM_BUDGET` | Open exposure in the signal's mechanism plus one tranche exceeds the mechanism's share of `dracul.executor.total-budget` (`mechanism-budget-pct`); entry cap only, `add_tranche` is not gated |
 | 7 | `BUDGET` | Tranche doesn't fit remaining cash / budget headroom |
 | 8 | `HEAT_LIMIT` | Open heat + new risk exceeds `heat-pct` of total budget |
@@ -724,9 +724,9 @@ pre-veto:**
 | 12 | `REDUNDANCY` | Any open position on the symbol |
 | 13 | `PATTERN_GATE` | Candidate signal matches an `ACTIVE` curated pattern's enforced gate |
 | 14 | `LIQUIDITY` | Price below `min-price`, or ADV20 notional below `adv-multiple` × tranche |
-| 15 | `CHASED_AWAY` | Price moved beyond `chase-atr-mult` × ATR past the signal's reference price |
-| 16 | `BELOW_ANCHOR` | Effective order price is on the invalidating side of the signal's reference-price anchor — drift mechanisms (`PEAD`/`INDEX_INCLUSION`) use a tight `drift-anchor-atr-mult` (default `0.0`×ATR) band, value mechanisms use a wide `value-anchor-atr-mult` (default `3.0`×ATR) band |
-| 17 | `PACE_LIMIT` | New entries this ISO week at `pace-per-week` |
+| 15 | `CHASED_AWAY` | Price moved beyond `chase-atr-mult` × ATR past the signal's reference price — skipped for MOMENTUM signals |
+| 16 | `BELOW_ANCHOR` | Effective order price is on the invalidating side of the signal's reference-price anchor — drift mechanisms (`PEAD`/`INDEX_INCLUSION`) use a tight `drift-anchor-atr-mult` (default `0.0`×ATR) band, value mechanisms use a wide `value-anchor-atr-mult` (default `3.0`×ATR) band — skipped for MOMENTUM signals |
+| 17 | `PACE_LIMIT` | New STANDARD entries this ISO week at `pace-per-week` — skipped for CONVICTION and MOMENTUM signals |
 | 18 | `CURRENCY_MISMATCH` | Signal/instrument currency does not resolve against the account currency via `FxRates` |
 
 `VetoService.evaluate` always runs and traces all 18 checks (`veto_trace`

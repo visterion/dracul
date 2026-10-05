@@ -2455,11 +2455,12 @@ it is passed through unchanged. Agora's `place_bracket` accepts a bracket of
 entry + stop alone. The strategy's real exits are the trailing chandelier /
 giveback stops, not a fixed target.
 
-For a signal whose mechanism is `TECH_CONVICTION` (exit profile CONVICTION)
+For a signal whose mechanism is `TECH_CONVICTION` (exit profile CONVICTION) or
+`MOMENTUM_12_1` (exit profile MOMENTUM)
 the server ignores `stop_price` and `take_profit`: the logical stop is entry
 × (1 − `emergency-stop-pct`), there is never a take-profit leg, the broker
 leg starts at entry × (1 − `entry-broker-stop-pct`), and qty is the profile
-notional / entry. `order_json` records `exit_profile`, `stop_source`,
+notional / entry (`position-pct` of the profile: tech 0.03, momentum 0.025). `order_json` records `exit_profile`, `stop_source`,
 `broker_stop_narrow`, `profile_notional`.
 
 The **order-price basis** used throughout (sizing, stop-window check,
@@ -2488,9 +2489,9 @@ and for order-guard rejections it is the veto trace plus an
 |---|---|---|
 | `DATA_UNAVAILABLE` | `VetoService` (pre-veto) | Mandatory upstream data (account, price, ATR, ADV20 notional, sector, signal age/reference) was missing at `EntryContext` assembly time — short-circuits every other veto; the executor never trades blind. **Transient** (SP3, 2026-09): a missing upstream datum is an outage, not a verdict, so the signal stays `PENDING` for a later run instead of going `REJECTED`. The age check runs ahead of the data pre-veto, so a data-less signal is retired by `SIGNAL_EXPIRED` after `max-signal-age-days` like any other transient reject; until then the LLM's SKIP or the sweeper retires it. |
 | `SCHEMA_INVALID` | `VetoService` / `OrderGuard` | Signal not found; missing `symbol`/`direction`/`confidence`/`kill_criteria`/`mechanism`/`agent_version`; or malformed `side` |
-| `LOW_CONFIDENCE` | `VetoService` | Signal `confidence` below `dracul.executor.min-confidence` (default `0.40`) |
+| `LOW_CONFIDENCE` | `VetoService` | Signal `confidence` below `dracul.executor.min-confidence` (default `0.40`); skipped (`"skipped":"profile"`) for MOMENTUM signals — their confidence is a rule-based constant |
 | `COOLDOWN` | `VetoService` | Any active `cooldown` row matches the symbol — a hard block in v1 with no fresh-setup exception (the cooldown's originating mechanism isn't stored, so no rule can safely distinguish "same setup" from "genuinely new"; see `documentation/architecture.md`) |
-| `MAX_POSITIONS` | `VetoService` | Open-position count ≥ `dracul.executor.max-positions` |
+| `MAX_POSITIONS` | `VetoService` | Open-position count ≥ `dracul.executor.max-positions`; for a MOMENTUM signal, MOMENTUM rows with a committed rebalance exit are not counted (`measured` names them) |
 | `MECHANISM_BUDGET` | `VetoService` | Open exposure in the signal's mechanism plus one tranche exceeds the mechanism's share of `dracul.executor.total-budget` (`mechanism-budget-pct`); transient; new entries only. |
 | `BUDGET` | `VetoService` | Remaining cash or remaining total-budget headroom can't cover one tranche (`dracul.executor.total-budget` / `tranche-count`) |
 | `HEAT_LIMIT` | `VetoService` | Open heat (sum of `qty × (entry − active stop)`, account ccy) plus this trade's risk would exceed `dracul.executor.heat-pct` × total budget |
@@ -2500,13 +2501,13 @@ and for order-guard rejections it is the veto trace plus an
 | `REDUNDANCY` | `VetoService` | An open position on the same symbol already exists — any mechanism (before SP5: same mechanism only) |
 | `LIQUIDITY` | `VetoService` | Price below `dracul.executor.min-price` (USD-equivalent), or ADV20 notional below `dracul.executor.adv-multiple` × the tranche amount |
 | `SIGNAL_EXPIRED` | `VetoService` | Signal age (trading days since `createdAt`) exceeds `dracul.executor.max-signal-age-days`. Also written by `PendingSignalSweeper` (maintenance pass, `action = SWEEP`) for a PENDING signal nobody evaluated: single-entry `veto_trace`, rationale prefix `expired without evaluation:`, status `REJECTED`, no `decision_log` row. |
-| `CHASED_AWAY` | `VetoService` | Current price has moved more than `dracul.executor.chase-atr-mult` × ATR beyond the signal's reference price |
-| `BELOW_ANCHOR` | `VetoService` | The effective order price is on the invalidating side of the signal's reference-price anchor — drift mechanisms (`PEAD`/`INDEX_INCLUSION`) use `dracul.executor.drift-anchor-atr-mult` (default `0.0`×ATR, i.e. no adverse move tolerated), value mechanisms use `dracul.executor.value-anchor-atr-mult` (default `3.0`×ATR) |
-| `PACE_LIMIT` | `VetoService` | New positions entered this ISO calendar week already ≥ `dracul.executor.pace-per-week` |
+| `CHASED_AWAY` | `VetoService` | Current price has moved more than `dracul.executor.chase-atr-mult` × ATR beyond the signal's reference price; skipped for MOMENTUM signals |
+| `BELOW_ANCHOR` | `VetoService` | The effective order price is on the invalidating side of the signal's reference-price anchor — drift mechanisms (`PEAD`/`INDEX_INCLUSION`) use `dracul.executor.drift-anchor-atr-mult` (default `0.0`×ATR, i.e. no adverse move tolerated), value mechanisms use `dracul.executor.value-anchor-atr-mult` (default `3.0`×ATR); skipped for MOMENTUM signals |
+| `PACE_LIMIT` | `VetoService` | New STANDARD positions entered this ISO calendar week already ≥ `dracul.executor.pace-per-week`; skipped for CONVICTION and MOMENTUM signals |
 | `TRANCHE_TOO_SMALL` | `ExecutorWebhookController` | `PositionSizer` computed a zero quantity (tranche amount doesn't buy even one share at the order price) |
 | `RISK_TOO_WIDE` | `ExecutorWebhookController` | The protective stop distance in account currency exceeds the per-trade risk budget (`dracul.executor.total-budget` × `dracul.executor.risk-pct`), so `PositionSizer` computed a zero risk-capped quantity. Terminal — a fresh signal with a tighter stop is a new signal |
 | `KILL_LEVEL_BREACHED` | `ExecutorWebhookController` (`KillLevelGuard`) | The signal's `kill_close_below` is at or above the fresh entry's order price — the thesis would be dead on arrival. Evaluated after the adoption decision and before the broker call; never on an adopted working order or fill (there the level is dropped as `breached_at_adoption`). Terminal |
-| `SIZE_TOO_SMALL` | `ExecutorWebhookController` | Exit profile CONVICTION: the fixed profile notional buys fewer than `min-entry-qty` shares (a position that can never be half-sold). Terminal |
+| `SIZE_TOO_SMALL` | `ExecutorWebhookController` | Wide-stop profiles: the fixed profile notional buys fewer than the profile's `min-entry-qty` shares — CONVICTION 2 (a position that can never be half-sold), MOMENTUM 1. Terminal |
 | `NO_STOP` | `OrderGuard` | `stop_price` missing/non-positive, on the wrong side of the order price for `side`, or outside the sizer-computed stop window |
 | `NON_SIM_CONNECTION` | `OrderGuard` | The configured connection is not the allowed (paper) connection — not reachable through this controller today since `place-entry` always trades on the server-fixed `dracul.executor.connection`, but enforced defensively |
 | `DUPLICATE` | `ExecutorWebhookController` | Four distinct uses, all idempotency: (a) the signal is no longer `PENDING` — checked before vetos/order guard, no broker call, no signal-status change; (b) a **working** broker order already exists under the signal's clientRef and is adopted instead of re-placed; (c) a **filled** broker order under the clientRef is adopted as a position (see the adoption decision table below); (d) the book already carries this signal's OPEN row and only its statuses are repaired |

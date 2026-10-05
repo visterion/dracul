@@ -7508,7 +7508,7 @@ class ExecutorWebhookControllerTest {
     // Exit profile CONVICTION at place-entry (spec 2026-10-03 §5.3)
     // -------------------------------------------------------------------
 
-    private static EntryContext withConvictionNotional(EntryContext c, BigDecimal notional) {
+    private static EntryContext withProfileNotional(EntryContext c, BigDecimal notional) {
         return new EntryContext(c.account(), c.price(), c.atr(), c.swingLow(), c.adv20Notional(),
                 c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
                 c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
@@ -7528,7 +7528,7 @@ class ExecutorWebhookControllerTest {
     void placeEntry_convictionUsesTheProfileStopNoTakeProfitAndNotionalSizing() {
         when(signalRepo.findById("sig-1")).thenReturn(convictionSignal("sig-1"));
         when(assembler.assemble(any())).thenReturn(
-                withConvictionNotional(happyContext(), new BigDecimal("363")));
+                withProfileNotional(happyContext(), new BigDecimal("363")));
         stubFreshPlacement();
 
         Map<String, Object> output = outputOf(controller.placeEntry(BEARER, "run-c", json("""
@@ -7565,7 +7565,7 @@ class ExecutorWebhookControllerTest {
     void placeEntry_convictionBelowMinEntryQtyIsSizeTooSmall() {
         when(signalRepo.findById("sig-1")).thenReturn(convictionSignal("sig-1"));
         when(assembler.assemble(any())).thenReturn(
-                withConvictionNotional(happyContext(), new BigDecimal("150")));
+                withProfileNotional(happyContext(), new BigDecimal("150")));
 
         Map<String, Object> output = outputOf(controller.placeEntry(BEARER, "run-c", json(BUY_BODY)));
 
@@ -7578,9 +7578,9 @@ class ExecutorWebhookControllerTest {
 
     /** Defensive-only path: {@code convictionSizing} never guesses a quantity for a null notional
      *  (sizes to zero and rejects SIZE_TOO_SMALL) even though in practice a missing FX rate is
-     *  already caught upstream by the DATA_UNAVAILABLE pre-veto before `convictionNotional` is
-     *  ever read — `happyContext()` carries a null `convictionNotional` here only because this
-     *  test deliberately skips `withConvictionNotional`, not because FX is unavailable. */
+     *  already caught upstream by the DATA_UNAVAILABLE pre-veto before `profileNotional` is
+     *  ever read — `happyContext()` carries a null `profileNotional` here only because this
+     *  test deliberately skips `withProfileNotional`, not because FX is unavailable. */
     @Test
     void placeEntry_convictionWithoutNotionalIsSizeTooSmall() {
         when(signalRepo.findById("sig-1")).thenReturn(convictionSignal("sig-1"));
@@ -7597,7 +7597,7 @@ class ExecutorWebhookControllerTest {
     void placeEntry_adoptedConvictionFillCarriesTheProfileAndTheNarrowFlag() {
         when(signalRepo.findById("sig-1")).thenReturn(convictionSignal("sig-1"));
         when(assembler.assemble(any())).thenReturn(
-                withConvictionNotional(happyContext(), new BigDecimal("700")));
+                withProfileNotional(happyContext(), new BigDecimal("700")));
         when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
         when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
                 stopLegOrder("ord-stop", "sig-1", "ACME", "sell", "80"),
@@ -7643,12 +7643,13 @@ class ExecutorWebhookControllerTest {
                 .containsExactlyInAnyOrder("CONVICTION", "STANDARD");
     }
 
-    /** The skip marker reaches decision_log.veto_results and the executor_decision veto trace. */
+    /** The skip marker reaches decision_log.veto_results and the executor_decision veto trace.
+     *  Since exec-v1.2 PACE_LIMIT is skipped too (spec 2026-10-04 §3, intended change). */
     @Test
     void placeEntry_convictionWritesSkippedVetosIntoTheAuditTrail() {
         when(signalRepo.findById("sig-1")).thenReturn(convictionSignal("sig-1"));
         when(assembler.assemble(any())).thenReturn(
-                withConvictionNotional(happyContext(), new BigDecimal("363")));
+                withProfileNotional(happyContext(), new BigDecimal("363")));
         stubFreshPlacement();
 
         controller.placeEntry(BEARER, "run-c", json(BUY_BODY));
@@ -7656,7 +7657,7 @@ class ExecutorWebhookControllerTest {
         JsonNode vetos = enterLog().vetoResults();
         List<String> skipped = new java.util.ArrayList<>();
         vetos.forEach(v -> { if ("profile".equals(v.path("skipped").asString(""))) skipped.add(v.path("check").asString()); });
-        assertThat(skipped).containsExactlyInAnyOrder("HEAT_LIMIT", "CONCENTRATION", "CORRELATED");
+        assertThat(skipped).containsExactlyInAnyOrder("HEAT_LIMIT", "CONCENTRATION", "CORRELATED", "PACE_LIMIT");
         ArgumentCaptor<ExecutorDecision> dec = ArgumentCaptor.forClass(ExecutorDecision.class);
         verify(decisionRepo, atLeastOnce()).insert(dec.capture());
         assertThat(dec.getAllValues()).anyMatch(d -> d.vetoTrace() != null
@@ -7677,7 +7678,7 @@ class ExecutorWebhookControllerTest {
         controller = controller(new MechanismBudget("TECH_CONVICTION:0.33"), 25);
         when(signalRepo.findById("sig-1")).thenReturn(convictionSignal("sig-1"));
         when(assembler.assemble(any())).thenReturn(
-                withConvictionNotional(happyContext(), new BigDecimal("363")));
+                withProfileNotional(happyContext(), new BigDecimal("363")));
         stubFreshPlacement();
 
         controller.placeEntry(BEARER, "run-c", json(BUY_BODY));
@@ -7764,7 +7765,7 @@ class ExecutorWebhookControllerTest {
     void placeEntry_momentumUsesTheWideStopPath() {
         when(signalRepo.findById("sig-1")).thenReturn(momentumSignal("sig-1"));
         when(assembler.assemble(any())).thenReturn(
-                withConvictionNotional(happyContext(), new BigDecimal("363")));
+                withProfileNotional(happyContext(), new BigDecimal("363")));
         stubFreshPlacement();
 
         Map<String, Object> output = outputOf(controller.placeEntry(BEARER, "run-m", json("""
@@ -7803,5 +7804,66 @@ class ExecutorWebhookControllerTest {
         ArgumentCaptor<DecisionLog> row = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionLogRepo).insert(row.capture());
         assertThat(row.getValue().reasoning()).startsWith("exit_position on MOMENTUM position 52");
+    }
+
+    /** Spec 2026-10-04 §3: the MOMENTUM notional (2 500 -> qty 25 at 100) and the 1-share minimum. */
+    @Test
+    void placeEntry_momentumSizesFromItsProfileNotional() {
+        when(signalRepo.findById("sig-1")).thenReturn(momentumSignal("sig-1"));
+        when(assembler.assemble(any())).thenReturn(
+                withProfileNotional(happyContext(), new BigDecimal("2500")));
+        stubFreshPlacement();
+
+        controller.placeEntry(BEARER, "run-m", json(BUY_BODY));
+
+        ArgumentCaptor<BracketRequest> req = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), req.capture());
+        assertThat(req.getValue().qty()).isEqualByComparingTo("25");
+        assertThat(enterLog().orderJson().path("profile_notional").decimalValue())
+                .isEqualByComparingTo("2500");
+    }
+
+    @Test
+    void placeEntry_momentumPlacesASingleShare() {
+        when(signalRepo.findById("sig-1")).thenReturn(momentumSignal("sig-1"));
+        when(assembler.assemble(any())).thenReturn(
+                withProfileNotional(happyContext(), new BigDecimal("150")));
+        stubFreshPlacement();
+
+        Map<String, Object> output = outputOf(controller.placeEntry(BEARER, "run-m", json(BUY_BODY)));
+
+        assertThat(output.get("placed")).isEqualTo(true);
+        ArgumentCaptor<BracketRequest> req = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), req.capture());
+        assertThat(req.getValue().qty()).isEqualByComparingTo("1");
+    }
+
+    @Test
+    void placeEntry_momentumBelowOneShareIsSizeTooSmall() {
+        when(signalRepo.findById("sig-1")).thenReturn(momentumSignal("sig-1"));
+        when(assembler.assemble(any())).thenReturn(
+                withProfileNotional(happyContext(), new BigDecimal("99")));
+
+        Map<String, Object> output = outputOf(controller.placeEntry(BEARER, "run-m", json(BUY_BODY)));
+
+        assertThat(output.get("reason")).isEqualTo("SIZE_TOO_SMALL");
+        verify(gateway, never()).placeBracket(any(), any());
+    }
+
+    /** The MOMENTUM golden trace: seven checks skipped by profile. */
+    @Test
+    void placeEntry_momentumWritesItsSkippedVetosIntoTheAuditTrail() {
+        when(signalRepo.findById("sig-1")).thenReturn(momentumSignal("sig-1"));
+        when(assembler.assemble(any())).thenReturn(
+                withProfileNotional(happyContext(), new BigDecimal("2500")));
+        stubFreshPlacement();
+
+        controller.placeEntry(BEARER, "run-m", json(BUY_BODY));
+
+        JsonNode vetos = enterLog().vetoResults();
+        List<String> skipped = new java.util.ArrayList<>();
+        vetos.forEach(v -> { if ("profile".equals(v.path("skipped").asString(""))) skipped.add(v.path("check").asString()); });
+        assertThat(skipped).containsExactlyInAnyOrder("LOW_CONFIDENCE", "HEAT_LIMIT",
+                "CONCENTRATION", "CORRELATED", "CHASED_AWAY", "BELOW_ANCHOR", "PACE_LIMIT");
     }
 }

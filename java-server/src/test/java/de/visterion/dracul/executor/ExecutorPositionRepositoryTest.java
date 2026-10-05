@@ -940,4 +940,26 @@ class ExecutorPositionRepositoryTest {
         assertThat(jdbc.sql("SELECT count(*) FROM momentum_state WHERE key = 'none'")
                 .query(Integer.class).single()).isZero();
     }
+
+    /** Spec 2026-10-04 §3 (R2 M2): only STANDARD entries consume the weekly pace. */
+    @Test
+    void countEnteredSinceCountsStandardRowsOnly() {
+        Instant since = Instant.now().minus(1, ChronoUnit.HOURS);
+        int before = repo.countEnteredSince(since);
+        insertMomentum("pace-" + UUID.randomUUID(), "PACEM-" + UUID.randomUUID(), null);
+        var conv = ExecutorPositionFixtures.withoutKillLevel(null, "depot-1", "PACEC-" + UUID.randomUUID(),
+                "BUY", new BigDecimal("1"), new BigDecimal("10"), new BigDecimal("6.5"),
+                new BigDecimal("6.5"), 1, null, List.of("X"), "sig-pc", "strigoi-tech", null, null,
+                "OPEN", null, null, null, 0, null, null, null, null, null, null, null, null, null, 0,
+                null, null, null, null, null, null, false, null, null);
+        repo.insert(ExecutorPositionFixtures.conviction(conv));
+        assertThat(repo.countEnteredSince(since)).isEqualTo(before);
+
+        repo.insert(ExecutorPositionFixtures.withoutKillLevel(null, "depot-1", "PACES-" + UUID.randomUUID(),
+                "BUY", new BigDecimal("1"), new BigDecimal("10"), new BigDecimal("9"),
+                new BigDecimal("9"), 1, null, List.of("X"), "sig-ps", "strigoi-echo", null, null,
+                "OPEN", null, null, null, 0, null, null, null, null, null, null, null, null, null, 0,
+                null, null, null, null, null, null, false, null, null));
+        assertThat(repo.countEnteredSince(since)).isEqualTo(before + 1);
+    }
 }

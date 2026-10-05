@@ -60,9 +60,9 @@ class RuleVersionProviderTest {
             assertThat(v.validFrom()).isEqualTo(LocalDate.now().toString());
             assertThat(v.changes()).isEqualTo(CHANGES);
             assertThat(v.params().path("confidence_min").asDouble()).isEqualTo(0.4);
-            assertThat(v.params().path("max_positions").asInt()).isEqualTo(25);
+            assertThat(v.params().path("max_positions").asInt()).isEqualTo(35);
             assertThat(v.params().path("mechanism_budget_pct").asString())
-                    .isEqualTo("MERGER_ARB:0.20,QUALITY_52W_LOW:0.15,TECH_CONVICTION:0.33");
+                    .isEqualTo("MERGER_ARB:0.20,QUALITY_52W_LOW:0.15,TECH_CONVICTION:0.33,MOMENTUM_12_1:0.28");
             // SP1 parameters still recorded
             assertThat(v.params().path("broker_stop_buffer_atr").asDouble()).isEqualTo(1.0);
             assertThat(v.params().path("risk_pct").asDouble()).isEqualTo(0.005);

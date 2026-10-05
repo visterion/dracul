@@ -126,13 +126,29 @@ public class VetoService {
         results.add(new VetoResult("SCHEMA_INVALID", schemaOk, schemaMeasured));
         if (!schemaOk && firstFailure == null) firstFailure = RejectReason.SCHEMA_INVALID;
 
+        // Exit profile of THIS signal, derived from its mechanism (spec 2026-10-03 §5.3,
+        // 2026-10-04 §3). Wide-stop profiles (CONVICTION, MOMENTUM) share the capital charge and
+        // the CORRELATED/CONCENTRATION/HEAT_LIMIT/PACE_LIMIT skips; MOMENTUM also skips
+        // LOW_CONFIDENCE, CHASED_AWAY and BELOW_ANCHOR. The skip text names the profile.
+        ExitProfile signalProfile = ExitProfile.fromMechanism(signal == null ? null : signal.mechanism());
+        boolean wideStop = signalProfile.isWideStop();
+        String skipLabel = "skipped (exit profile " + signalProfile.name() + ")";
+        boolean momentum = signalProfile == ExitProfile.MOMENTUM;
+
         // 2 LOW_CONFIDENCE (only meaningful once schema passed, confidence non-null)
-        boolean confidenceOk = schemaOk && signal.confidence() >= cfg.minConfidence();
-        String confidenceMeasured = (signal != null && signal.confidence() != null)
-                ? signal.confidence() + (confidenceOk ? " >= " : " < ") + cfg.minConfidence()
-                : "confidence unavailable";
-        results.add(new VetoResult("LOW_CONFIDENCE", confidenceOk, confidenceMeasured));
-        if (!confidenceOk && firstFailure == null) firstFailure = RejectReason.LOW_CONFIDENCE;
+        if (momentum) {
+            // Skipped for MOMENTUM (spec 2026-10-04 §3, R2 Minor 7): the code-built prey carries a
+            // constant rule-based confidence, not a producer judgment. momentum ⇒ signal != null.
+            results.add(VetoResult.skipped("LOW_CONFIDENCE", skipLabel + "; rule-based confidence "
+                    + (signal.confidence() == null ? "n/a" : signal.confidence())));
+        } else {
+            boolean confidenceOk = schemaOk && signal.confidence() >= cfg.minConfidence();
+            String confidenceMeasured = (signal != null && signal.confidence() != null)
+                    ? signal.confidence() + (confidenceOk ? " >= " : " < ") + cfg.minConfidence()
+                    : "confidence unavailable";
+            results.add(new VetoResult("LOW_CONFIDENCE", confidenceOk, confidenceMeasured));
+            if (!confidenceOk && firstFailure == null) firstFailure = RejectReason.LOW_CONFIDENCE;
+        }
 
         // 3 SIGNAL_EXPIRED
         boolean expiredOk = ctx.signalAgeTradingDays() <= cfg.maxSignalAgeDays();
@@ -170,17 +186,18 @@ public class VetoService {
         if (!cooldownOk && firstFailure == null) firstFailure = RejectReason.COOLDOWN;
 
         // 5 MAX_POSITIONS
-        boolean capacityOk = ctx.openPositions().size() < cfg.maxPositions();
-        String maxPositionsMeasured = ctx.openPositions().size() + (capacityOk ? " < " : " >= ") + cfg.maxPositions();
+        // For a MOMENTUM signal, MOMENTUM rows committed to a rebalance exit do not count (spec
+        // 2026-10-04 §3, R2 M1). Either executor order works: the flag is set at 22:40 and stays
+        // on the row through its pending flatten until reconcile closes it.
+        long committedExits = momentum
+                ? ctx.openPositions().stream().filter(ExecutorPosition::committedRebalanceExit).count()
+                : 0;
+        int countedPositions = ctx.openPositions().size() - (int) committedExits;
+        boolean capacityOk = countedPositions < cfg.maxPositions();
+        String maxPositionsMeasured = countedPositions + (capacityOk ? " < " : " >= ") + cfg.maxPositions()
+                + (committedExits > 0 ? " (excl. " + committedExits + " committed rebalance exit(s))" : "");
         results.add(new VetoResult("MAX_POSITIONS", capacityOk, maxPositionsMeasured));
         if (!capacityOk && firstFailure == null) firstFailure = RejectReason.MAX_POSITIONS;
-
-        // Exit profile of THIS signal, derived from its mechanism (spec 2026-10-03 §5.3,
-        // 2026-10-04 §3). Wide-stop profiles (CONVICTION, MOMENTUM) share the capital charge and
-        // the CORRELATED/CONCENTRATION/HEAT_LIMIT skips; the skip text names the profile.
-        ExitProfile signalProfile = ExitProfile.fromMechanism(signal == null ? null : signal.mechanism());
-        boolean wideStop = signalProfile.isWideStop();
-        String skipLabel = "skipped (exit profile " + signalProfile.name() + ")";
 
         // Shared capital arithmetic for 5b, 6 and 7 (hoisted: 5b needs the same tranche as BUDGET).
         // BUDGET and MECHANISM_BUDGET charge what the entry really buys: a wide-stop entry is a
@@ -443,8 +460,13 @@ public class VetoService {
             chasedMeasured = "drift " + fmt2(drift) + (chasedOk ? " <= " : " > ")
                     + fmtMult(cfg.chaseAtrMult()) + "xATR " + fmt2(chaseLimit);
         }
-        results.add(new VetoResult("CHASED_AWAY", chasedOk, chasedMeasured));
-        if (!chasedOk && firstFailure == null) firstFailure = RejectReason.CHASED_AWAY;
+        if (momentum) {
+            // Skipped for MOMENTUM (spec 2026-10-04 §3): a rule-based ranking buys the ranked name.
+            results.add(VetoResult.skipped("CHASED_AWAY", skipLabel + "; would be: " + chasedMeasured));
+        } else {
+            results.add(new VetoResult("CHASED_AWAY", chasedOk, chasedMeasured));
+            if (!chasedOk && firstFailure == null) firstFailure = RejectReason.CHASED_AWAY;
+        }
 
         // 15 BELOW_ANCHOR — adverse-side mirror of CHASED_AWAY. Not gated by schemaOk for the same
         // NPE-safety reason. C1: NO signal.* read before the guard (DRIFT_ANCHOR_MECHANISMS.contains(null)
@@ -477,14 +499,26 @@ public class VetoService {
                 anchorMeasured = "adverse " + fmt2(drift) + (anchorOk ? " <= " : " > ") + fmtMult(anchorAtrMult) + "xATR " + fmt2(band);
             }
         }
-        results.add(new VetoResult("BELOW_ANCHOR", anchorOk, anchorMeasured));
-        if (!anchorOk && firstFailure == null) firstFailure = RejectReason.BELOW_ANCHOR;
+        if (momentum) {
+            // Skipped for MOMENTUM (spec 2026-10-04 §3); CONVICTION keeps the value band.
+            results.add(VetoResult.skipped("BELOW_ANCHOR", skipLabel + "; would be: " + anchorMeasured));
+        } else {
+            results.add(new VetoResult("BELOW_ANCHOR", anchorOk, anchorMeasured));
+            if (!anchorOk && firstFailure == null) firstFailure = RejectReason.BELOW_ANCHOR;
+        }
 
-        // 16 PACE_LIMIT
-        boolean paceOk = ctx.entriesThisWeek() < cfg.pacePerWeek();
-        String paceMeasured = ctx.entriesThisWeek() + (paceOk ? " < " : " >= ") + cfg.pacePerWeek() + " this week";
-        results.add(new VetoResult("PACE_LIMIT", paceOk, paceMeasured));
-        if (!paceOk && firstFailure == null) firstFailure = RejectReason.PACE_LIMIT;
+        // 16 PACE_LIMIT — entriesThisWeek counts STANDARD entries only, and the wide-stop profiles
+        // skip the check: their books are capped by their own size, and a first MOMENTUM build or
+        // a rebalance week must not starve STANDARD (spec 2026-10-04 §3, R2 M2).
+        if (wideStop) {
+            results.add(VetoResult.skipped("PACE_LIMIT", skipLabel + "; " + ctx.entriesThisWeek()
+                    + " STANDARD entries this week"));
+        } else {
+            boolean paceOk = ctx.entriesThisWeek() < cfg.pacePerWeek();
+            String paceMeasured = ctx.entriesThisWeek() + (paceOk ? " < " : " >= ") + cfg.pacePerWeek() + " this week";
+            results.add(new VetoResult("PACE_LIMIT", paceOk, paceMeasured));
+            if (!paceOk && firstFailure == null) firstFailure = RejectReason.PACE_LIMIT;
+        }
 
         // 17 CURRENCY_MISMATCH — the executor is single-currency in this slice: it can only size a
         // bracket in the configured account/instrument currency (cfg.instrumentCurrency()). A find

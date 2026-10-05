@@ -124,4 +124,10 @@ public record ExecutorPosition(
     public ExitProfile profile() {
         return exitProfile == null ? ExitProfile.STANDARD : exitProfile;
     }
+
+    /** A MOMENTUM row the strigoi-momentum completion committed to a rebalance exit (V53): capital
+     *  being freed tonight, excluded from a MOMENTUM signal's capacity (spec 2026-10-04 §3). */
+    public boolean committedRebalanceExit() {
+        return profile() == ExitProfile.MOMENTUM && rebalanceExitAt != null;
+    }
 }

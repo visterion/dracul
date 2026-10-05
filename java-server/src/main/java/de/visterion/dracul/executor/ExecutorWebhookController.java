@@ -139,7 +139,7 @@ public class ExecutorWebhookController {
             @Value("${dracul.executor.webhook-token:}") String webhookToken,
             @Value("${dracul.executor.connection:depot-1}") String connection,
             @Value("${dracul.executor.min-confidence:0.40}") double minConfidence,
-            @Value("${dracul.executor.max-positions:25}") int maxPositions,
+            @Value("${dracul.executor.max-positions:35}") int maxPositions,
             @Value("${dracul.executor.atr-period:22}") int atrPeriod,
             @Value("${dracul.executor.swing-period:20}") int swingPeriod,
             @Value("${dracul.executor.cooldown-days:3}") int cooldownDays,
@@ -806,7 +806,7 @@ public class ExecutorWebhookController {
 
     /** Wide-stop sizing (spec 2026-10-03 §5.3, 2026-10-04 §3): a fixed notional per name, NOT
      *  risk/stop distance — qty = floor(notional / entry). {@code notional} is already in
-     *  INSTRUMENT currency ({@link EntryContext#convictionNotional()}); a missing FX rate is
+     *  INSTRUMENT currency ({@link EntryContext#profileNotional()}); a missing FX rate is
      *  already caught upstream by the DATA_UNAVAILABLE pre-veto (`FxService` never returns null
      *  for a non-null amount, it serves it unconverted on a cache miss) — the null branch here is
      *  defensive only, sizing zero shares and rejecting SIZE_TOO_SMALL rather than guessing. The
@@ -1081,7 +1081,7 @@ public class ExecutorWebhookController {
                         signalId, signal.symbol(), stopPrice.toPlainString(),
                         proposedStop == null ? "none" : proposedStop.toPlainString());
                 sizing = profileSizing(profile, side, orderPriceRounded, stopPrice,
-                        ctx.convictionNotional(), ctx.fxToAccount());
+                        ctx.profileNotional(), ctx.fxToAccount());
                 // The broker rejects a bracket leg beyond its proximity band at entry (SIM
                 // 2026-10-03: −20 % accepted, −25 % rejected). The leg starts at the band and the
                 // row is flagged broker_stop_narrow until the leg is widened after the fill.
@@ -1190,13 +1190,14 @@ public class ExecutorWebhookController {
                     Map.of("placed", false, "reason", reason, "veto_trace", vetoTrace)));
         }
 
-        if (wideStop && sizing.qty().compareTo(BigDecimal.valueOf(convictionProfile.minEntryQty())) < 0) {
-            // A position this small can never be half-sold: the broker floors the fraction
-            // (QTY_ROUNDED_TO_ZERO), so the profile's target-half could never fire (R1 Minor 4).
+        int minEntryQty = convictionProfile.minEntryQtyFor(profile);
+        if (wideStop && sizing.qty().compareTo(BigDecimal.valueOf(minEntryQty)) < 0) {
+            // CONVICTION: a position this small can never be half-sold (the broker floors the
+            // fraction, R1 Minor 4); MOMENTUM: the notional buys no share at all (spec 2026-10-04 §3).
             String reason = RejectReason.SIZE_TOO_SMALL.name();
             decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
                     reason, vetoTrace, "rejected: " + reason + " (qty " + sizing.qty().toPlainString()
-                            + " < min-entry-qty " + convictionProfile.minEntryQty() + ")",
+                            + " < min-entry-qty " + minEntryQty + ")",
                     null, runId, null));
             signalRepo.markStatus(signalId, "REJECTED");
             logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT",
@@ -1649,7 +1650,7 @@ public class ExecutorWebhookController {
                 orderJson.put("exit_profile", profile.name());
                 orderJson.put("stop_source", wideStop ? "profile" : "llm_window");
                 orderJson.put("broker_stop_narrow", bookedNarrow);
-                if (wideStop) orderJson.put("profile_notional", ctx.convictionNotional());
+                if (wideStop) orderJson.put("profile_notional", ctx.profileNotional());
                 orderJson.put("reject_cause",
                         sizing.rejectCause() == null ? null : sizing.rejectCause().name());
                 orderJson.put("risk_pct", riskPct);

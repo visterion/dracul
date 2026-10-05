@@ -39,7 +39,7 @@ class ConvictionProfileTest {
         // A band WIDER than the emergency stop must not put the leg below the logical stop.
         ConvictionProfile wideBand = new ConvictionProfile(new BigDecimal("0.10"),
                 new BigDecimal("0.30"), new BigDecimal("0.5"), new BigDecimal("0.30"), 2,
-                new BigDecimal("0.20"), new BigDecimal("0.033"));
+                new BigDecimal("0.20"), new BigDecimal("0.033"), new BigDecimal("0.025"), 1);
         assertThat(wideBand.entryBrokerStop("BUY", new BigDecimal("100.00"), new BigDecimal("90.00")))
                 .isEqualByComparingTo("90.00");
     }
@@ -56,11 +56,36 @@ class ConvictionProfileTest {
     void rejectsNonsenseConfiguration() {
         assertThatThrownBy(() -> new ConvictionProfile(new BigDecimal("1.2"), new BigDecimal("0.30"),
                 new BigDecimal("0.5"), new BigDecimal("0.30"), 2, new BigDecimal("0.20"),
-                new BigDecimal("0.033"))).isInstanceOf(IllegalArgumentException.class)
+                new BigDecimal("0.033"), new BigDecimal("0.025"), 1)).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("emergency-stop-pct");
         assertThatThrownBy(() -> new ConvictionProfile(new BigDecimal("0.35"), new BigDecimal("0.30"),
                 new BigDecimal("0.5"), new BigDecimal("0.30"), 0, new BigDecimal("0.20"),
-                new BigDecimal("0.033"))).isInstanceOf(IllegalArgumentException.class)
+                new BigDecimal("0.033"), new BigDecimal("0.025"), 1)).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("min-entry-qty");
+    }
+
+    /** Spec 2026-10-04 §3: notional and min-entry-qty per wide-stop profile. */
+    @Test
+    void pctAndMinEntryQtyPerProfile() {
+        ConvictionProfile d = ConvictionProfile.defaults();
+        assertThat(d.pctFor(ExitProfile.CONVICTION)).isEqualByComparingTo("0.03");
+        assertThat(d.pctFor(ExitProfile.MOMENTUM)).isEqualByComparingTo("0.025");
+        assertThat(d.pctFor(ExitProfile.STANDARD)).isEqualByComparingTo("0.03");   // never read for STANDARD
+        assertThat(d.minEntryQtyFor(ExitProfile.CONVICTION)).isEqualTo(2);
+        assertThat(d.minEntryQtyFor(ExitProfile.MOMENTUM)).isEqualTo(1);
+    }
+
+    @Test
+    void rejectsNonsenseMomentumConfiguration() {
+        assertThatThrownBy(() -> new ConvictionProfile(new BigDecimal("0.35"), new BigDecimal("0.30"),
+                new BigDecimal("0.5"), new BigDecimal("0.30"), 2, new BigDecimal("0.20"),
+                new BigDecimal("0.03"), new BigDecimal("1.5"), 1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("dracul.strigoi.momentum.position-pct");
+        assertThatThrownBy(() -> new ConvictionProfile(new BigDecimal("0.35"), new BigDecimal("0.30"),
+                new BigDecimal("0.5"), new BigDecimal("0.30"), 2, new BigDecimal("0.20"),
+                new BigDecimal("0.03"), new BigDecimal("0.025"), 0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("dracul.strigoi.momentum.min-entry-qty");
     }
 }
