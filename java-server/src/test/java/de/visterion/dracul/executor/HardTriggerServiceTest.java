@@ -1067,4 +1067,25 @@ class HardTriggerServiceTest {
                 .isEqualTo(HardTriggerService.HardExitOutcome.FAILED);
         verify(positionRepo, never()).markPendingExit(org.mockito.ArgumentMatchers.anyLong(), any(), any(), any(), any());
     }
+
+    /** Spec 2026-10-06 §6.2 (R4 Minor 2): an UNPROTECTED savings position gets the stop breach and the
+     *  catastrophe, never TARGET_HALF. */
+    @Test
+    void aStopOnlyPositionNeverSellsHalf() {
+        ExecutorPosition p = conviction(60L, "TECHA", 0, null, null, null);
+
+        service.apply(List.of(p), Map.of("TECHA", new BigDecimal("131")), "run1", java.util.Set.of(60L));
+
+        verify(partialExit, never()).execute(any(), any(), any(), any(), any(), any(), any(), any());
+        assertThat(gateway.flattenedSymbols).isEmpty();
+    }
+
+    @Test
+    void aStopOnlyPositionStillBreachesItsStop() {
+        ExecutorPosition p = conviction(61L, "TECHA", 0, null, null, null);
+
+        service.apply(List.of(p), Map.of("TECHA", new BigDecimal("60")), "run1", java.util.Set.of(61L));
+
+        assertThat(gateway.flattenedSymbols).containsExactly("TECHA");
+    }
 }

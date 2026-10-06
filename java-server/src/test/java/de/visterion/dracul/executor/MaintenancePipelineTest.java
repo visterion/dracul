@@ -36,6 +36,10 @@ class MaintenancePipelineTest {
     private final ExecutorSignalRepository signalRepo = mock(ExecutorSignalRepository.class);
     private final Tranche2Detector tranche2Detector = new Tranche2Detector();
     private final SoftConditionEvaluator softEval = new SoftConditionEvaluator();
+    private final SavingsPlanService savingsPlan = mock(SavingsPlanService.class);
+    private final SavingsConsolidator consolidator = mock(SavingsConsolidator.class);
+    private final java.time.Clock clock = java.time.Clock.fixed(
+            java.time.Instant.parse("2026-11-03T23:00:00Z"), java.time.ZoneOffset.UTC);
 
     private MaintenancePipeline pipeline;
 
@@ -43,7 +47,7 @@ class MaintenancePipelineTest {
     void setUp() {
         when(signalRepo.findPending(50)).thenReturn(List.of());
         pipeline = new MaintenancePipeline(reconcile, entryExpiry, sweeper, hardTrigger, ratchet,
-                softEval, indicators, positionRepo, signalRepo, tranche2Detector, ConvictionProfile.defaults(),
+                softEval, indicators, positionRepo, signalRepo, tranche2Detector, ConvictionProfile.defaults(), savingsPlan, consolidator, clock,
                  3.0, 22, 20);
     }
 
@@ -344,7 +348,7 @@ class MaintenancePipelineTest {
                         java.time.ZoneOffset.UTC));
         MaintenancePipeline gatedPipeline = new MaintenancePipeline(reconcile, entryExpiry, sweeper,
                 realHardTrigger, ratchet, softEval, indicators, positionRepo, signalRepo,
-                tranche2Detector, ConvictionProfile.defaults(),  3.0, 22, 20);
+                tranche2Detector, ConvictionProfile.defaults(), savingsPlan, consolidator, clock,  3.0, 22, 20);
 
         ExecutorPosition unfilled = ExecutorPositionFixtures.withKillLevel(openPosition(2L, "AAA",
                 new BigDecimal("30"), new BigDecimal("110"), null, 0, List.of("close below 40")),
@@ -388,7 +392,7 @@ class MaintenancePipelineTest {
                         java.time.ZoneOffset.UTC));
         MaintenancePipeline realPipeline = new MaintenancePipeline(reconcile, entryExpiry, sweeper,
                 realHardTrigger, ratchet, softEval, indicators, positionRepo, signalRepo,
-                tranche2Detector, ConvictionProfile.defaults(),  3.0, 22, 20);
+                tranche2Detector, ConvictionProfile.defaults(), savingsPlan, consolidator, clock,  3.0, 22, 20);
 
         ExecutorPosition stored = ExecutorPositionFixtures.withKillLevel(openPosition(3L, "KLV",
                 new BigDecimal("30"), new BigDecimal("110"), null, 0), new BigDecimal("40"), null);
@@ -424,7 +428,7 @@ class MaintenancePipelineTest {
                         java.time.ZoneOffset.UTC));
         MaintenancePipeline realPipeline = new MaintenancePipeline(reconcile, entryExpiry, sweeper,
                 realHardTrigger, ratchet, softEval, indicators, positionRepo, signalRepo,
-                tranche2Detector, ConvictionProfile.defaults(),  3.0, 22, 20);
+                tranche2Detector, ConvictionProfile.defaults(), savingsPlan, consolidator, clock,  3.0, 22, 20);
 
         ExecutorPosition pending = ExecutorPositionFixtures.withKillLevel(
                 ExecutorPositionFixtures.withoutKillLevel(4L, "c", "PEX", "BUY", BigDecimal.TEN,
@@ -933,5 +937,233 @@ class MaintenancePipelineTest {
 
         assertThat(result).singleElement()
                 .satisfies(e -> assertThat(e.rCurrent()).isEqualByComparingTo("-0.476190"));
+    }
+
+    private ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> pipelineLog() {
+        var a = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        a.start();
+        ((ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(MaintenancePipeline.class)).addAppender(a);
+        return a;
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void detachPipelineLog() {
+        ((ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(MaintenancePipeline.class))
+                .detachAndStopAllAppenders();
+    }
+
+    private static List<String> lines(
+            ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> a, String prefix) {
+        return a.list.stream().map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                .filter(m -> m.startsWith(prefix)).toList();
+    }
+
+    /** Every symbol has indicators (the levels loop dereferences the Levels record). */
+    private void anyLevels() {
+        when(indicators.levels(any(), eq(22), eq(20))).thenReturn(new ExecutorIndicators.Levels(true,
+                new BigDecimal("2.0"), null, new BigDecimal("108"), null));
+    }
+
+    /** Spec 2026-10-06 §6.2: an in-flight add keeps its position out of hard triggers and the ratchet,
+     *  but the position stays in the enriched book. */
+    @Test
+    void inFlightPositionsAreExcludedFromTriggersAndRatchetButStayVisible() {
+        anyLevels();
+        var log = pipelineLog();
+        ExecutorPosition inFlight = openPosition(1L, "TECHA", new BigDecimal("65"), new BigDecimal("110"), null, 0);
+        ExecutorPosition other = openPosition(2L, "BBB", new BigDecimal("95"), new BigDecimal("110"), null, 0);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(List.of(inFlight, other), Set.of()));
+        when(savingsPlan.inFlightStatuses()).thenReturn(Map.of(1L, SavingsBuy.PLACED));
+        when(hardTrigger.apply(eq(List.of(other)), any(), eq("r1"))).thenReturn(List.of(other));
+        when(positionRepo.findOpen()).thenReturn(List.of(inFlight, other));
+
+        List<EnrichedPosition> result = pipeline.run("c", "r1");
+
+        verify(hardTrigger).apply(eq(List.of(other)), any(), eq("r1"));
+        verify(ratchet).ratchet(eq(List.of(other)), any(), any(), any(), any(), eq("r1"));
+        assertThat(result).extracting(EnrichedPosition::symbol).containsExactlyInAnyOrder("TECHA", "BBB");
+        assertThat(lines(log, "savings-plan exclusion")).singleElement().satisfies(l -> assertThat(l)
+                .contains("excluded=[1:TECHA:PLACED]").contains("stop_only=[]"));
+    }
+
+    /** §6.2 / R4 Minor 2: UNPROTECTED is not excluded — stop breach and catastrophe only, no
+     *  TARGET_HALF (stop-only set) and no ratchet. */
+    @Test
+    void unprotectedPositionsGetOnlyTheStopAndNoRatchet() {
+        anyLevels();
+        ExecutorPosition unprotected = openPosition(1L, "TECHA", new BigDecimal("65"), new BigDecimal("110"), null, 0);
+        ExecutorPosition other = openPosition(2L, "BBB", new BigDecimal("95"), new BigDecimal("110"), null, 0);
+        List<ExecutorPosition> both = List.of(unprotected, other);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(both, Set.of()));
+        when(savingsPlan.inFlightStatuses()).thenReturn(Map.of(1L, SavingsBuy.UNPROTECTED));
+        when(hardTrigger.apply(eq(both), any(), eq("r1"), eq(Set.of(1L)))).thenReturn(both);
+        when(positionRepo.findOpen()).thenReturn(both);
+
+        pipeline.run("c", "r1");
+
+        verify(hardTrigger).apply(eq(both), any(), eq("r1"), eq(Set.of(1L)));
+        verify(ratchet).ratchet(eq(List.of(other)), any(), any(), any(), any(), eq("r1"));
+    }
+
+    /** §3.2: reconcile → … → CONSOLIDATE → triggers → ratchet → SAVINGS_ADD → STOP_NOT_LIVE → release. */
+    @Test
+    void consolidationRunsBeforeTheTriggersAndTheAddAfterThem() {
+        anyLevels();
+        ExecutorPosition p = openPosition(2L, "BBB", new BigDecimal("95"), new BigDecimal("110"), null, 0);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(List.of(p), Set.of()));
+        when(savingsPlan.inWindow(any())).thenReturn(true);
+        when(savingsPlan.tryLease(any())).thenReturn(true);
+        when(hardTrigger.apply(eq(List.of(p)), any(), eq("r1"))).thenReturn(List.of(p));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        pipeline.run("c", "r1");
+
+        InOrder order = inOrder(reconcile, consolidator, hardTrigger, ratchet, savingsPlan);
+        order.verify(reconcile).reconcile("c", "r1");
+        order.verify(savingsPlan).tryLease(any());
+        order.verify(consolidator).consolidateStage(eq("c"), eq("r1"), any(), any());
+        order.verify(hardTrigger).apply(any(), any(), eq("r1"));
+        order.verify(ratchet).ratchet(any(), any(), any(), any(), any(), eq("r1"));
+        order.verify(savingsPlan).addStage(eq("c"), eq("r1"), any(), any());
+        order.verify(savingsPlan).checkStopsLive(eq("c"), eq("r1"), any());
+        order.verify(savingsPlan).releaseLease(any());
+    }
+
+    @Test
+    void aSavingsStageExceptionStillRunsTheTriggersAndReleasesTheLease() {
+        anyLevels();
+        var log = pipelineLog();
+        ExecutorPosition p = openPosition(2L, "BBB", new BigDecimal("95"), new BigDecimal("110"), null, 0);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(List.of(p), Set.of()));
+        when(savingsPlan.inWindow(any())).thenReturn(true);
+        when(savingsPlan.tryLease(any())).thenReturn(true);
+        when(consolidator.consolidateStage(any(), any(), any(), any())).thenThrow(new IllegalStateException("synthetic"));
+        when(savingsPlan.addStage(any(), any(), any(), any())).thenThrow(new IllegalStateException("synthetic add"));
+        when(hardTrigger.apply(eq(List.of(p)), any(), eq("r1"))).thenReturn(List.of(p));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        List<EnrichedPosition> result = pipeline.run("c", "r1");
+
+        assertThat(result).hasSize(1);
+        verify(hardTrigger).apply(any(), any(), eq("r1"));
+        verify(savingsPlan).releaseLease(any());
+        assertThat(log.list).filteredOn(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN)
+                .extracting(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                .anySatisfy(m -> assertThat(m).startsWith("savings-plan stage failed stage=consolidate"))
+                .anySatisfy(m -> assertThat(m).startsWith("savings-plan stage failed stage=add"));
+    }
+
+    /** §12: a 15:00 UTC pass does nothing new — and says why for each skipped stage. */
+    @Test
+    void aPassOutsideTheWindowDoesNothingNewAndSaysWhy() {
+        anyLevels();
+        var log = pipelineLog();
+        ExecutorPosition p = openPosition(2L, "BBB", new BigDecimal("95"), new BigDecimal("110"), null, 0);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(List.of(p), Set.of()));
+        when(hardTrigger.apply(eq(List.of(p)), any(), eq("r1"))).thenReturn(List.of(p));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        pipeline.run("c", "r1");
+
+        verify(savingsPlan, org.mockito.Mockito.never()).tryLease(any());
+        verify(consolidator, org.mockito.Mockito.never()).consolidateStage(any(), any(), any(), any());
+        verify(savingsPlan, org.mockito.Mockito.never()).addStage(any(), any(), any(), any());
+        verify(savingsPlan).staleCheck(eq("c"), eq("r1"), any(), any());
+        assertThat(lines(log, "savings-plan stage")).hasSize(3).allSatisfy(l -> assertThat(l)
+                .contains("outcome=did-nothing").contains("why=outside-window"));
+    }
+
+    @Test
+    void aPassWithoutTheLeaseSkipsTheStagesAndNamesTheHolder() {
+        anyLevels();
+        var log = pipelineLog();
+        ExecutorPosition p = openPosition(2L, "BBB", new BigDecimal("95"), new BigDecimal("110"), null, 0);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(List.of(p), Set.of()));
+        when(savingsPlan.inWindow(any())).thenReturn(true);
+        when(savingsPlan.tryLease(any())).thenReturn(false);
+        when(savingsPlan.leaseHolder()).thenReturn("other-pass-uuid");
+        when(hardTrigger.apply(eq(List.of(p)), any(), eq("r1"))).thenReturn(List.of(p));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        pipeline.run("c", "r1");
+
+        verify(consolidator, org.mockito.Mockito.never()).consolidateStage(any(), any(), any(), any());
+        verify(savingsPlan, org.mockito.Mockito.never()).addStage(any(), any(), any(), any());
+        verify(savingsPlan, org.mockito.Mockito.never()).releaseLease(any());
+        verify(savingsPlan).staleCheck(eq("c"), eq("r1"), any(), any());
+        verify(savingsPlan).positionsTouchedSince(any());
+        assertThat(lines(log, "savings-plan stage")).allSatisfy(l -> assertThat(l)
+                .contains("why=lease-held-by:other-pass-uuid"));
+    }
+
+    /** §3.4 / R3 M6: the lease holder is a fresh UUID per run() — never the (reused) run id. */
+    @Test
+    void everyRunUsesAFreshPassUuidEvenWithTheSameRunId() {
+        anyLevels();
+        ExecutorPosition p = openPosition(2L, "BBB", new BigDecimal("95"), new BigDecimal("110"), null, 0);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(List.of(p), Set.of()));
+        when(savingsPlan.inWindow(any())).thenReturn(true);
+        when(hardTrigger.apply(eq(List.of(p)), any(), eq("r1"))).thenReturn(List.of(p));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        pipeline.run("c", "r1");
+        pipeline.run("c", "r1");
+
+        ArgumentCaptor<String> passes = ArgumentCaptor.forClass(String.class);
+        verify(savingsPlan, org.mockito.Mockito.times(2)).tryLease(passes.capture());
+        assertThat(passes.getAllValues()).doesNotHaveDuplicates().doesNotContain("r1")
+                .allSatisfy(s -> assertThat(java.util.UUID.fromString(s)).isNotNull());
+    }
+
+    /** §3.2: a survivor whose savings row changed this pass is re-read from the DB before the triggers. */
+    @Test
+    void aTouchedSurvivorIsReReadBeforeTheTriggers() {
+        anyLevels();
+        ExecutorPosition stale = openPosition(1L, "TECHA", new BigDecimal("65"), new BigDecimal("110"), null, 0);
+        ExecutorPosition fresh = openPosition(1L, "TECHA", new BigDecimal("68.76"), new BigDecimal("110"), null, 0);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(List.of(stale), Set.of()));
+        when(savingsPlan.positionsTouchedSince(any())).thenReturn(Set.of(1L));
+        when(positionRepo.findById(1L)).thenReturn(fresh);
+        when(hardTrigger.apply(eq(List.of(fresh)), any(), eq("r1"))).thenReturn(List.of(fresh));
+        when(positionRepo.findOpen()).thenReturn(List.of(fresh));
+
+        pipeline.run("c", "r1");
+
+        verify(hardTrigger).apply(eq(List.of(fresh)), any(), eq("r1"));
+    }
+
+    /** §8a: the exclusion line is written once per pass — also when nothing is in flight. */
+    @Test
+    void theExclusionLineIsWrittenOncePerPassEvenWithNothingInFlight() {
+        anyLevels();
+        var log = pipelineLog();
+        ExecutorPosition p = openPosition(2L, "BBB", new BigDecimal("95"), new BigDecimal("110"), null, 0);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(List.of(p), Set.of()));
+        when(hardTrigger.apply(eq(List.of(p)), any(), eq("r1"))).thenReturn(List.of(p));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        pipeline.run("c", "r1");
+
+        assertThat(lines(log, "savings-plan exclusion")).singleElement().satisfies(l -> assertThat(l)
+                .contains("excluded=[]").contains("stop_only=[]").contains("reason=nothing-in-flight"));
+    }
+
+    /** §3.3 / Task 5: the savings stages key on time, never on the run id — a null run id is harmless. */
+    @Test
+    void aNullRunIdIsHarmless() {
+        anyLevels();
+        ExecutorPosition p = openPosition(2L, "BBB", new BigDecimal("95"), new BigDecimal("110"), null, 0);
+        when(reconcile.reconcile("c", null)).thenReturn(new ReconcileService.ReconcileResult(List.of(p), Set.of()));
+        when(savingsPlan.inWindow(any())).thenReturn(true);
+        when(savingsPlan.tryLease(any())).thenReturn(true);
+        when(hardTrigger.apply(eq(List.of(p)), any(), org.mockito.ArgumentMatchers.isNull())).thenReturn(List.of(p));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        List<EnrichedPosition> result = pipeline.run("c", null);
+
+        assertThat(result).hasSize(1);
+        verify(consolidator).consolidateStage(eq("c"), org.mockito.ArgumentMatchers.isNull(), any(), any());
+        verify(savingsPlan).addStage(eq("c"), org.mockito.ArgumentMatchers.isNull(), any(), any());
+        verify(savingsPlan).releaseLease(any());
     }
 }

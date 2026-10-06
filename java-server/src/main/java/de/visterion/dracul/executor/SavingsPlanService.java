@@ -3,6 +3,7 @@ package de.visterion.dracul.executor;
 import de.visterion.dracul.executor.SavingsPlanAudit.RowRef;
 import de.visterion.dracul.executor.broker.AccountSnapshot;
 import de.visterion.dracul.executor.broker.BracketRequest;
+import de.visterion.dracul.executor.broker.BrokerOrder;
 import de.visterion.dracul.executor.broker.BrokerRejectedException;
 import de.visterion.dracul.executor.broker.BrokerUnavailableException;
 import de.visterion.dracul.executor.broker.ExecutionGateway;
@@ -502,6 +503,45 @@ public class SavingsPlanService {
                 raised > 0 ? "-" : (stale > 0 ? "already-escalated" : "no-stale-rows"),
                 fields("stale", stale, "escalated", raised));
         return raised;
+    }
+
+    /** §6.3 STOP_NOT_LIVE: in each closed pass every OPEN, filled CONVICTION position without an
+     *  in-flight add, pending trim or pending exit must have its single leg's stop LIVE
+     *  (AdoptionCandidates.isLive — a "notworking" child maps to WORKING and is NOT live). CRITICAL
+     *  every pass while it is not. */
+    public int checkStopsLive(String connection, String runId, String pass) {
+        Map<Long, String> inFlight = savingsRepo.inFlightStatusByPosition();
+        List<ExecutorPosition> book = positionRepo.findOpen().stream()
+                .filter(p -> connection.equals(p.connection()))
+                .filter(p -> p.profile() == ExitProfile.CONVICTION)
+                .filter(p -> p.entryFilledAt() != null)
+                .filter(p -> p.pendingTrimOrderId() == null && p.pendingExitReason() == null)
+                .filter(p -> !inFlight.containsKey(p.id()))
+                .toList();
+        if (book.isEmpty()) {
+            audit.stage("stop-live", runId, pass, "did-nothing", "no-positions-to-check", fields("checked", 0));
+            return 0;
+        }
+        List<BrokerOrder> open = audit.broker("stop-live", runId, pass, "orders", "connection=" + connection,
+                () -> gateway.orders(connection), l -> "count=" + l.size());
+        int notLive = 0;
+        for (ExecutorPosition p : book) {
+            List<ExecutorPositionLeg> legs = legRepo.findOpenByPosition(p.id());
+            String stopId = legs.size() == 1 && legs.getFirst().stopOrderId() != null
+                    ? legs.getFirst().stopOrderId() : p.stopOrderId();
+            boolean live = stopId != null && open.stream()
+                    .anyMatch(o -> stopId.equals(o.orderId()) && AdoptionCandidates.isLive(o));
+            if (live) continue;
+            notLive++;
+            String raw = stopId == null ? null : open.stream().filter(o -> stopId.equals(o.orderId()))
+                    .map(BrokerOrder::rawStatus).findFirst().orElse("absent");
+            audit.escalate(runId, pass, null, p.symbol(), "STOP_NOT_LIVE", "CRITICAL",
+                    fields("position", p.id(), "stop_order_id", stopId, "raw_status", raw, "open_legs", legs.size()),
+                    "the single stop of CONVICTION position " + p.symbol() + " (" + stopId + ") is not live at the broker");
+        }
+        audit.stage("stop-live", runId, pass, notLive > 0 ? "acted" : "did-nothing",
+                notLive > 0 ? "-" : "all-stops-live", fields("checked", book.size(), "not_live", notLive));
+        return notLive;
     }
 
     private ExecutorPositionLeg singleOpenLeg(long positionId) {

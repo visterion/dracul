@@ -2,12 +2,14 @@ package de.visterion.dracul.executor;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -19,6 +21,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.StringJoiner;
+import java.util.UUID;
 
 /**
  * The server-side maintenance orchestrator: reconcile against the broker, apply deterministic
@@ -33,7 +37,12 @@ import java.util.Set;
  * PENDING signals past {@code max-signal-age-days} that nobody evaluated), then
  * {@link HardTriggerService} (deterministic
  * exits, code-enforced, never overridden), then {@link StopRatchetService} (trailing-stop
- * maintenance on whatever survived). Positions whose GTD entry has no confirmed fill yet
+ * maintenance on whatever survived). Then, inside the closed-market window and only for the pass
+ * holding the savings lease, {@link SavingsConsolidator} runs before the hard triggers (spec
+ * 2026-10-06), {@link HardTriggerService} and {@link StopRatchetService} run with in-flight savings
+ * positions excluded (UNPROTECTED ones stop-only), then {@link SavingsPlanService#addStage} and the
+ * STOP_NOT_LIVE invariant; the savings stale check runs on every pass. Positions whose GTD entry has
+ * no confirmed fill yet
  * ({@link ReconcileService.ReconcileResult#unfilledIds()}) are excluded from both the
  * hard-trigger and ratchet steps — they hold nothing at the broker to flatten or ratchet — but
  * remain in the final enrichment so the book stays visible. The final
@@ -59,6 +68,9 @@ public class MaintenancePipeline {
     private final ExecutorSignalRepository signalRepo;
     private final Tranche2Detector tranche2Detector;
     private final ConvictionProfile convictionProfile;
+    private final SavingsPlanService savingsPlan;
+    private final SavingsConsolidator consolidator;
+    private final Clock clock;
     private final double chandelierMult;
     private final int atrPeriod;
     private final int swingPeriod;
@@ -75,6 +87,9 @@ public class MaintenancePipeline {
             ExecutorSignalRepository signalRepo,
             Tranche2Detector tranche2Detector,
             ConvictionProfile convictionProfile,
+            SavingsPlanService savingsPlan,
+            SavingsConsolidator consolidator,
+            @Qualifier("executorClock") Clock clock,
             @Value("${dracul.executor.chandelier-mult:3.0}") double chandelierMult,
             @Value("${dracul.executor.atr-period:22}") int atrPeriod,
             @Value("${dracul.executor.swing-period:20}") int swingPeriod) {
@@ -89,12 +104,16 @@ public class MaintenancePipeline {
         this.signalRepo = signalRepo;
         this.tranche2Detector = tranche2Detector;
         this.convictionProfile = convictionProfile;
+        this.savingsPlan = savingsPlan;
+        this.consolidator = consolidator;
+        this.clock = clock;
         this.chandelierMult = chandelierMult;
         this.atrPeriod = atrPeriod;
         this.swingPeriod = swingPeriod;
     }
 
     public List<EnrichedPosition> run(String connection, String runId) {
+        Instant passStart = clock.instant();
         ReconcileService.ReconcileResult reconciled = reconcile.reconcile(connection, runId);
         List<ExecutorPosition> survivors = reconciled.survivors();
         Set<Long> unfilledIds = reconciled.unfilledIds();
@@ -126,114 +145,223 @@ public class MaintenancePipeline {
             log.warn("pending sweep failed, continuing the maintenance pass: {}", e.getMessage(), e);
         }
 
-        // Only positions that will actually be evaluated below (filled, no pending exit) can
-        // have a hard-trigger/ratchet check "silently skipped" by a missing indicator — an
-        // unfilled or already-pending-exit position was never going to be checked this run
-        // regardless (see the gating below), so a missing indicator for it must not be reported
-        // as a skipped safety check. Computed here, before the maps, only to know which symbols
-        // are eligible to be named in the warning below — it does not change which survivors the
-        // maps are built from.
-        Set<Long> uncheckedIds = new HashSet<>();
-        for (ExecutorPosition p : survivors) {
-            if (unfilledIds.contains(p.id()) || p.pendingExitReason() != null) uncheckedIds.add(p.id());
-        }
+        // ---- Tech-Sparplan (spec 2026-10-06 §3.2, §3.4) ---------------------------------------
+        // The lease holder is a fresh UUID per run(): Vistierie retries and parallel tool dispatch
+        // reuse the run id, so a run-id holder would let every duplicate in (R3 M6). Every savings
+        // stage is guarded like the sweep — an exception must never cost the hard triggers.
+        String pass = UUID.randomUUID().toString();
+        Instant now = clock.instant();
+        boolean leased = acquireSavingsLease(pass, now, runId);
+        try {
+            if (leased) {
+                try {
+                    consolidator.consolidateStage(connection, runId, pass, now);
+                } catch (RuntimeException e) {
+                    log.warn("savings-plan stage failed stage=consolidate run={} pass={} error={}", runId, pass, e.toString(), e);
+                }
+            }
+            // §5.3 SAVINGS_ADD_STALE: every pass, no window, no lease (once per row inside).
+            try {
+                savingsPlan.staleCheck(connection, runId, pass, now);
+            } catch (RuntimeException e) {
+                log.warn("savings-plan stage failed stage=stale run={} pass={} error={}", runId, pass, e.toString(), e);
+            }
+            // Consolidation (this pass or a parallel one) changed qty / stops: re-read those survivors.
+            survivors = rereadTouched(survivors, passStart);
+            Map<Long, String> inFlight = savingsPlan.inFlightStatuses();
+            Set<Long> excludedInFlight = new LinkedHashSet<>();
+            Set<Long> stopOnly = new LinkedHashSet<>();
+            for (Map.Entry<Long, String> e : inFlight.entrySet()) {
+                if (SavingsBuy.UNPROTECTED.equals(e.getValue())) stopOnly.add(e.getKey());
+                else excludedInFlight.add(e.getKey());
+            }
+            // §8a: once per pass, also when nothing is in flight, so "no exclusion" is visible.
+            log.info("savings-plan exclusion run={} pass={} excluded={} stop_only={} reason={}",
+                    runId, pass, describe(survivors, excludedInFlight, inFlight),
+                    describe(survivors, stopOnly, inFlight),
+                    inFlight.isEmpty() ? "nothing-in-flight" : "savings-add-in-flight");
 
-        Map<String, BigDecimal> closeBySymbol = new HashMap<>();
-        Map<String, BigDecimal> atrBySymbol = new HashMap<>();
-        // atrEff = max(atr22, atr_short) drives the chandelier and the broker-stop buffer;
-        // atr_short rides along for the ratchet snapshot and the LLM view. All three come from the
-        // SAME Levels object -- one indicators.levels call per symbol, unchanged.
-        Map<String, BigDecimal> atrShortBySymbol = new HashMap<>();
-        Map<String, BigDecimal> atrEffBySymbol = new HashMap<>();
-        Set<String> withoutIndicators = new LinkedHashSet<>();
-        Set<String> withoutShortAtr = new LinkedHashSet<>();
-        // Both n and total must count the same thing — distinct SYMBOLS, matching the word in
-        // the message — not positions. Two filled positions sharing one unavailable symbol is
-        // one unavailable symbol out of however many distinct symbols were checked, not "1 of 2":
-        // the line feeds an alarm rule later and a positions/symbols mismatch would understate
-        // severity exactly when a shared symbol is the one that is down.
-        Set<String> checkedSymbols = new LinkedHashSet<>();
+            // Only positions that will actually be evaluated below (filled, no pending exit) can
+            // have a hard-trigger/ratchet check "silently skipped" by a missing indicator — an
+            // unfilled or already-pending-exit position was never going to be checked this run
+            // regardless (see the gating below), so a missing indicator for it must not be reported
+            // as a skipped safety check. Computed here, before the maps, only to know which symbols
+            // are eligible to be named in the warning below — it does not change which survivors the
+            // maps are built from.
+            Set<Long> uncheckedIds = new HashSet<>();
+            for (ExecutorPosition p : survivors) {
+                if (unfilledIds.contains(p.id()) || p.pendingExitReason() != null) uncheckedIds.add(p.id());
+            }
+            // An in-flight savings add keeps its position out of the triggers below (spec §6.2).
+            uncheckedIds.addAll(excludedInFlight);
+
+            Map<String, BigDecimal> closeBySymbol = new HashMap<>();
+            Map<String, BigDecimal> atrBySymbol = new HashMap<>();
+            // atrEff = max(atr22, atr_short) drives the chandelier and the broker-stop buffer;
+            // atr_short rides along for the ratchet snapshot and the LLM view. All three come from the
+            // SAME Levels object -- one indicators.levels call per symbol, unchanged.
+            Map<String, BigDecimal> atrShortBySymbol = new HashMap<>();
+            Map<String, BigDecimal> atrEffBySymbol = new HashMap<>();
+            Set<String> withoutIndicators = new LinkedHashSet<>();
+            Set<String> withoutShortAtr = new LinkedHashSet<>();
+            // Both n and total must count the same thing — distinct SYMBOLS, matching the word in
+            // the message — not positions. Two filled positions sharing one unavailable symbol is
+            // one unavailable symbol out of however many distinct symbols were checked, not "1 of 2":
+            // the line feeds an alarm rule later and a positions/symbols mismatch would understate
+            // severity exactly when a shared symbol is the one that is down.
+            Set<String> checkedSymbols = new LinkedHashSet<>();
+            for (ExecutorPosition p : survivors) {
+                ExecutorIndicators.Levels lv = indicators.levels(p.symbol(), atrPeriod, swingPeriod);
+                boolean wasGoingToBeChecked = !uncheckedIds.contains(p.id());
+                if (wasGoingToBeChecked) checkedSymbols.add(p.symbol());
+                if (!lv.available()) {
+                    if (wasGoingToBeChecked) withoutIndicators.add(p.symbol());
+                    continue;
+                }
+                if (lv.referencePrice() != null) closeBySymbol.put(p.symbol(), lv.referencePrice());
+                if (lv.atr() != null) atrBySymbol.put(p.symbol(), lv.atr());
+                if (lv.atrShort() != null) atrShortBySymbol.put(p.symbol(), lv.atrShort());
+                else if (wasGoingToBeChecked) withoutShortAtr.add(p.symbol());
+                if (lv.atrEff() != null) atrEffBySymbol.put(p.symbol(), lv.atrEff());
+            }
+            // A symbol missing here is missing from BOTH maps, which disables the stop ratchet AND
+            // the hard-trigger evaluation for that position for this entire run. The skip itself is
+            // correct — without an ATR there is nothing to compute — but it used to be invisible,
+            // so a provider outage looked exactly like a quiet pass. ONE line, not one per symbol:
+            // a total outage would otherwise emit a line per position and drown the signal. A
+            // LinkedHashSet, not a list: two open positions sharing a symbol must not double-count
+            // it, and order stays stable for a deterministic message.
+            if (!withoutIndicators.isEmpty()) {
+                log.warn("maintenance indicators unavailable: {} of {} symbols — {}",
+                        withoutIndicators.size(), checkedSymbols.size(),
+                        String.join(",", withoutIndicators));
+            }
+
+            // Fail-soft and separate from the outage line above: a missing short ATR is DATA (the
+            // symbol has too few bars), not an outage, and atrEff simply falls back to ATR22. One line
+            // per run, same stable prefix family so the existing alarm rule sees it.
+            if (!withoutShortAtr.isEmpty()) {
+                log.warn("maintenance indicators unavailable: atr_short for {} of {} symbols — {}",
+                        withoutShortAtr.size(), checkedSymbols.size(),
+                        String.join(",", withoutShortAtr));
+            }
+
+            // Hard triggers and stop ratcheting act on broker holdings — a position whose GTD
+            // entry never filled has none, so a breached kill criterion / stop level on it must
+            // NOT flatten or close anything (EntryExpiryService owns that lifecycle). Unfilled
+            // positions are excluded here but kept for the final enrichment, so the book stays
+            // visible to the agent.
+            //
+            // A row already carrying pendingExitReason (a prior hard-trigger flatten or fill-less
+            // webhook FULL exit, not yet confirmed by the broker) must likewise be excluded: it has
+            // already submitted its one flatten/close order for this exit, so evaluating hard
+            // triggers or ratcheting its stop again this same run would risk a double-flatten.
+            // ReconcileService's own survivor loop is the only thing allowed to touch it further
+            // (finalize-or-keep), which already ran above this line. Filtering directly on the field
+            // (rather than threading a new id set through ReconcileResult) needs no extra plumbing —
+            // pendingExitReason is already carried on every ExecutorPosition.
+            List<ExecutorPosition> filledSurvivors = survivors.stream()
+                    .filter(p -> !unfilledIds.contains(p.id()))
+                    .filter(p -> p.pendingExitReason() == null)
+                    .filter(p -> !excludedInFlight.contains(p.id()))
+                    .toList();
+
+            // Spec 2026-10-06 §6.2: an in-flight savings add (a BUY resting at the broker) must see no
+            // TARGET_HALF and no flatten — Agora's flatten cancels only opposite-side orders, so the
+            // add could still fill into a trimmed or closed book. UNPROTECTED is the exception: its
+            // stops are being rebuilt, so the stop breach and the catastrophe run (no TARGET_HALF, no
+            // ratchet).
+            List<ExecutorPosition> afterHard = stopOnly.isEmpty()
+                    ? hardTrigger.apply(filledSurvivors, closeBySymbol, runId)
+                    : hardTrigger.apply(filledSurvivors, closeBySymbol, runId, stopOnly);
+            ratchet.ratchet(stopOnly.isEmpty() ? afterHard
+                            : afterHard.stream().filter(p -> !stopOnly.contains(p.id())).toList(),
+                    atrBySymbol, atrShortBySymbol, atrEffBySymbol, closeBySymbol, runId);
+
+            if (leased) {
+                try {
+                    savingsPlan.addStage(connection, runId, pass, now);
+                } catch (RuntimeException e) {
+                    log.warn("savings-plan stage failed stage=add run={} pass={} error={}", runId, pass, e.toString(), e);
+                }
+                try {
+                    savingsPlan.checkStopsLive(connection, runId, pass);
+                } catch (RuntimeException e) {
+                    log.warn("savings-plan stage failed stage=stop-live run={} pass={} error={}", runId, pass, e.toString(), e);
+                }
+            }
+
+            Set<Long> keepIds = new HashSet<>();
+            for (ExecutorPosition p : afterHard) keepIds.add(p.id());
+            for (ExecutorPosition p : survivors) {
+                if (unfilledIds.contains(p.id()) || p.pendingExitReason() != null
+                        || excludedInFlight.contains(p.id())) keepIds.add(p.id());
+            }
+
+
+            List<ExecutorPosition> finalOpen = positionRepo.findOpen().stream()
+                    .filter(p -> connection.equals(p.connection()))
+                    .filter(p -> keepIds.contains(p.id()))
+                    .toList();
+
+            List<ExecutorSignal> pendings = signalRepo.findPending(50);
+
+            List<EnrichedPosition> enriched = new ArrayList<>();
+            for (ExecutorPosition p : finalOpen) {
+                BigDecimal currentPrice = closeBySymbol.get(p.symbol());
+                String positionMechanism = resolveMechanism(p.sourceSignalId());
+                Tranche2Detector.Tranche2Status t2 = tranche2Detector.detect(p, currentPrice, pendings, positionMechanism);
+                boolean entryFilled = !unfilledIds.contains(p.id());
+                enriched.add(enrich(p, currentPrice, atrBySymbol.get(p.symbol()),
+                        atrShortBySymbol.get(p.symbol()), t2, entryFilled));
+            }
+            return enriched;
+        } finally {
+            if (leased) savingsPlan.releaseLease(pass);
+        }
+    }
+
+    /** Logs why both savings stages do nothing when there is no window or no lease (spec §8a: a stage
+     *  that does nothing says why). @return true when this pass holds the savings lease */
+    private boolean acquireSavingsLease(String pass, Instant now, String runId) {
+        String why;
+        if (!savingsPlan.inWindow(now)) {
+            why = "outside-window";
+        } else if (savingsPlan.tryLease(pass)) {
+            return true;
+        } else {
+            why = "lease-held-by:" + savingsPlan.leaseHolder();
+        }
+        for (String stage : List.of("consolidate", "add", "stop-live")) {
+            log.info("savings-plan stage stage={} run={} pass={} outcome=did-nothing why={} now={}",
+                    stage, runId, pass, why, now);
+        }
+        return false;
+    }
+
+    /** Spec §3.2: survivors whose savings row changed since the pass started (this pass's or a parallel
+     *  pass's consolidation) are re-read; a row no longer OPEN is dropped. */
+    private List<ExecutorPosition> rereadTouched(List<ExecutorPosition> survivors, Instant passStart) {
+        Set<Long> touched = savingsPlan.positionsTouchedSince(passStart.minusSeconds(60));
+        if (touched == null || touched.isEmpty()) return survivors;
+        List<ExecutorPosition> out = new ArrayList<>();
         for (ExecutorPosition p : survivors) {
-            ExecutorIndicators.Levels lv = indicators.levels(p.symbol(), atrPeriod, swingPeriod);
-            boolean wasGoingToBeChecked = !uncheckedIds.contains(p.id());
-            if (wasGoingToBeChecked) checkedSymbols.add(p.symbol());
-            if (!lv.available()) {
-                if (wasGoingToBeChecked) withoutIndicators.add(p.symbol());
+            if (!touched.contains(p.id())) {
+                out.add(p);
                 continue;
             }
-            if (lv.referencePrice() != null) closeBySymbol.put(p.symbol(), lv.referencePrice());
-            if (lv.atr() != null) atrBySymbol.put(p.symbol(), lv.atr());
-            if (lv.atrShort() != null) atrShortBySymbol.put(p.symbol(), lv.atrShort());
-            else if (wasGoingToBeChecked) withoutShortAtr.add(p.symbol());
-            if (lv.atrEff() != null) atrEffBySymbol.put(p.symbol(), lv.atrEff());
+            ExecutorPosition fresh = positionRepo.findById(p.id());
+            if (fresh != null && "OPEN".equals(fresh.status())) out.add(fresh);
         }
-        // A symbol missing here is missing from BOTH maps, which disables the stop ratchet AND
-        // the hard-trigger evaluation for that position for this entire run. The skip itself is
-        // correct — without an ATR there is nothing to compute — but it used to be invisible,
-        // so a provider outage looked exactly like a quiet pass. ONE line, not one per symbol:
-        // a total outage would otherwise emit a line per position and drown the signal. A
-        // LinkedHashSet, not a list: two open positions sharing a symbol must not double-count
-        // it, and order stays stable for a deterministic message.
-        if (!withoutIndicators.isEmpty()) {
-            log.warn("maintenance indicators unavailable: {} of {} symbols — {}",
-                    withoutIndicators.size(), checkedSymbols.size(),
-                    String.join(",", withoutIndicators));
-        }
+        return out;
+    }
 
-        // Fail-soft and separate from the outage line above: a missing short ATR is DATA (the
-        // symbol has too few bars), not an outage, and atrEff simply falls back to ATR22. One line
-        // per run, same stable prefix family so the existing alarm rule sees it.
-        if (!withoutShortAtr.isEmpty()) {
-            log.warn("maintenance indicators unavailable: atr_short for {} of {} symbols — {}",
-                    withoutShortAtr.size(), checkedSymbols.size(),
-                    String.join(",", withoutShortAtr));
-        }
-
-        // Hard triggers and stop ratcheting act on broker holdings — a position whose GTD
-        // entry never filled has none, so a breached kill criterion / stop level on it must
-        // NOT flatten or close anything (EntryExpiryService owns that lifecycle). Unfilled
-        // positions are excluded here but kept for the final enrichment, so the book stays
-        // visible to the agent.
-        //
-        // A row already carrying pendingExitReason (a prior hard-trigger flatten or fill-less
-        // webhook FULL exit, not yet confirmed by the broker) must likewise be excluded: it has
-        // already submitted its one flatten/close order for this exit, so evaluating hard
-        // triggers or ratcheting its stop again this same run would risk a double-flatten.
-        // ReconcileService's own survivor loop is the only thing allowed to touch it further
-        // (finalize-or-keep), which already ran above this line. Filtering directly on the field
-        // (rather than threading a new id set through ReconcileResult) needs no extra plumbing —
-        // pendingExitReason is already carried on every ExecutorPosition.
-        List<ExecutorPosition> filledSurvivors = survivors.stream()
-                .filter(p -> !unfilledIds.contains(p.id()))
-                .filter(p -> p.pendingExitReason() == null)
-                .toList();
-
-        List<ExecutorPosition> afterHard = hardTrigger.apply(filledSurvivors, closeBySymbol, runId);
-        ratchet.ratchet(afterHard, atrBySymbol, atrShortBySymbol, atrEffBySymbol, closeBySymbol, runId);
-
-        Set<Long> keepIds = new HashSet<>();
-        for (ExecutorPosition p : afterHard) keepIds.add(p.id());
+    private static String describe(List<ExecutorPosition> survivors, Set<Long> ids, Map<Long, String> status) {
+        StringJoiner j = new StringJoiner(",", "[", "]");
         for (ExecutorPosition p : survivors) {
-            if (unfilledIds.contains(p.id()) || p.pendingExitReason() != null) keepIds.add(p.id());
+            if (ids.contains(p.id())) j.add(p.id() + ":" + p.symbol() + ":" + status.get(p.id()));
         }
-
-        List<ExecutorPosition> finalOpen = positionRepo.findOpen().stream()
-                .filter(p -> connection.equals(p.connection()))
-                .filter(p -> keepIds.contains(p.id()))
-                .toList();
-
-        List<ExecutorSignal> pendings = signalRepo.findPending(50);
-
-        List<EnrichedPosition> enriched = new ArrayList<>();
-        for (ExecutorPosition p : finalOpen) {
-            BigDecimal currentPrice = closeBySymbol.get(p.symbol());
-            String positionMechanism = resolveMechanism(p.sourceSignalId());
-            Tranche2Detector.Tranche2Status t2 = tranche2Detector.detect(p, currentPrice, pendings, positionMechanism);
-            boolean entryFilled = !unfilledIds.contains(p.id());
-            enriched.add(enrich(p, currentPrice, atrBySymbol.get(p.symbol()),
-                    atrShortBySymbol.get(p.symbol()), t2, entryFilled));
-        }
-        return enriched;
+        return j.toString();
     }
 
     private EnrichedPosition enrich(ExecutorPosition p, BigDecimal currentPrice, BigDecimal atr,

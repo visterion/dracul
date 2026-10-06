@@ -23,6 +23,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Deterministic hard exits: stop-breach and MFE-giveback. Code-enforced, never overridden by
@@ -147,6 +148,13 @@ public class HardTriggerService {
 
     public List<ExecutorPosition> apply(List<ExecutorPosition> openPositions,
             Map<String, BigDecimal> currentCloseBySymbol, String runId) {
+        return apply(openPositions, currentCloseBySymbol, runId, Set.of());
+    }
+
+    /** @param stopOnlyIds positions whose savings add is UNPROTECTED (spec 2026-10-06 §6.2, R4 Minor
+     *  2): stop breach and catastrophe only — never a TARGET_HALF while the stops are being rebuilt. */
+    public List<ExecutorPosition> apply(List<ExecutorPosition> openPositions,
+            Map<String, BigDecimal> currentCloseBySymbol, String runId, Set<Long> stopOnlyIds) {
         List<ExecutorPosition> survivors = new ArrayList<>();
         int levelsEvaluated = 0;
         int levelsBreached = 0;
@@ -230,7 +238,7 @@ public class HardTriggerService {
                 // 2. TARGET_HALF (CONVICTION only) — exactly once: never after the half-sale,
                 // never while a trim is still pending (a second maintenance pass in the same run
                 // re-reads the trimmed row and stops here).
-                if (profile.hasTargetHalf() && targetHalfDue(p, close)) {
+                if (profile.hasTargetHalf() && !stopOnlyIds.contains(p.id()) && targetHalfDue(p, close)) {
                     targetsHit++;
                     sellHalf(p, close, runId);
                 }

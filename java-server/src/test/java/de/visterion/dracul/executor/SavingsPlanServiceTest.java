@@ -535,4 +535,34 @@ class SavingsPlanServiceTest {
         assertThat(appender.list).anySatisfy(e -> assertThat(e.getFormattedMessage())
                 .startsWith("savings-plan escalation").contains("code=SAVINGS_ADD_STALE").contains("severity=CRITICAL"));
     }
+
+    /** §6.3: every OPEN CONVICTION position's single leg stop must be LIVE in each closed pass;
+     *  in-flight, pending trim/exit and unfilled positions are skipped. */
+    @Test
+    void aStopThatIsNotLiveIsCriticalAndSkippedPositionsAreNotChecked() {
+        ExecutorPosition a = SavingsFixtures.pos(1, "TECHA").build();
+        ExecutorPosition b = SavingsFixtures.pos(2, "TECHB").build();
+        ExecutorPosition inFlight = SavingsFixtures.pos(3, "TECHC").build();
+        ExecutorPosition unfilled = SavingsFixtures.pos(4, "TECHD").unfilled().build();
+        book(a, b, inFlight, unfilled);
+        savingsRepo.seed("2026-11", 3L, "TECHC", SavingsBuy.PLACED, "1", "10", "9", "10", "100", "65",
+                Instant.parse("2026-11-02T23:00:00Z"));
+        gateway.seedOrder(SavingsFixtures.liveStop("stop-1", "TECHA", "10", "65.00"));
+        gateway.seedOrder(new de.visterion.dracul.executor.broker.BrokerOrder("stop-2", null, "TECHB",
+                de.visterion.dracul.executor.broker.OrderRole.STOP_LOSS,
+                de.visterion.dracul.executor.broker.OrderStatus.WORKING, BigDecimal.TEN, null, null, null,
+                "sell", "stopiftraded", "notworking", "open", null, new BigDecimal("32.50"), null));
+
+        int missing = service.checkStopsLive("c", "run-1", "pass-1");
+
+        assertThat(missing).isEqualTo(1);
+        assertThat(decisions()).filteredOn(d -> "STOP_NOT_LIVE".equals(d.reasonCode()))
+                .singleElement().satisfies(d -> assertThat(d.symbol()).isEqualTo("TECHB"));
+        assertThat(appender.list).anySatisfy(e -> {
+            assertThat(e.getLevel()).isEqualTo(ch.qos.logback.classic.Level.ERROR);
+            assertThat(e.getFormattedMessage()).contains("code=STOP_NOT_LIVE");
+        });
+        assertThat(lines("savings-plan stage")).anySatisfy(l -> assertThat(l)
+                .contains("stage=stop-live").contains("checked=2").contains("not_live=1"));
+    }
 }
