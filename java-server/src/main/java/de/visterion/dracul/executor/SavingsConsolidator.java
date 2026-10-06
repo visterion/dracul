@@ -433,13 +433,21 @@ public class SavingsConsolidator {
                     legsNotSingle(row, p, c, legs.size(), "the window stop shrank the position to "
                             + plain(bpQty) + " but no leg was");
                 }
-            } else if (!audit.escalatedFor("SAVINGS_QTY_UNEXPLAINED", row.id())) {
-                audit.escalate(c.runId(), c.pass(), ref, p.symbol(), "SAVINGS_QTY_UNEXPLAINED", "WARN",
-                        fields("bp_qty", bpQty, "qty_before", row.qtyBefore(), "add_filled", addFilled, "missing", missing),
-                        "the broker holds fewer shares than leg 1 plus the filled add and no stop fill explains it"
-                                + " — consolidating on the broker quantity");
+            } else {
+                if (!audit.escalatedFor("SAVINGS_QTY_UNEXPLAINED", row.id())) {
+                    audit.escalate(c.runId(), c.pass(), ref, p.symbol(), "SAVINGS_QTY_UNEXPLAINED", "WARN",
+                            fields("detail", "bp_qty:" + plain(bpQty) + ",qty_before:" + plain(row.qtyBefore()),
+                                    "bp_qty", bpQty, "qty_before", row.qtyBefore(), "add_filled", addFilled,
+                                    "missing", missing),
+                            "the broker holds fewer shares than leg 1 plus the filled add and no stop fill explains it"
+                                    + " — the book follows the broker quantity");
+                }
+                // never leave the book at qty_before while the broker holds fewer (review r1 Important 1)
+                if (bpQty.compareTo(row.qtyBefore()) < 0) syncBookToBroker(row, p, c, bpQty);
             }
         }
+        // no add share ever filled: the add expired — carry refunded, live child stop cancelled
+        if (addFilled.signum() == 0) return expire(row, p, b, c);
         BigDecimal remainingAdd = bpQty.subtract(row.qtyBefore().min(bpQty));
         if (remainingAdd.signum() <= 0) {
             Boolean done = tx.execute(status -> {
@@ -456,6 +464,26 @@ public class SavingsConsolidator {
             return Boolean.TRUE.equals(done) ? "window-stopped" : "unchanged";
         }
         return consolidateFilled(row, p, b, c, bpQty, addFilled, addPrice);
+    }
+
+    /** An unexplained shortfall below qty_before: position and leg-1 qty := bp.qty (idempotent, so a
+     *  repeat pass before the row is terminal is harmless); a non-single leg set is escalated. */
+    void syncBookToBroker(SavingsBuy row, ExecutorPosition p, Ctx c, BigDecimal bpQty) {
+        List<ExecutorPositionLeg> legs = legRepo.findOpenByPosition(p.id());
+        ExecutorPositionLeg leg = legs.size() == 1 ? legs.getFirst() : null;
+        tx.execute(status -> {
+            positionRepo.syncQty(p.id(), bpQty);
+            if (leg != null) legRepo.syncLegQty(leg.id(), bpQty);
+            audit.transition(c.runId(), c.pass(), RowRef.of(row), row.status(), row.status(), "SAVINGS_CONSOLIDATE",
+                    "UNEXPLAINED_QTY_SYNC", fields("book_qty", p.qty(), "bp_qty", bpQty, "qty_before", row.qtyBefore(),
+                            "open_legs", legs.size(), "leg_id", leg == null ? null : leg.id()),
+                    "unexplained shortfall: position and leg 1 synced to the broker qty, never left at qty_before");
+            return true;
+        });
+        if (leg == null) {
+            legsNotSingle(row, p, c, legs.size(), "an unexplained shortfall synced the position to "
+                    + plain(bpQty) + " but no leg was");
+        }
     }
 
     /** The child's fill by id, else a SELL-stop fill on the symbol since the add (not leg 1's stop). */

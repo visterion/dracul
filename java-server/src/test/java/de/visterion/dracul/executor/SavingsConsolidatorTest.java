@@ -80,10 +80,21 @@ class SavingsConsolidatorTest {
     final ExecutorPositionRepository positionRepo = mock(ExecutorPositionRepository.class);
     final ExecutorPositionLegRepository legRepo = mock(ExecutorPositionLegRepository.class);
     boolean failNewStopCas;
+    /** Thrown once by the next markConsolidating — a crash after the window-stop marker, before step 4. */
+    RuntimeException crashOnMarkConsolidating;
     final InMemorySavingsPlanRepository savingsRepo = new InMemorySavingsPlanRepository() {
         @Override
         public boolean setNewStopOrderId(long id, String expected, String newStopOrderId) {
             return !failNewStopCas && super.setNewStopOrderId(id, expected, newStopOrderId);
+        }
+
+        @Override
+        public boolean markConsolidating(long id, String expected, BigDecimal targetQty,
+                BigDecimal targetStop, BigDecimal avgAfter) {
+            RuntimeException crash = crashOnMarkConsolidating;
+            crashOnMarkConsolidating = null;
+            if (crash != null) throw crash;
+            return super.markConsolidating(id, expected, targetQty, targetStop, avgAfter);
         }
     };
     final ExecutorIndicators indicators = mock(ExecutorIndicators.class);
@@ -898,21 +909,102 @@ class SavingsConsolidatorTest {
         assertThat(row(r.id).fillPrice()).isEqualByComparingTo("112.20");
     }
 
+    List<DecisionLog> trims() {
+        ArgumentCaptor<DecisionLog> c = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo, atLeast(0)).insert(c.capture());
+        return c.getAllValues().stream().filter(d -> "TRIM".equals(d.action())).toList();
+    }
+
+    /** Review r1 Minor 3: the SAME detection on two consecutive passes — pass 1 writes the marker and
+     *  the TRIM, then crashes before step 4 (row stays PLACED); pass 2 sees the marker and only consolidates. */
     @Test
     void theWindowStopMarkerPreventsASecondTrim() {
         var r = placedRow();
-        r.windowStopQty = new BigDecimal("3");
         legStops();
         gateway.seedOrder(filledParent("brk-9", "sp-1-202611", "TECHA", "9", "112.20"));
         gateway.seedOrder(SavingsFixtures.filledStop("x-3", "TECHA", "3", "95.00"));
         broker("16", "104");
+        crashOnMarkConsolidating = new IllegalStateException("synthetic crash after the marker");
+
+        assertThat(consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY)).containsEntry("row-failed", 1);
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.PLACED);
+        assertThat(row(r.id).windowStopQty()).isEqualByComparingTo("3");
+        assertThat(trims()).hasSize(1);
+
+        consolidator.consolidateStage("c", "run-3", "pass-3", NEXT_DAY.plusSeconds(600));
+
+        assertThat(trims()).as("the marker blocks a second TRIM").singleElement()
+                .satisfies(t -> assertThat(t.orderJson().path("qty_closed").decimalValue()).isEqualByComparingTo("3"));
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.CONSOLIDATED);
+        assertThat(row(r.id).fillQty()).isEqualByComparingTo("9");
+    }
+
+    /** Review r1 Minor 4: an explained window stop that also took leg-1 shares (bp.qty < qty_before) —
+     *  position and leg 1 shrink to bp.qty in the marker transaction; nothing left of the add. */
+    @Test
+    void aWindowStopBelowQtyBeforeShrinksLegOneInTheMarkerTransaction() {
+        var r = placedRow();
+        gateway.seedOrder(liveStop("stop-1", "TECHA", "10", "65.00"));
+        gateway.seedOrder(filledParent("brk-9", "sp-1-202611", "TECHA", "9", "112.20"));
+        gateway.seedOrder(SavingsFixtures.filledStop("child-9", "TECHA", "11", "90.00"));
+        broker("8", "100");
 
         consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
 
-        ArgumentCaptor<DecisionLog> c = ArgumentCaptor.forClass(DecisionLog.class);
-        verify(decisionRepo, atLeast(1)).insert(c.capture());
-        assertThat(c.getAllValues()).noneMatch(d -> "TRIM".equals(d.action()));
-        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.CONSOLIDATED);
+        verify(positionRepo).syncQty(1L, new BigDecimal("8"));
+        verify(legRepo).syncLegQty(10L, new BigDecimal("8"));
+        assertThat(trims()).singleElement().satisfies(t -> {
+            assertThat(t.orderJson().path("qty_closed").decimalValue()).isEqualByComparingTo("11");
+            assertThat(t.orderJson().path("qty_remaining").decimalValue()).isEqualByComparingTo("8");
+        });
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.WINDOW_STOPPED);
+        assertThat(lines("savings-plan transition")).anySatisfy(l -> assertThat(l)
+                .contains("from=PLACED to=PLACED").contains("window_stop_qty=11").contains("leg1_shrunk=true"));
+        assertThat(reasonCodes()).contains("WINDOW_STOP_MARKED", "WINDOW_STOPPED");
+        assertThat(gateway.ops).isEmpty();
+        assertThat(savingsRepo.carryOf(1)).isEqualByComparingTo("0");
+    }
+
+    /** Review r1 Important 1 (controller ruling): a shortfall with NO add fill and no explaining stop
+     *  fill — WARN once, book and leg 1 synced to bp.qty, then EXPIRED with the carry refund. */
+    @Test
+    void anUnexplainedShortfallWithoutAnAddFillExpiresRefundsAndSyncsTheBook() {
+        var r = placedRow();
+        legStops();
+        broker("8", "100");
+
+        assertThat(consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY)).containsEntry("expired", 1);
+
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.EXPIRED);
+        assertThat(savingsRepo.carryOf(1)).isEqualByComparingTo("908.82");   // 9 × 100.98
+        verify(positionRepo).syncQty(1L, new BigDecimal("8"));
+        verify(legRepo).syncLegQty(10L, new BigDecimal("8"));
+        assertThat(reasonCodes()).containsOnlyOnce("SAVINGS_QTY_UNEXPLAINED");
+        assertThat(lines("savings-plan escalation")).anySatisfy(l -> assertThat(l)
+                .contains("code=SAVINGS_QTY_UNEXPLAINED").contains("bp_qty=8").contains("qty_before=10")
+                .contains("detail=bp_qty:8,qty_before:10"));
+        assertThat(trims()).isEmpty();
+        assertThat(gateway.ops).containsExactly("cancel:child-9");
+    }
+
+    /** Review r1 Important 1, related case: the add filled but bp.qty ≤ qty_before and nothing explains
+     *  it — the book is synced to bp.qty (never left at qty_before), WARN, WINDOW_STOPPED, no refund. */
+    @Test
+    void anUnexplainedShortfallWithAnAddFillSyncsTheBookAndEndsWindowStopped() {
+        var r = placedRow();
+        gateway.seedOrder(filledParent("brk-9", "sp-1-202611", "TECHA", "9", "112.20"));
+        broker("8", "100");
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.WINDOW_STOPPED);
+        assertThat(row(r.id).fillQty()).isEqualByComparingTo("9");
+        assertThat(row(r.id).windowStopQty()).isNull();
+        verify(positionRepo).syncQty(1L, new BigDecimal("8"));
+        verify(legRepo).syncLegQty(10L, new BigDecimal("8"));
+        assertThat(reasonCodes()).containsOnlyOnce("SAVINGS_QTY_UNEXPLAINED");
+        assertThat(trims()).isEmpty();
+        assertThat(savingsRepo.carryOf(1)).isEqualByComparingTo("0");
     }
 
     /** §5.1 global rule (R3 M5, R4 Minor 1): pending exit — cancel the parent, book the filled add
