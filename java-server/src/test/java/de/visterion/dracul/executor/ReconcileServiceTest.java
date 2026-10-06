@@ -89,7 +89,9 @@ class ReconcileServiceTest {
         when(ruleVersions.active()).thenReturn("exec-v0.2");
         service = new ReconcileService(gateway, positionRepo, decisionRepo, cooldownRepo,
                 ruleVersions, mapper, telegram, executorNotifier, 10, 24, legRepo,
-                new BigDecimal("0.50"), ConvictionProfile.defaults(), clock);
+                new BigDecimal("0.50"), ConvictionProfile.defaults(), new InMemorySavingsPlanRepository(),
+                new SavingsPlanAudit(decisionRepo, ruleVersions, mapper, telegram),
+                org.springframework.transaction.support.TransactionOperations.withoutTransaction(), clock);
     }
 
     private ExecutorPosition openPosition(long id, String symbol, String side, BigDecimal entry,

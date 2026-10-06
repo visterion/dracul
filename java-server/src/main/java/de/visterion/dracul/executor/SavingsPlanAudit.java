@@ -149,7 +149,17 @@ public class SavingsPlanAudit {
         }
     }
 
-    /** A non-transition decision row (TRIM rows of the window stop). */
+    /** One decision of reconcile's savings branch (spec §6.1, §8a): {@code action=skip-list|matrix|wait}
+     *  with the detecting values. INFO only — a matrix row's status change is its own
+     *  {@link #transition}. */
+    public void reconcile(String runId, RowRef row, String status, String action, Map<String, Object> values) {
+        Map<String, Object> f = fields("row", row.id(), "month", row.month(), "position", row.positionId(),
+                "symbol", row.symbol(), "status", status, "action", action, "run", runId);
+        f.putAll(values);
+        log.info("savings-plan reconcile {}", kv(f));
+    }
+
+    /** A non-transition decision row (TRIM rows of the window stop and of reconcile's matrix). */
     public void record(String runId, String symbol, String action, String reasonCode,
             Map<String, Object> orderValues, String reasoning) {
         ObjectNode oj = mapper.createObjectNode();

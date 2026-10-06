@@ -1,5 +1,6 @@
 package de.visterion.dracul.executor;
 
+import de.visterion.dracul.executor.SavingsPlanAudit.RowRef;
 import de.visterion.dracul.executor.broker.BrokerClosedPosition;
 import de.visterion.dracul.executor.broker.BrokerOrder;
 import de.visterion.dracul.executor.broker.BrokerPosition;
@@ -12,9 +13,11 @@ import de.visterion.dracul.notify.TelegramNotifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionOperations;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
@@ -24,10 +27,15 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
+
+import static de.visterion.dracul.executor.SavingsPlanAudit.fields;
 
 /**
  * Reconciles the executor's position book against the broker's actual state: detects
@@ -165,6 +173,9 @@ public class ReconcileService {
     private final ExecutorPositionLegRepository legRepo;
     private final BigDecimal priceSanityPct;
     private final ConvictionProfile convictionProfile;
+    private final SavingsPlanRepository savingsRepo;
+    private final SavingsPlanAudit savingsAudit;
+    private final TransactionOperations tx;
     private final Clock clock;
 
     @Autowired
@@ -181,10 +192,13 @@ public class ReconcileService {
             @Value("${dracul.executor.pending-exit-stale-hours:24}") int pendingExitStaleHours,
             ExecutorPositionLegRepository legRepo,
             @Value("${dracul.executor.price-sanity-pct:0.50}") BigDecimal priceSanityPct,
-            ConvictionProfile convictionProfile) {
+            ConvictionProfile convictionProfile,
+            SavingsPlanRepository savingsRepo,
+            SavingsPlanAudit savingsAudit,
+            @Qualifier("savingsPlanTransactions") TransactionOperations tx) {
         this(gateway, positionRepo, decisionRepo, cooldownRepo, ruleVersions, mapper, telegram,
                 executorNotifier, cooldownDays, pendingExitStaleHours, legRepo, priceSanityPct,
-                convictionProfile, Clock.systemUTC());
+                convictionProfile, savingsRepo, savingsAudit, tx, Clock.systemUTC());
     }
 
     ReconcileService(
@@ -201,6 +215,9 @@ public class ReconcileService {
             ExecutorPositionLegRepository legRepo,
             BigDecimal priceSanityPct,
             ConvictionProfile convictionProfile,
+            SavingsPlanRepository savingsRepo,
+            SavingsPlanAudit savingsAudit,
+            TransactionOperations tx,
             Clock clock) {
         this.gateway = gateway;
         this.positionRepo = positionRepo;
@@ -215,6 +232,9 @@ public class ReconcileService {
         this.legRepo = legRepo;
         this.priceSanityPct = priceSanityPct;
         this.convictionProfile = convictionProfile;
+        this.savingsRepo = savingsRepo;
+        this.savingsAudit = savingsAudit;
+        this.tx = tx;
         this.clock = clock;
     }
 
@@ -304,6 +324,10 @@ public class ReconcileService {
         escalateOrphans(brokerPositions, open, orphansReported, runId, "PRE_LOOP",
                 "has no open book row — unmanaged capital, operator attention required");
 
+        // Spec 2026-10-06 §6.1: positions with a savings add in flight take the savings branch below.
+        Map<Long, SavingsBuy> savingsInFlight = new HashMap<>();
+        for (SavingsBuy b : savingsRepo.findInFlight()) savingsInFlight.putIfAbsent(b.positionId(), b);
+
         List<ExecutorPosition> survivors = new ArrayList<>();
         Set<Long> unfilledIds = new HashSet<>();
         for (ExecutorPosition loaded : open) {
@@ -340,6 +364,18 @@ public class ReconcileService {
             // touch it. Never close on our own say-so; only the broker's confirmed state may.
             if (p.pendingExitReason() != null) {
                 finalizePendingExitOrKeep(p, bp, orders, filledOrders, runId, survivors);
+                continue;
+            }
+
+            // Spec 2026-10-06 §6.1: an in-flight savings add. Skipped here, for one session: leg sync,
+            // the one-leg sync-down, LEG_QTY_DESYNC, updateMaintenance (QTY_SYNC, ENTRY_PRICE_SYNC,
+            // highest, mfe), UNCLAIMED_STOP_FILL for any stop that is not leg 1's, and seeding. The
+            // stop-fill matrix replaces matchLegFills (a single-leg fill would otherwise close the
+            // whole position while the add holds shares).
+            SavingsBuy inFlight = savingsInFlight.get(p.id());
+            if (inFlight != null) {
+                reconcileSavingsInFlight(p, inFlight, bp, orders, filledOrders, fillHistoryAvailable,
+                        connection, runId, survivors);
                 continue;
             }
 
@@ -420,6 +456,233 @@ public class ReconcileService {
                         + "unmanaged capital, verify the holding is really gone");
 
         return new ReconcileResult(survivors, unfilledIds);
+    }
+
+    // ===========================================================================================
+    // Tech-Sparplan: positions with a savings add in flight (spec 2026-10-06 §6.1)
+    // ===========================================================================================
+
+    private static final String SAVINGS_PASS = "reconcile";
+    private static final String SKIP_LIST =
+            "[leg-qty-sync,single-leg-sync-down,leg-qty-desync,update-maintenance,unclaimed-stop-fill,seeding]";
+
+    /**
+     * The savings branch of {@link #reconcile}: the stop-fill matrix (rows 1 and 2) replaces
+     * {@link #matchLegFills}; anything else is the skip list — the position survives untouched for
+     * this session. Leg 1 is {@code p.stop_order_id} or the row's {@code new_stop_order_id}; after a
+     * D8 booking ({@code EMERGENCY_EXIT}) {@code p.stop_order_id} already names the child stop and
+     * the old leg-1 fill, still inside the 72 h lookback, is not leg 1 any more.
+     */
+    private void reconcileSavingsInFlight(ExecutorPosition p, SavingsBuy row, BrokerPosition bp,
+            List<BrokerOrder> openOrders, List<BrokerOrder> filledOrders, boolean fillHistoryAvailable,
+            String connection, String runId, List<ExecutorPosition> survivors) {
+        BigDecimal bpQty = bp == null || bp.qty() == null ? BigDecimal.ZERO : bp.qty().abs();
+        if (!fillHistoryAvailable) {
+            // The existing escalate-and-wait path: no matrix action without fill evidence.
+            if (bp == null) {
+                escalateMissingEvidence(p, runId, "broker no longer reports the position while a savings "
+                        + "add is in flight", "RECONCILE_GONE", p.qty(), null, null);
+            }
+            savingsAudit.reconcile(runId, RowRef.of(row), row.status(), "wait",
+                    fields("reason", "fill-history-unavailable", "bp_qty", bpQty, "book_qty", p.qty()));
+            survivors.add(p);
+            return;
+        }
+        boolean emergency = SavingsBuy.EMERGENCY_EXIT.equals(row.status());
+        Set<String> leg1Ids = new LinkedHashSet<>();
+        if (p.stopOrderId() != null) leg1Ids.add(p.stopOrderId());
+        if (!emergency && row.newStopOrderId() != null) leg1Ids.add(row.newStopOrderId());
+        BrokerOrder leg1Fill = filledOrders.stream()
+                .filter(o -> o.status() == OrderStatus.FILLED && o.orderId() != null && leg1Ids.contains(o.orderId()))
+                .findFirst().orElse(null);
+        if (bpQty.signum() == 0) {
+            savingsGone(p, row, emergency, leg1Fill, leg1Ids, openOrders, filledOrders, connection, runId);
+            return;
+        }
+        if (leg1Fill != null && !emergency) {
+            survivors.add(savingsEmergencyBooking(p, row, bp, bpQty, leg1Fill, filledOrders, runId));
+            return;
+        }
+        savingsAudit.reconcile(runId, RowRef.of(row), row.status(), "skip-list",
+                fields("skipped", SKIP_LIST, "bp_qty", bpQty, "book_qty", p.qty(),
+                        "leg1_ids", String.join(",", leg1Ids)));
+        survivors.add(p);
+    }
+
+    /** The FILLED BUY parent of the add in the fill history (matched by its client ref), or null. */
+    private BrokerOrder savingsParentFill(SavingsBuy row, List<BrokerOrder> filledOrders) {
+        return filledOrders.stream()
+                .filter(o -> o.status() == OrderStatus.FILLED && row.clientRef().equals(o.clientRef()))
+                .filter(o -> !AdoptionCandidates.isStop(o) && o.filledQty() != null && o.filledQty().signum() > 0)
+                .findFirst().orElse(null);
+    }
+
+    /**
+     * Matrix row 1: the broker holds nothing (or a CLOSED position) — also the follow-up of a D8
+     * flatten answered {@code POSITION_ALREADY_GONE}. The live parent is cancelled, then ONE
+     * transaction moves the row to {@code CLOSED_WITH_POSITION}, records the add's buy (and, for a
+     * non-D8 row whose add filled, its window-stop TRIM), deletes the carry and closes the position.
+     * An {@code EMERGENCY_EXIT} row already booked its buy and its leg-1 TRIM, and the position IS
+     * the add shares now — its close covers them, so no second TRIM.
+     */
+    private void savingsGone(ExecutorPosition p, SavingsBuy row, boolean emergency, BrokerOrder leg1Fill,
+            Set<String> leg1Ids, List<BrokerOrder> openOrders, List<BrokerOrder> filledOrders,
+            String connection, String runId) {
+        for (BrokerOrder o : openOrders) {
+            if (!row.clientRef().equals(o.clientRef()) || !AdoptionCandidates.isLive(o) || AdoptionCandidates.isStop(o)) continue;
+            try {
+                savingsAudit.brokerRun(SAVINGS_PASS, runId, SAVINGS_PASS, "cancelOrder",
+                        "row=" + row.id() + " order=" + o.orderId() + " what=parent",
+                        () -> gateway.cancelOrder(connection, o.orderId()));
+            } catch (BrokerUnavailableException e) {
+                // already logged as phase=result rejected|indeterminate; the close is booked anyway
+                // (the position is gone) and a parent that still rests is the consolidator's alarm.
+            }
+        }
+        boolean newStopFilled = leg1Fill != null && leg1Fill.orderId().equals(row.newStopOrderId());
+        BrokerOrder parentFill = emergency ? null : savingsParentFill(row, filledOrders);
+        BrokerOrder childFill = (parentFill == null || newStopFilled) ? null : filledOrders.stream()
+                .filter(o -> o.status() == OrderStatus.FILLED && o.orderId() != null && !leg1Ids.contains(o.orderId()))
+                .filter(o -> p.symbol().equalsIgnoreCase(o.symbol()))
+                .filter(o -> row.childStopOrderId() != null ? row.childStopOrderId().equals(o.orderId())
+                        : AdoptionCandidates.isStop(o))
+                .findFirst().orElse(null);
+        BigDecimal fillQty;
+        BigDecimal fillPrice;
+        if (newStopFilled && row.targetQty() != null) {
+            // Step 7 never ran: the add's fill is what the step-4 audit (target_qty, avg_after) implies.
+            fillQty = row.targetQty().subtract(row.qtyBefore());
+            fillPrice = (row.avgAfter() == null || fillQty.signum() <= 0) ? null
+                    : row.avgAfter().multiply(row.targetQty()).subtract(row.avgBefore().multiply(row.qtyBefore()))
+                            .divide(fillQty, 6, RoundingMode.HALF_UP);
+        } else {
+            // null keeps what the row already carries (an EMERGENCY_EXIT row booked its fill in D8)
+            fillQty = parentFill == null ? null : parentFill.filledQty();
+            fillPrice = parentFill == null ? null : parentFill.avgFillPrice();
+        }
+        // resolveExit may read closedPositions (a broker call) — never inside the transaction
+        ResolvedExit goneExit = leg1Fill == null ? resolveExit(p, null, null, connection) : null;
+        RowRef ref = RowRef.of(row);
+        savingsAudit.reconcile(runId, ref, row.status(), "matrix",
+                fields("matrix_row", 1,
+                        "leg1_fill", leg1Fill == null ? "none"
+                                : leg1Fill.orderId() + "@" + SavingsPlanAudit.plain(leg1Fill.avgFillPrice()),
+                        "bp_qty", BigDecimal.ZERO, "qty_before", row.qtyBefore(), "add_fill_qty", fillQty,
+                        "add_fill_price", fillPrice, "child_fill", childFill == null ? "none" : childFill.orderId(),
+                        "new_stop_filled", newStopFilled, "emergency", emergency));
+        tx.executeWithoutResult(status -> {
+            if (!savingsRepo.finish(row.id(), row.status(), SavingsBuy.CLOSED_WITH_POSITION, fillQty, fillPrice,
+                    null, null)) {
+                savingsAudit.reconcile(runId, ref, row.status(), "matrix",
+                        fields("matrix_row", 1, "result", "cas-lost"));
+                status.setRollbackOnly();
+                return;
+            }
+            savingsAudit.transition(runId, SAVINGS_PASS, ref, row.status(), SavingsBuy.CLOSED_WITH_POSITION,
+                    "SAVINGS_CONSOLIDATE", "CLOSED_WITH_POSITION",
+                    fields("matrix_row", 1, "leg1_fill", leg1Fill == null ? null : leg1Fill.orderId(),
+                            "leg1_fill_price", leg1Fill == null ? null : leg1Fill.avgFillPrice(), "bp_qty", 0,
+                            "qty_before", row.qtyBefore(), "fill_qty", fillQty, "fill_price", fillPrice,
+                            "new_stop_filled", newStopFilled),
+                    "the position left the broker while the add was in flight; no carry refund");
+            ExecutorPosition booked = p;
+            if (newStopFilled && row.targetQty() != null && row.avgAfter() != null) {
+                // §6.1 R3/R4 Minor 7: book the step-7 state first, then close at the new stop's fill.
+                positionRepo.bookSavingsQtyAndAvg(p.id(), row.targetQty(), row.avgAfter());
+                positionRepo.setStopOrderId(p.id(), row.newStopOrderId());
+                ExecutorPositionLeg leg = savingsSingleOpenLeg(p.id());
+                if (leg != null) legRepo.setStopAndQty(leg.id(), row.newStopOrderId(), row.targetQty());
+                booked = reread(p);
+            } else if (parentFill != null) {
+                recordSavingsTrim(p, row, "SAVINGS_WINDOW_STOP", parentFill.filledQty(), p.qty(),
+                        childFill == null ? null : childFill.avgFillPrice(), parentFill.avgFillPrice(), runId);
+            }
+            savingsRepo.deleteCarry(p.id());
+            List<ExecutorPositionLeg> legs = legRepo.findOpenByPosition(p.id());
+            if (leg1Fill != null && !legs.isEmpty()) {
+                BrokerOrder fill = relabelAsStopLeg(leg1Fill);
+                closePositionFromLegs(booked, legs.stream().map(l -> new LegFill(l, fill, "HARD_STOP")).toList(),
+                        null, connection, runId);
+            } else {
+                ResolvedExit resolved = leg1Fill == null ? goneExit
+                        : resolveExit(booked, relabelAsStopLeg(leg1Fill), null, connection);
+                Instant closedAt = clock.instant();
+                for (ExecutorPositionLeg l : legs) {
+                    legRepo.closeLeg(l.id(), resolved.exitPrice(), resolved.exitReason(), closedAt);
+                }
+                bookClose(booked, resolved, connection, runId);
+            }
+        });
+    }
+
+    /**
+     * Matrix row 2 (D8): the leg-1 stop filled, the broker still holds the add shares. ONE
+     * transaction: CAS → {@code EMERGENCY_EXIT} with the add's fill, the TRIM for the leg-1 shares
+     * valued against {@code avg_before} FROM THE ROW, leg 1 shrunk to the add (never closed — an
+     * OPEN row with no OPEN leg is {@link #completeInterruptedClose}'s), position qty/entry = the
+     * add; {@code trim_count} unchanged. The sale of the add shares is the next closed pass's
+     * (SavingsConsolidator.emergencyExit).
+     */
+    private ExecutorPosition savingsEmergencyBooking(ExecutorPosition p, SavingsBuy row, BrokerPosition bp,
+            BigDecimal bpQty, BrokerOrder leg1Fill, List<BrokerOrder> filledOrders, String runId) {
+        BrokerOrder parentFill = savingsParentFill(row, filledOrders);
+        BigDecimal addPrice = parentFill != null && parentFill.avgFillPrice() != null ? parentFill.avgFillPrice()
+                : bp.avgEntryPrice() == null ? null : bp.avgEntryPrice().setScale(6, RoundingMode.HALF_UP);
+        RowRef ref = RowRef.of(row);
+        savingsAudit.reconcile(runId, ref, row.status(), "matrix",
+                fields("matrix_row", 2,
+                        "leg1_fill", leg1Fill.orderId() + "@" + SavingsPlanAudit.plain(leg1Fill.avgFillPrice()),
+                        "bp_qty", bpQty, "bp_avg", bp.avgEntryPrice(), "qty_before", row.qtyBefore(),
+                        "avg_before", row.avgBefore(), "add_fill_price", addPrice,
+                        "add_price_source", parentFill != null && parentFill.avgFillPrice() != null ? "parent" : "bp_avg",
+                        "child_stop", row.childStopOrderId()));
+        Boolean booked = tx.execute(status -> {
+            if (!savingsRepo.markEmergencyExit(row.id(), row.status(), bpQty, addPrice)) {
+                savingsAudit.reconcile(runId, ref, row.status(), "matrix",
+                        fields("matrix_row", 2, "result", "cas-lost"));
+                status.setRollbackOnly();
+                return false;
+            }
+            savingsAudit.transition(runId, SAVINGS_PASS, ref, row.status(), SavingsBuy.EMERGENCY_EXIT,
+                    "SAVINGS_CONSOLIDATE", "EMERGENCY_EXIT",
+                    fields("matrix_row", 2, "leg1_fill", leg1Fill.orderId(), "leg1_fill_price", leg1Fill.avgFillPrice(),
+                            "bp_qty", bpQty, "qty_before", row.qtyBefore(), "avg_before", row.avgBefore(),
+                            "fill_qty", bpQty, "fill_price", addPrice, "child_stop_order_id", row.childStopOrderId()),
+                    "D8: the pre-add emergency stop filled while the add was in flight — the add shares are sold next closed pass");
+            recordSavingsTrim(p, row, "SAVINGS_LEG1_STOP", row.qtyBefore(), bpQty, leg1Fill.avgFillPrice(),
+                    row.avgBefore(), runId);
+            ExecutorPositionLeg leg = savingsSingleOpenLeg(p.id());
+            if (leg != null) legRepo.setStopAndQty(leg.id(), row.childStopOrderId(), bpQty);
+            positionRepo.bookSavingsQtyAndAvg(p.id(), bpQty, addPrice != null ? addPrice : p.entryPrice());
+            positionRepo.setStopOrderId(p.id(), row.childStopOrderId());
+            return true;
+        });
+        if (!Boolean.TRUE.equals(booked)) return p;
+        try {
+            telegram.notifyAlert(p.symbol(), "SAVINGS_EMERGENCY_EXIT", "WARN", "the emergency stop of " + p.symbol()
+                    + " filled while a savings add was in flight — the add shares are sold in the next closed pass (D8)");
+        } catch (RuntimeException e) {
+            log.info("savings-plan telegram alert SAVINGS_EMERGENCY_EXIT not sent: {}", e.getMessage());
+        }
+        return reread(p);
+    }
+
+    /** A TRIM row in the RECONCILE_TRIM order_json shape plus {@code entry_price} and
+     *  {@code savings_buy_id}. Written only inside the transaction that moved the savings row out of
+     *  its status — the 72 h lookback cannot duplicate it. */
+    private void recordSavingsTrim(ExecutorPosition p, SavingsBuy row, String reasonCode, BigDecimal qtyClosed,
+            BigDecimal qtyRemaining, BigDecimal price, BigDecimal entryPrice, String runId) {
+        savingsAudit.record(runId, p.symbol(), "TRIM", reasonCode,
+                fields("qty_closed", qtyClosed, "qty_remaining", qtyRemaining, "price", price,
+                        "position_id", p.id(), "entry_price", entryPrice, "savings_buy_id", row.id(),
+                        "savings_status", row.status(), "fill_price_available", price != null),
+                "savings add " + row.clientRef() + ": " + SavingsPlanAudit.plain(qtyClosed) + " shares left at "
+                        + SavingsPlanAudit.plain(price) + " (entry " + SavingsPlanAudit.plain(entryPrice) + ")");
+    }
+
+    private ExecutorPositionLeg savingsSingleOpenLeg(long positionId) {
+        List<ExecutorPositionLeg> legs = legRepo.findOpenByPosition(positionId);
+        return legs.size() == 1 ? legs.getFirst() : null;
     }
 
     /**

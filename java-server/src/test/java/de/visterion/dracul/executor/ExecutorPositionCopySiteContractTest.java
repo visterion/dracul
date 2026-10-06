@@ -60,7 +60,10 @@ class ExecutorPositionCopySiteContractTest {
                 new DecisionLogRepository.TrimSubmission(NOW, "run-prev", new BigDecimal("5")));
         service = new ReconcileService(gateway, positionRepo, decisionRepo, cooldownRepo,
                 ruleVersions, new ObjectMapper(), telegram, executorNotifier, 10, 24, legRepo,
-                new BigDecimal("0.50"), ConvictionProfile.defaults(), Clock.fixed(NOW, ZoneOffset.UTC));
+                new BigDecimal("0.50"), ConvictionProfile.defaults(), new InMemorySavingsPlanRepository(),
+                new SavingsPlanAudit(decisionRepo, ruleVersions, new ObjectMapper(), telegram),
+                org.springframework.transaction.support.TransactionOperations.withoutTransaction(),
+                Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     private static ExecutorPosition marked(ExecutorPosition p) {
