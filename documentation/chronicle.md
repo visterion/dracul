@@ -444,7 +444,17 @@ with StateDot + localized state label (jagt/ruht/pausiert/Budget erreicht) + nex
 summary). Four `.stat-tile`s from real fields only — prey per hunt (`avgPreyPerHunt`),
 hit rate (`hitRate90d` with numerator/denominator foot), hunts (`huntsThisMonth` of
 `scheduledHuntsThisMonth`), tier (`configuration.tier` with cron foot); no fabricated
-return metric. Two-column `verdict-grid`: left stack = "Letzter Lauf · Trace" card
+return metric. Below the stat tiles, the **"Ergebnis" section** (`components/strigoi/StrigoiPnlSection.vue`,
+`data-testid="strigoi-pnl-section"`) shows this agent's real money result:
+- **Data.** It fetches `GET /api/executor/pnl/strigoi/{name}` itself, for the executor's default connection.
+- **Chips.** `TagPill` chips show trades, open, hit rate, realized/open/total € and Σ R. They are deliberately not `.stat-tile`s, so the four tiles stay four.
+- **Trade table.** Columns are Status, Aktie, Kauf, Verkauf, Stück, Kauf/Verkaufskurs, Ergebnis € and R, Grund. Open trades are listed first.
+  - An open trade's symbol links to `/depots/:connection/:symbol`.
+  - "Ergebnis €" is realized for closed trades and realized trims + open for open trades.
+  - An unknown amount shows "—" with a `*` whose tooltip names the flag (no price, partial sale without a price, no FX rate). It is never shown as 0.
+- **Empty and absent states.** No trades shows "Noch keine Trades". The FX note matches the Depots table. A 404 hides the section.
+
+Two-column `verdict-grid`: left stack = "Letzter Lauf · Trace" card
 (RunTrace component rendering `recentRuns[0].trace`, with run meta ranAt/model/prey/cost)
 + "Jüngste Beute" feed (PreyCard per `recentPrey`, empty state when none); right
 sticky aside = "Konfiguration" kv-list (cron, next run, tier, allowed models, daily/

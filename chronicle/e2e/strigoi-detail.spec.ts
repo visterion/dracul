@@ -60,7 +60,7 @@ test.describe('Strigoi Detail View (/strigoi/:name)', () => {
   test('strigoi without runs shows month-scoped empty texts', async ({ page }) => {
     await page.goto('/strigoi/strigoi-lazarus')
     await page.waitForLoadState('networkidle')
-    await expect(page.locator('.sd .empty .em-text').first())
+    await expect(page.locator('.verdict-grid .empty .em-text').first())
       .toContainText('Noch kein Lauf aufgezeichnet (diesen Monat)')
     await expect(page.locator('.stat-grid')).toContainText('Noch keine Treffer bewertbar')
     await expect(page.locator('.stat-grid')).not.toContainText('0 von 0')

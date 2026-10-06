@@ -897,6 +897,37 @@ export default {
       started: 'Jagd gestartet',
       pausedTooltip: 'Agent pausiert',
     },
+    pnl: {
+      title: 'Ergebnis',
+      empty: 'Noch keine Trades',
+      loadError: 'Ergebnis konnte nicht geladen werden.',
+      chips: {
+        trades: '{n} Trades',
+        open: '{n} offen',
+        hitRate: 'Treffer {pct}',
+        realized: 'Realisiert {v}',
+        unrealized: 'Offen {v}',
+        total: 'Gesamt {v}',
+        sumR: 'Σ R {v}',
+      },
+      cols: {
+        status: 'Status',
+        symbol: 'Aktie',
+        entryDate: 'Kauf',
+        exitDate: 'Verkauf',
+        qty: 'Stück',
+        prices: 'Kauf/Verkaufskurs',
+        result: 'Ergebnis €',
+        r: 'R',
+        reason: 'Grund',
+      },
+      status: { OPEN: 'offen', CLOSED: 'geschlossen' },
+      flags: {
+        INCOMPLETE_LEGS: 'Teilverkauf ohne Kurs',
+        NO_PRICE: 'kein aktueller Kurs',
+        NO_FX: 'kein Wechselkurs',
+      },
+    },
   },
   inspector: {
     filter: {

@@ -897,6 +897,37 @@ export default {
       started: 'Hunt started',
       pausedTooltip: 'Agent paused',
     },
+    pnl: {
+      title: 'Result',
+      empty: 'No trades yet',
+      loadError: 'Could not load the result.',
+      chips: {
+        trades: '{n} trades',
+        open: '{n} open',
+        hitRate: 'Hit {pct}',
+        realized: 'Realized {v}',
+        unrealized: 'Open {v}',
+        total: 'Total {v}',
+        sumR: 'Σ R {v}',
+      },
+      cols: {
+        status: 'Status',
+        symbol: 'Stock',
+        entryDate: 'Buy',
+        exitDate: 'Sell',
+        qty: 'Qty',
+        prices: 'Buy/sell price',
+        result: 'Result €',
+        r: 'R',
+        reason: 'Reason',
+      },
+      status: { OPEN: 'open', CLOSED: 'closed' },
+      flags: {
+        INCOMPLETE_LEGS: 'partial sale without a price',
+        NO_PRICE: 'no current price',
+        NO_FX: 'no exchange rate',
+      },
+    },
   },
   inspector: {
     filter: {

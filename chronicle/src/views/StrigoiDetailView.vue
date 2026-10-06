@@ -67,6 +67,8 @@
       />
     </div>
 
+    <StrigoiPnlSection :name="strigoi.name" />
+
     <div class="verdict-grid">
       <div class="stack-6">
         <div>
@@ -173,6 +175,7 @@ import StateDot from '../components/common/StateDot.vue'
 import BatGlyph from '../components/common/BatGlyph.vue'
 import RunTrace from '../components/common/RunTrace.vue'
 import PreyCard from '../components/common/PreyCard.vue'
+import StrigoiPnlSection from '../components/strigoi/StrigoiPnlSection.vue'
 import { humanScheduleText } from '../utils/schedule'
 import { useEnumLabels } from '../composables/useEnumLabels'
 import { formatMoney, formatNumber } from '../utils/format'
