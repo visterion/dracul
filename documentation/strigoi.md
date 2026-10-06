@@ -1737,6 +1737,12 @@ A CONVICTION or MOMENTUM position (mechanism `TECH_CONVICTION` / `MOMENTUM_12_1`
 code-managed: `exit_position` answers `PROFILE_MANAGED` without a broker call
 and writes a `SOFT_TRIGGER/REJECT/PROFILE_MANAGED` decision row.
 
+**`place_protective_stop` (Agora, write client).** The executor's broker port can place ONE additive
+protective stop for an existing position (`ExecutionGateway.placeProtectiveStop`): it cancels
+nothing, `qty` is checked against the net position (`QTY_EXCEEDS_POSITION`), a determinate reject is
+a broker rejection and an indeterminate outcome is an outage the caller reconciles via the open
+orders before placing again. Only the Tech-Sparplan consolidation uses it (see "Tech-Sparplan").
+
 **MAE (adverse-excursion) tracking.** Every maintenance pass also updates
 `executor_position.lowest_price` for BUY positions: the new floor is
 `min(previous lowest_price (or entry price if never set), current close)`,

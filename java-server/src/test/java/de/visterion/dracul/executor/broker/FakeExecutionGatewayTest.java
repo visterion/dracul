@@ -104,4 +104,61 @@ class FakeExecutionGatewayTest {
         assertThatThrownBy(() -> gateway.ordersByRef("c", "r1"))
                 .isInstanceOf(BrokerUnavailableException.class);
     }
+
+    @Test
+    void placeProtectiveStopRecordsAndShowsALiveOpenStop() {
+        String id = gateway.placeProtectiveStop("c", "SYNTH", new BigDecimal("15"), new BigDecimal("68.76"));
+
+        assertThat(gateway.protectiveStops).containsExactly(new FakeExecutionGateway.ProtectiveStopCall(
+                "SYNTH", new BigDecimal("15"), new BigDecimal("68.76")));
+        BrokerOrder live = gateway.orders("c").stream().filter(o -> id.equals(o.orderId()))
+                .findFirst().orElseThrow();
+        assertThat(live.status()).isEqualTo(OrderStatus.WORKING);
+        assertThat(live.rawStatus()).isEqualTo("working");
+        assertThat(live.side()).isEqualTo("sell");
+        assertThat(live.type()).isEqualTo("stopiftraded");
+        assertThat(live.stopPrice()).isEqualByComparingTo("68.76");
+        assertThat(live.qty()).isEqualByComparingTo("15");
+    }
+
+    @Test
+    void protectiveStopFailuresAreConsumedOnePerCall() {
+        gateway.protectiveStopFailures.add(new BrokerRejectedException("band", "PRICE_OUT_OF_BAND", java.util.List.of()));
+        assertThatThrownBy(() -> gateway.placeProtectiveStop("c", "SYNTH", BigDecimal.ONE, BigDecimal.TEN))
+                .isInstanceOf(BrokerRejectedException.class);
+        assertThat(gateway.placeProtectiveStop("c", "SYNTH", BigDecimal.ONE, BigDecimal.TEN)).startsWith("pstop-");
+        assertThat(gateway.protectiveStops).hasSize(2);
+    }
+
+    @Test
+    void cancelRemovesTheOrderOnlyWhenAsked() {
+        gateway.seedOrder(new BrokerOrder("stop-1", null, "SYNTH", OrderRole.STOP_LOSS,
+                OrderStatus.WORKING, BigDecimal.TEN, null, null, null));
+        gateway.cancelOrder("c", "stop-1");
+        assertThat(gateway.orders("c")).extracting(BrokerOrder::orderId).contains("stop-1");
+
+        gateway.cancelRemovesOrder = true;
+        gateway.cancelOrder("c", "stop-1");
+        assertThat(gateway.orders("c")).extracting(BrokerOrder::orderId).doesNotContain("stop-1");
+        assertThat(gateway.cancelledOrderIds).containsExactly("stop-1", "stop-1");
+    }
+
+    @Test
+    void failCancelForOneOrderIdOnly() {
+        gateway.failCancelForOrderId = "stop-2";
+        gateway.cancelOrder("c", "stop-1");
+        assertThatThrownBy(() -> gateway.cancelOrder("c", "stop-2"))
+                .isInstanceOf(BrokerUnavailableException.class);
+        assertThat(gateway.cancelledOrderIds).containsExactly("stop-1");
+    }
+
+    @Test
+    void rejectPlaceBracketIsOneShot() {
+        gateway.rejectPlaceBracketWith = new BrokerRejectedException("no", "INSUFFICIENT_FUNDS", java.util.List.of());
+        BracketRequest req = new BracketRequest("SYNTH", "BUY", BigDecimal.ONE, BigDecimal.TEN,
+                new BigDecimal("8"), null, "sp-1-202611", "gtc");
+        assertThatThrownBy(() -> gateway.placeBracket("c", req)).isInstanceOf(BrokerRejectedException.class);
+        assertThat(gateway.placeBracket("c", req).bracketId()).startsWith("brk-");
+        assertThat(gateway.placed).hasSize(2);
+    }
 }

@@ -701,11 +701,13 @@ class AgoraExecutionGatewayTest {
         }
     }
 
-    @Test void isWriteTool_isExactlyTheFourWriteTools() {
+    @Test void isWriteTool_isExactlyTheFiveWriteTools() {
         assertThat(AgoraExecutionGateway.isWriteTool("place_bracket")).isTrue();
         assertThat(AgoraExecutionGateway.isWriteTool("flatten")).isTrue();
         assertThat(AgoraExecutionGateway.isWriteTool("modify_bracket")).isTrue();
         assertThat(AgoraExecutionGateway.isWriteTool("cancel_order")).isTrue();
+        // Spec 2026-10-06 §5.2 step 6: the savings consolidation stop is a paced Saxo write.
+        assertThat(AgoraExecutionGateway.isWriteTool("place_protective_stop")).isTrue();
 
         // Reads stay on the 8000/8000 client. get_order_by_ref in particular runs BEFORE
         // place_bracket on the entry path and is a read, not a write.
@@ -1040,5 +1042,53 @@ class AgoraExecutionGatewayTest {
         assertThatThrownBy(() -> new ScriptedGateway(mapper, FIXED_CLOCK, 0))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("adoption-history-days");
+    }
+
+    @Test void placeProtectiveStopSendsSnakeCaseStopPriceAndReturnsTheOrderId() {
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("{\"output\":{\"accepted\":true,\"orderId\":\"pstop-77\",\"status\":\"accepted\"}}");
+
+        String id = gw.placeProtectiveStop("depot-1", "SYNTH", new BigDecimal("15"), new BigDecimal("68.76"));
+
+        assertThat(id).isEqualTo("pstop-77");
+        assertThat(gw.capturedTool).isEqualTo("place_protective_stop");
+        assertThat(gw.capturedArgs.path("connection").asString()).isEqualTo("depot-1");
+        assertThat(gw.capturedArgs.path("symbol").asString()).isEqualTo("SYNTH");
+        assertThat(gw.capturedArgs.path("qty").decimalValue()).isEqualByComparingTo("15");
+        assertThat(gw.capturedArgs.path("stop_price").decimalValue()).isEqualByComparingTo("68.76");
+        assertThat(gw.capturedArgs.has("stopPrice")).isFalse();
+    }
+
+    @Test void placeProtectiveStopDeterminateRejectIsABrokerRejection() {
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("{\"output\":{\"accepted\":false,\"rejectCode\":\"QTY_EXCEEDS_POSITION\","
+                + "\"rejectReason\":\"qty 20 exceeds position 15\"}}");
+
+        assertThatThrownBy(() -> gw.placeProtectiveStop("depot-1", "SYNTH", new BigDecimal("20"),
+                new BigDecimal("68.76")))
+                .isInstanceOfSatisfying(BrokerRejectedException.class,
+                        e -> assertThat(e.rejectCode()).isEqualTo("QTY_EXCEEDS_POSITION"));
+    }
+
+    @Test void placeProtectiveStopIndeterminateIsAnOutageNotARejection() {
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("{\"output\":{\"available\":false,\"error\":\"order may have been placed; "
+                + "reconcile via get_orders before retrying\"}}");
+
+        assertThatThrownBy(() -> gw.placeProtectiveStop("depot-1", "SYNTH", new BigDecimal("15"),
+                new BigDecimal("68.76")))
+                .isInstanceOf(BrokerUnavailableException.class)
+                .isNotInstanceOf(BrokerRejectedException.class);
+    }
+
+    @Test void placeProtectiveStopAcceptedWithoutAnIdIsTreatedAsIndeterminate() {
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("{\"output\":{\"accepted\":true}}");
+
+        assertThatThrownBy(() -> gw.placeProtectiveStop("depot-1", "SYNTH", new BigDecimal("15"),
+                new BigDecimal("68.76")))
+                .isInstanceOf(BrokerUnavailableException.class)
+                .isNotInstanceOf(BrokerRejectedException.class)
+                .hasMessageContaining("reconcile");
     }
 }

@@ -1,7 +1,9 @@
 package de.visterion.dracul.executor.broker;
 
 import java.math.BigDecimal;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -29,6 +31,23 @@ public class FakeExecutionGateway implements ExecutionGateway {
     public final List<ModifyCall> modifyCalls = new ArrayList<>();
     public final List<BracketRequest> placed = new ArrayList<>();
     public final List<String> cancelledOrderIds = new ArrayList<>();
+
+    /** One {@link #placeProtectiveStop} call. */
+    public record ProtectiveStopCall(String symbol, BigDecimal qty, BigDecimal stopPrice) {
+    }
+
+    public final List<ProtectiveStopCall> protectiveStops = new ArrayList<>();
+    /** Each queued exception is thrown by ONE upcoming {@link #placeProtectiveStop} call (FIFO), the
+     *  call is still recorded. A {@link BrokerRejectedException} is a determinate "no", a plain
+     *  {@link BrokerUnavailableException} the indeterminate outcome. */
+    public final Deque<RuntimeException> protectiveStopFailures = new ArrayDeque<>();
+    /** When true, {@link #cancelOrder} also removes the order from the open view (a real cancel).
+     *  Off by default: existing tests seed orders they expect to stay visible after a cancel. */
+    public boolean cancelRemovesOrder = false;
+    /** When set, only a cancel of exactly this order id fails (plain outage). */
+    public String failCancelForOrderId = null;
+    /** One-shot: the next {@link #placeBracket} throws this instead of placing. */
+    public RuntimeException rejectPlaceBracketWith = null;
 
     public boolean unavailable = false;
 
@@ -195,6 +214,11 @@ public class FakeExecutionGateway implements ExecutionGateway {
     public PlacedBracket placeBracket(String connection, BracketRequest req) {
         checkAvailable();
         placed.add(req);
+        if (rejectPlaceBracketWith != null) {
+            RuntimeException toThrow = rejectPlaceBracketWith;
+            rejectPlaceBracketWith = null;
+            throw toThrow;
+        }
         int n = counter.incrementAndGet();
         return new PlacedBracket("brk-" + n, "stop-" + n, "tp-" + n, req.clientRef(), OrderStatus.WORKING);
     }
@@ -260,6 +284,24 @@ public class FakeExecutionGateway implements ExecutionGateway {
         if (rejectCancelWith != null) {
             throw rejectCancelWith;
         }
+        if (orderId != null && orderId.equals(failCancelForOrderId)) {
+            throw new BrokerUnavailableException("fake cancel failure for " + orderId);
+        }
         cancelledOrderIds.add(orderId);
+        if (cancelRemovesOrder) {
+            orders.removeIf(o -> orderId != null && orderId.equals(o.orderId()) && o.status() != OrderStatus.FILLED);
+        }
+    }
+
+    @Override
+    public String placeProtectiveStop(String connection, String symbol, BigDecimal qty, BigDecimal stopPrice) {
+        checkAvailable();
+        protectiveStops.add(new ProtectiveStopCall(symbol, qty, stopPrice));
+        RuntimeException failure = protectiveStopFailures.poll();
+        if (failure != null) throw failure;
+        String id = "pstop-" + counter.incrementAndGet();
+        orders.add(new BrokerOrder(id, null, symbol, OrderRole.STOP_LOSS, OrderStatus.WORKING, qty,
+                null, null, null, "sell", "stopiftraded", "working", "open", null, stopPrice, null));
+        return id;
     }
 }

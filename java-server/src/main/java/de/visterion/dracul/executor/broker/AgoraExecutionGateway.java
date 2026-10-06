@@ -32,15 +32,17 @@ public class AgoraExecutionGateway implements ExecutionGateway {
 
     private static final Logger log = LoggerFactory.getLogger(AgoraExecutionGateway.class);
 
-    /** The four tools that WRITE at the broker. They are the only ones that can sit behind
+    /** The five tools that WRITE at the broker. They are the only ones that can sit behind
      *  Agora's Saxo order-write pacer, which spaces consecutive order writes by ~1.1 s and may
      *  add one clamped 429 block, so a single tool call can legitimately take far longer than
      *  a read. Reads must NOT inherit that patience: {@code get_positions}/{@code get_orders}/
      *  {@code get_closed_positions} run in per-position loops (ReconcileService.java:1602) and a
      *  hung Agora would cost the whole pass. {@code get_order_by_ref} is a READ that runs before
-     *  place_bracket on the entry path and deliberately stays on the read client. */
+     *  place_bracket on the entry path and deliberately stays on the read client.
+     *  {@code place_protective_stop} is the Tech-Sparplan consolidation stop. */
     private static final java.util.Set<String> WRITE_TOOLS =
-            java.util.Set.of("place_bracket", "flatten", "modify_bracket", "cancel_order");
+            java.util.Set.of("place_bracket", "flatten", "modify_bracket", "cancel_order",
+                    "place_protective_stop");
 
     /** Default adoption history window, in days. Named so the wiring IT and the back-compat
      *  constructors express it exactly once. See {@link #ordersByRef} for why 14 is enough:
@@ -478,6 +480,29 @@ public class AgoraExecutionGateway implements ExecutionGateway {
 
         JsonNode out = unwrap(call("cancel_order", args));
         requireAccepted(out);
+    }
+
+    /** Agora's PlaceProtectiveStopTool reads snake_case {@code stop_price} (unlike place_bracket's
+     *  camelCase). {@code accepted:false} → {@link BrokerRejectedException} via requireAccepted;
+     *  {@code available:false} (the tool's indeterminate branch) → {@link BrokerUnavailableException}
+     *  via unwrap. An accepted answer without an id is treated as indeterminate: the stop may be
+     *  live and only the caller's next order read can tell. */
+    @Override
+    public String placeProtectiveStop(String connection, String symbol, BigDecimal qty, BigDecimal stopPrice) {
+        ObjectNode args = mapper.createObjectNode();
+        args.put("connection", connection);
+        args.put("symbol", symbol);
+        args.put("qty", qty);
+        args.put("stop_price", stopPrice);
+
+        JsonNode out = unwrap(call("place_protective_stop", args));
+        requireAccepted(out);
+        String orderId = textOrNull(out, "orderId", "order_id");
+        if (orderId == null) {
+            throw new BrokerUnavailableException("place_protective_stop accepted without an orderId for "
+                    + symbol + " — reconcile via get_orders before placing again");
+        }
+        return orderId;
     }
 
     // -------------------------------------------------------------------

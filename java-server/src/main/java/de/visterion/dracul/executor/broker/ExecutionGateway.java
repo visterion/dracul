@@ -65,4 +65,20 @@ public interface ExecutionGateway {
     /** Cancels a still-working order (e.g. an unfilled GTD entry past expiry). Never re-prices —
      *  callers that want a different price must cancel then place a new order. */
     void cancelOrder(String connection, String orderId);
+
+    /**
+     * Places ONE additive protective stop for {@code qty} shares of an existing position at
+     * {@code stopPrice} — Agora {@code place_protective_stop}: opposite side of the position,
+     * GoodTillCancel, cancels nothing and reads no other order. {@code qty} is checked against the
+     * broker's NET position ({@code QTY_EXCEEDS_POSITION}), never against other working stops, so the
+     * caller must not double-cover shares.
+     *
+     * <p>A determinate broker "no" is a {@link BrokerRejectedException} (e.g.
+     * {@code QTY_EXCEEDS_POSITION}, {@code PROTECTIVE_STOP_UNSUPPORTED} on Alpaca). An indeterminate
+     * outcome (409 replay, 5xx, no response — the stop MAY be live) is a plain
+     * {@link BrokerUnavailableException}: reconcile via {@link #orders} before placing again.
+     *
+     * @return the broker order id of the new stop
+     */
+    String placeProtectiveStop(String connection, String symbol, BigDecimal qty, BigDecimal stopPrice);
 }
