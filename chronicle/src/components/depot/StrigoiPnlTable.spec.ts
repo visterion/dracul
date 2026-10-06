@@ -84,6 +84,18 @@ describe('StrigoiPnlTable', () => {
     expect(router.currentRoute.value.fullPath).toBe('/strigoi/strigoi-syna')
   })
 
+  it('does not link a row whose source_agent is not a real strigoi (e.g. an operator injection)', async () => {
+    response = overview([row({ strigoi: 'injected' })])
+    const w = mountTable()
+    await flushPromises()
+    const rows = w.findAll('[data-testid="strigoi-pnl-row"]')
+    expect(rows[0].classes()).not.toContain('pnl-row-link')
+
+    await rows[0].trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('depots')
+  })
+
   it('marks a strigoi whose sum misses flagged trades', async () => {
     response = overview([row({ flaggedTrades: 2 })])
     const w = mountTable()

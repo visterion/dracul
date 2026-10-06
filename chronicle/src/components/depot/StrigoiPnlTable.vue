@@ -28,7 +28,7 @@
             <tr
               v-for="r in rows" :key="r.strigoi"
               data-testid="strigoi-pnl-row" :data-strigoi="r.strigoi"
-              :class="{ 'pnl-row-link': r.strigoi !== UNKNOWN }"
+              :class="{ 'pnl-row-link': isStrigoi(r.strigoi) }"
               @click="open(r.strigoi)"
             >
               <td class="tkr">{{ r.strigoi === UNKNOWN ? t('depots.pnl.unknown') : r.strigoi }}</td>
@@ -101,8 +101,14 @@ async function load(connection: string) {
 
 watch(() => props.connection, c => load(c), { immediate: true })
 
+/** Only a real strigoi row links out — `unknown` (no agent) and any non-strigoi
+ *  source_agent (e.g. an operator-injected signal) are not a `/strigoi/:name` page. */
+function isStrigoi(name: string): boolean {
+  return name !== UNKNOWN && name.startsWith('strigoi-')
+}
+
 function open(name: string) {
-  if (name === UNKNOWN) return
+  if (!isStrigoi(name)) return
   router.push({ name: 'strigoi-detail', params: { name } })
 }
 </script>

@@ -13,7 +13,10 @@
           <TagPill tone="ash">{{ t('strigoi.pnl.chips.hitRate', { pct: hitRateText }) }}</TagPill>
           <TagPill :tone="signTone(detail.summary.realizedEur)">{{ t('strigoi.pnl.chips.realized', { v: formatEur(detail.summary.realizedEur) }) }}</TagPill>
           <TagPill :tone="signTone(detail.summary.unrealizedEur)">{{ t('strigoi.pnl.chips.unrealized', { v: formatEur(detail.summary.unrealizedEur) }) }}</TagPill>
-          <TagPill :tone="signTone(detail.summary.totalEur)">{{ t('strigoi.pnl.chips.total', { v: formatEur(detail.summary.totalEur) }) }}</TagPill>
+          <TagPill :tone="signTone(detail.summary.totalEur)">{{ t('strigoi.pnl.chips.total', { v: formatEur(detail.summary.totalEur) }) }}<span
+            v-if="detail.summary.flaggedTrades" class="pnl-flag"
+            :title="t('depots.pnl.flaggedHint', { n: detail.summary.flaggedTrades })"
+          > *</span></TagPill>
           <TagPill :tone="signTone(detail.summary.sumR)">{{ t('strigoi.pnl.chips.sumR', { v: formatNumber(detail.summary.sumR, 2) }) }}</TagPill>
         </div>
 

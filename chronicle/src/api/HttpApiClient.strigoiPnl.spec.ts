@@ -5,7 +5,11 @@ describe('HttpApiClient strigoi P&L', () => {
   let fetchMock: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
-    fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve({ strigoi: [] }) })
+    fetchMock = vi.fn().mockResolvedValue({
+      ok: true, status: 200,
+      headers: { get: () => 'application/json' },
+      json: () => Promise.resolve({ strigoi: [] }),
+    })
     vi.stubGlobal('fetch', fetchMock)
   })
   afterEach(() => vi.unstubAllGlobals())
@@ -29,5 +33,15 @@ describe('HttpApiClient strigoi P&L', () => {
   it('throws on other errors', async () => {
     fetchMock.mockResolvedValue({ ok: false, status: 503 })
     await expect(new HttpApiClient('').getStrigoiPnl('depot-1')).rejects.toThrow('HTTP 503')
+  })
+
+  it('resolves null on a 200 that is not JSON (SPA fallback shadowing instead of a 404)', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true, status: 200,
+      headers: { get: () => 'text/html; charset=utf-8' },
+      json: () => Promise.reject(new Error('Unexpected token <')),
+    })
+    expect(await new HttpApiClient('').getStrigoiPnl('depot-1')).toBeNull()
+    expect(await new HttpApiClient('').getStrigoiPnlDetail('strigoi-spin')).toBeNull()
   })
 })

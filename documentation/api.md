@@ -409,6 +409,7 @@ These endpoints are read-only and need no new table. They return the money resul
 **Query and access**
 - `connection` is optional. The default is `dracul.executor.connection`.
 - The same live-visibility gate as `/api/depots` applies: an invisible or unknown connection returns `404`, and Agora being unable to list connections returns `503`.
+- When `dracul.executor.enabled` is `false` both endpoints return `404` (a content-level 404, same pattern as `/api/decision-doc`: the controller is unconditional precisely so the SPA fallback never shadows it with a 200 text/html).
 
 **Which positions count**
 - Positions are grouped by `executor_position.source_agent`. A null `source_agent` goes into the group `unknown`.

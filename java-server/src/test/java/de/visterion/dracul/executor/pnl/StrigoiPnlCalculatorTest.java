@@ -71,7 +71,7 @@ class StrigoiPnlCalculatorTest {
     @Test
     void closedTradeWithoutTrim() {
         PnlTrade t = only(StrigoiPnlCalculator.price(in(List.of(
-                closed(1, "strigoi-syna", "SYNA", "10", "100", "110", "0.5", "2026-09-20 15:00:00.0")),
+                closed(1, "strigoi-syna", "TSTA", "10", "100", "110", "0.5", "2026-09-20 15:00:00.0")),
                 List.of(), Map.of(), NO_CLOSE, IDENTITY)));
 
         assertThat(t.realizedEur()).isEqualByComparingTo("100.00");
@@ -88,19 +88,19 @@ class StrigoiPnlCalculatorTest {
     void trimLegsWithOwnEntryPlusFinalLeg() {
         // Average entry 100 after a savings add; the first trim sold the add lot bought at 90.
         List<DecisionLog> legs = List.of(
-                leg("TRIM", "SYNB", "2026-09-10 16:00:00.0",
+                leg("TRIM", "TSTB", "2026-09-10 16:00:00.0",
                         "{\"qty_closed\":4,\"price\":120,\"entry_price\":90,\"position_id\":2}"),
-                leg("TRIM", "SYNB", "2026-09-11 16:00:00.0",
+                leg("TRIM", "TSTB", "2026-09-11 16:00:00.0",
                         "{\"qty_closed\":3,\"price\":null,\"order_id\":\"ord-syn-2\",\"position_id\":2}"),
-                leg("TRIM_FILL", "SYNB", "2026-09-12 16:00:00.0",
+                leg("TRIM_FILL", "TSTB", "2026-09-12 16:00:00.0",
                         "{\"order_id\":\"ord-syn-2\",\"qty\":2,\"price\":105,\"position_id\":2}"),
                 // another position's trim and a pre-linkage row outside the window: both ignored
-                leg("TRIM", "SYNB", "2026-09-10 17:00:00.0",
+                leg("TRIM", "TSTB", "2026-09-10 17:00:00.0",
                         "{\"qty_closed\":50,\"price\":500,\"position_id\":99}"),
-                leg("TRIM", "SYNB", "2026-08-01 10:00:00.0", "{\"qty_closed\":1,\"price\":1000}"));
+                leg("TRIM", "TSTB", "2026-08-01 10:00:00.0", "{\"qty_closed\":1,\"price\":1000}"));
 
         PnlTrade t = only(StrigoiPnlCalculator.price(in(List.of(
-                closed(2, "strigoi-syna", "SYNB", "6", "100", "95", "-0.25", "2026-09-25 15:00:00.0")),
+                closed(2, "strigoi-syna", "TSTB", "6", "100", "95", "-0.25", "2026-09-25 15:00:00.0")),
                 legs, Map.of(), NO_CLOSE, IDENTITY)));
 
         // (120-90)*4 + (105-100)*2 + (95-100)*6 = 120 + 10 - 30
@@ -153,7 +153,7 @@ class StrigoiPnlCalculatorTest {
 
     @Test
     void openPositionFallsBackToTheLastClose() {
-        PnlTrade t = only(StrigoiPnlCalculator.price(in(List.of(open(6, "strigoi-syna", "SYNA", "5", "50")),
+        PnlTrade t = only(StrigoiPnlCalculator.price(in(List.of(open(6, "strigoi-syna", "TSTA", "5", "50")),
                 List.of(), Map.of(), s -> new BigDecimal("45"), IDENTITY)));
 
         assertThat(t.unrealizedEur()).isEqualByComparingTo("-25.00");
@@ -162,7 +162,7 @@ class StrigoiPnlCalculatorTest {
 
     @Test
     void openPositionWithoutAnyPriceIsNullNeverZero() {
-        List<Priced> priced = StrigoiPnlCalculator.price(in(List.of(open(7, "strigoi-syna", "SYNA", "5", "50")),
+        List<Priced> priced = StrigoiPnlCalculator.price(in(List.of(open(7, "strigoi-syna", "TSTA", "5", "50")),
                 List.of(), Map.of(), NO_CLOSE, IDENTITY));
 
         assertThat(only(priced).unrealizedEur()).isNull();
@@ -176,10 +176,10 @@ class StrigoiPnlCalculatorTest {
 
     @Test
     void trimOfAnOpenPositionIsRealized() {
-        PnlTrade t = only(StrigoiPnlCalculator.price(in(List.of(open(8, "strigoi-syna", "SYNB", "5", "50")),
-                List.of(leg("TRIM", "SYNB", "2026-09-10 16:00:00.0",
+        PnlTrade t = only(StrigoiPnlCalculator.price(in(List.of(open(8, "strigoi-syna", "TSTB", "5", "50")),
+                List.of(leg("TRIM", "TSTB", "2026-09-10 16:00:00.0",
                         "{\"qty_closed\":2,\"price\":55,\"position_id\":8}")),
-                Map.of("SYNB", new BigDecimal("60")), NO_CLOSE, IDENTITY)));
+                Map.of("TSTB", new BigDecimal("60")), NO_CLOSE, IDENTITY)));
 
         assertThat(t.realizedEur()).isEqualByComparingTo("10.00");
         assertThat(t.unrealizedEur()).isEqualByComparingTo("50.00");
@@ -188,9 +188,9 @@ class StrigoiPnlCalculatorTest {
     @Test
     void convertsToEurAtTheGivenRate() {
         List<Priced> priced = StrigoiPnlCalculator.price(in(List.of(
-                closed(9, "strigoi-syna", "SYNA", "10", "100", "110", "0.5", "2026-09-20 15:00:00.0"),
-                open(10, "strigoi-syna", "SYNB", "5", "50")),
-                List.of(), Map.of("SYNB", new BigDecimal("60")), NO_CLOSE, RATE_0_9));
+                closed(9, "strigoi-syna", "TSTA", "10", "100", "110", "0.5", "2026-09-20 15:00:00.0"),
+                open(10, "strigoi-syna", "TSTB", "5", "50")),
+                List.of(), Map.of("TSTB", new BigDecimal("60")), NO_CLOSE, RATE_0_9));
 
         StrigoiPnlSummary s = StrigoiPnlCalculator.summarize("strigoi-syna", priced);
         assertThat(s.realizedEur()).isEqualByComparingTo("90.00");
@@ -202,7 +202,7 @@ class StrigoiPnlCalculatorTest {
     @Test
     void missingFxRateIsNullButStillClassifiesTheTrade() {
         List<Priced> priced = StrigoiPnlCalculator.price(in(List.of(
-                closed(11, "strigoi-syna", "SYNA", "10", "100", "110", "0.5", "2026-09-20 15:00:00.0")),
+                closed(11, "strigoi-syna", "TSTA", "10", "100", "110", "0.5", "2026-09-20 15:00:00.0")),
                 List.of(), Map.of(), NO_CLOSE, NO_FX));
 
         assertThat(only(priced).realizedEur()).isNull();
@@ -213,8 +213,8 @@ class StrigoiPnlCalculatorTest {
     @Test
     void groupsBySourceAgentWithNullAndBlankAsUnknownLast() {
         List<Priced> priced = StrigoiPnlCalculator.price(in(List.of(
-                closed(12, "strigoi-synb", "SYNA", "1", "10", "11", "1", "2026-09-20 15:00:00.0"),
-                closed(13, "strigoi-syna", "SYNB", "1", "10", "11", "1", "2026-09-20 15:00:00.0"),
+                closed(12, "strigoi-synb", "TSTA", "1", "10", "11", "1", "2026-09-20 15:00:00.0"),
+                closed(13, "strigoi-syna", "TSTB", "1", "10", "11", "1", "2026-09-20 15:00:00.0"),
                 closed(14, null, "SYNC", "1", "10", "9", "-1", "2026-09-20 15:00:00.0"),
                 closed(15, " ", "SYND", "1", "10", "9", "-1", "2026-09-20 15:00:00.0")),
                 List.of(), Map.of(), NO_CLOSE, IDENTITY));
@@ -228,20 +228,20 @@ class StrigoiPnlCalculatorTest {
 
     @Test
     void cancelledAndUnfilledOpenRowsAreNotTrades() {
-        ExecutorPosition cancelled = pos(16, "strigoi-syna", "SYNA", "BUY", "CANCELLED", "5", "50", null, null,
+        ExecutorPosition cancelled = pos(16, "strigoi-syna", "TSTA", "BUY", "CANCELLED", "5", "50", null, null,
                 "2026-09-05 10:00:00.0", "2026-09-08 10:00:00.0", null);
-        ExecutorPosition unfilled = pos(17, "strigoi-syna", "SYNB", "BUY", "OPEN", "5", "50", null, null,
+        ExecutorPosition unfilled = pos(17, "strigoi-syna", "TSTB", "BUY", "OPEN", "5", "50", null, null,
                 "2026-09-05 10:00:00.0", null, null);
 
         assertThat(StrigoiPnlCalculator.price(in(List.of(cancelled, unfilled), List.of(),
-                Map.of("SYNB", new BigDecimal("60")), NO_CLOSE, IDENTITY))).isEmpty();
+                Map.of("TSTB", new BigDecimal("60")), NO_CLOSE, IDENTITY))).isEmpty();
     }
 
     @Test
     void winLossAndZero() {
         List<Priced> priced = StrigoiPnlCalculator.price(in(List.of(
-                closed(18, "strigoi-syna", "SYNA", "1", "10", "12", "2", "2026-09-20 15:00:00.0"),
-                closed(19, "strigoi-syna", "SYNB", "1", "10", "9", "-1", "2026-09-21 15:00:00.0"),
+                closed(18, "strigoi-syna", "TSTA", "1", "10", "12", "2", "2026-09-20 15:00:00.0"),
+                closed(19, "strigoi-syna", "TSTB", "1", "10", "9", "-1", "2026-09-21 15:00:00.0"),
                 closed(20, "strigoi-syna", "SYNC", "1", "10", "10", "0", "2026-09-22 15:00:00.0")),
                 List.of(), Map.of(), NO_CLOSE, IDENTITY));
 
@@ -264,7 +264,7 @@ class StrigoiPnlCalculatorTest {
     @Test
     void sellSideIsMirrored() {
         PnlTrade t = only(StrigoiPnlCalculator.price(in(List.of(
-                pos(21, "strigoi-syna", "SYNA", "sell", "CLOSED", "10", "100", "90", "1",
+                pos(21, "strigoi-syna", "TSTA", "sell", "CLOSED", "10", "100", "90", "1",
                         "2026-09-01 10:00:00.0", "2026-09-20 15:00:00.0", "2026-09-01 15:00:00.0")),
                 List.of(), Map.of(), NO_CLOSE, IDENTITY)));
 
@@ -274,10 +274,10 @@ class StrigoiPnlCalculatorTest {
     @Test
     void sortsOpenFirstThenNewestClose() {
         List<Priced> priced = StrigoiPnlCalculator.price(in(List.of(
-                closed(22, "strigoi-syna", "SYNA", "1", "10", "11", "1", "2026-09-10 15:00:00.0"),
-                open(23, "strigoi-syna", "SYNB", "1", "10"),
+                closed(22, "strigoi-syna", "TSTA", "1", "10", "11", "1", "2026-09-10 15:00:00.0"),
+                open(23, "strigoi-syna", "TSTB", "1", "10"),
                 closed(24, "strigoi-syna", "SYNC", "1", "10", "11", "1", "2026-09-20 15:00:00.0")),
-                List.of(), Map.of("SYNB", new BigDecimal("11")), NO_CLOSE, IDENTITY));
+                List.of(), Map.of("TSTB", new BigDecimal("11")), NO_CLOSE, IDENTITY));
 
         assertThat(StrigoiPnlCalculator.sortedTrades(priced)).extracting(PnlTrade::positionId)
                 .containsExactly(23L, 24L, 22L);

@@ -13,6 +13,13 @@ import type {
   StrigoiPnlOverview, StrigoiPnlDetail,
 } from './types'
 
+/** True when the response's Content-Type is JSON. Guards against the SPA fallback silently
+ *  answering 200 text/html for an endpoint whose backing feature is disabled (e.g. the
+ *  executor), which would otherwise make `res.json()` throw instead of hiding the section. */
+function isJson(res: Response): boolean {
+  return (res.headers.get('content-type') ?? '').includes('application/json')
+}
+
 export class HttpApiClient implements ApiClient {
   constructor(private readonly baseUrl: string) {}
 
@@ -378,6 +385,7 @@ export class HttpApiClient implements ApiClient {
     )
     if (res.status === 404) return null
     if (!res.ok) throw new Error(`getStrigoiPnl failed: HTTP ${res.status}`)
+    if (!isJson(res)) return null
     return res.json() as Promise<StrigoiPnlOverview>
   }
 
@@ -386,6 +394,7 @@ export class HttpApiClient implements ApiClient {
     const res = await fetch(`${this.baseUrl}/api/executor/pnl/strigoi/${encodeURIComponent(name)}${query}`)
     if (res.status === 404) return null
     if (!res.ok) throw new Error(`getStrigoiPnlDetail failed: HTTP ${res.status}`)
+    if (!isJson(res)) return null
     return res.json() as Promise<StrigoiPnlDetail>
   }
 

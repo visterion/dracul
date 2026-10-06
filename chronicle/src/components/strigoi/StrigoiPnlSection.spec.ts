@@ -71,6 +71,15 @@ describe('StrigoiPnlSection', () => {
     expect(w.find('[data-testid="strigoi-pnl-fx-note"]').exists()).toBe(true)
   })
 
+  it('marks the total chip with a flag hint when trades are excluded from the sum', async () => {
+    response = detail([trade()])
+    const w = mountSection()
+    await flushPromises()
+    const chips = w.find('[data-testid="strigoi-pnl-chips"]')
+    expect(chips.find('.pnl-flag').exists()).toBe(true)
+    expect(chips.find('.pnl-flag').attributes('title')).toContain('1 Trade(s)')
+  })
+
   it('shows an unpriced open trade as — with a flag, never as 0', async () => {
     response = detail([trade({ unrealizedEur: null, flags: ['NO_PRICE'] })])
     const w = mountSection()

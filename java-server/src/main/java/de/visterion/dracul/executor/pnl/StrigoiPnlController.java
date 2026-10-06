@@ -3,8 +3,8 @@ package de.visterion.dracul.executor.pnl;
 import de.visterion.dracul.auth.CurrentUserHolder;
 import de.visterion.dracul.depot.DepotService;
 import de.visterion.dracul.depot.DepotUnavailableException;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -19,17 +19,24 @@ import org.springframework.web.server.ResponseStatusException;
  * behind the Depots live-visibility gate: an invisible or unknown connection is 404, an Agora
  * outage while listing connections is 503 — the {@code DepotController.resolveDepot} contract.
  * {@code connection} defaults to the executor's connection.
+ *
+ * <p>This bean is intentionally an unconditional {@code @RestController} (no
+ * {@code @ConditionalOnProperty}), same reasoning as {@code report.DecisionDocController}:
+ * {@code SpaFallbackController} maps dot-free paths of 1-4 segments, which covers
+ * {@code /api/executor/pnl/strigoi} (4 segments). Were this bean absent when
+ * {@code dracul.executor.enabled=false} (so {@link StrigoiPnlService} does not exist), the
+ * request would fall through to the SPA and yield a 200 text/html instead of a 404. The "off"
+ * state is therefore a content-level 404 via {@link ObjectProvider#getIfAvailable()}.
  */
 @RestController
-@ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
 @RequestMapping("/api/executor/pnl")
 public class StrigoiPnlController {
 
-    private final StrigoiPnlService service;
+    private final ObjectProvider<StrigoiPnlService> service;
     private final DepotService depots;
     private final String defaultConnection;
 
-    public StrigoiPnlController(StrigoiPnlService service, DepotService depots,
+    public StrigoiPnlController(ObjectProvider<StrigoiPnlService> service, DepotService depots,
             @Value("${dracul.executor.connection:depot-1}") String defaultConnection) {
         this.service = service;
         this.depots = depots;
@@ -38,13 +45,21 @@ public class StrigoiPnlController {
 
     @GetMapping("/strigoi")
     public StrigoiPnlOverview overview(@RequestParam(name = "connection", required = false) String connection) {
-        return service.overview(visibleConnection(connection));
+        StrigoiPnlService svc = requireService();
+        return svc.overview(visibleConnection(connection));
     }
 
     @GetMapping("/strigoi/{name}")
     public StrigoiPnlDetail detail(@PathVariable String name,
             @RequestParam(name = "connection", required = false) String connection) {
-        return service.detail(visibleConnection(connection), name);
+        StrigoiPnlService svc = requireService();
+        return svc.detail(visibleConnection(connection), name);
+    }
+
+    private StrigoiPnlService requireService() {
+        StrigoiPnlService svc = service.getIfAvailable();
+        if (svc == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "executor disabled");
+        return svc;
     }
 
     private String visibleConnection(String requested) {

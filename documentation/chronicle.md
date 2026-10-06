@@ -447,7 +447,7 @@ hit rate (`hitRate90d` with numerator/denominator foot), hunts (`huntsThisMonth`
 return metric. Below the stat tiles, the **"Ergebnis" section** (`components/strigoi/StrigoiPnlSection.vue`,
 `data-testid="strigoi-pnl-section"`) shows this agent's real money result:
 - **Data.** It fetches `GET /api/executor/pnl/strigoi/{name}` itself, for the executor's default connection.
-- **Chips.** `TagPill` chips show trades, open, hit rate, realized/open/total € and Σ R. They are deliberately not `.stat-tile`s, so the four tiles stay four.
+- **Chips.** `TagPill` chips show trades, open, hit rate, realized/open/total € and Σ R. They are deliberately not `.stat-tile`s, so the four tiles stay four. Like the Depots table, the Gesamt € chip carries a `*` (same tooltip) when its sum leaves out flagged trades.
 - **Trade table.** Columns are Status, Aktie, Kauf, Verkauf, Stück, Kauf/Verkaufskurs, Ergebnis € and R, Grund. Open trades are listed first.
   - An open trade's symbol links to `/depots/:connection/:symbol`.
   - "Ergebnis €" is realized for closed trades and realized trims + open for open trades.
@@ -527,7 +527,7 @@ populate. The back link returns to `/depots`.
 - **Placement and data.** It sits under the selected depot's section and fetches its own data: `GET /api/executor/pnl/strigoi?connection=<selected depot>`.
 - **Columns.** "Ergebnis pro Strigoi" has the columns Strigoi, Trades (closed, plus "+ n offen"), Treffer %, Realisiert €, Offen €, Gesamt € and Σ R. EUR cells are coloured by sign.
 - **Flagged rows.** A `*` on Gesamt € marks a strigoi whose sum leaves out flagged trades (missing price, leg or FX rate).
-- **Row links.** A row opens `/strigoi/:name`. The `unknown` group (positions without `source_agent`) is not clickable.
+- **Row links.** A row opens `/strigoi/:name` only when the group's `strigoi` is a real strigoi name (starts with `strigoi-`). The `unknown` group (positions without `source_agent`) and any other non-strigoi `source_agent` (e.g. an operator-injected signal) are not clickable.
 - **FX note.** The line "Umrechnung in € zum aktuellen Wechselkurs" below the table states the `fxBasis: "current"` approximation.
 - **Empty and absent states.** No trades shows "Noch keine Trades". A 404 (executor disabled, or the connection not visible) hides the section.
 - **Mock mode.** It serves synthetic rows for `depot-1` (`mocks/strigoiPnl.ts`).
