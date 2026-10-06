@@ -728,6 +728,58 @@ export interface DepotsResponse {
   error: string | null
 }
 
+/** One strigoi's result (GET /api/executor/pnl/strigoi). EUR at the CURRENT rate; sums skip
+ *  null trade amounts — flaggedTrades counts those. hitRate null without a closed trade. */
+export interface StrigoiPnlSummary {
+  strigoi: string
+  closedTrades: number
+  wins: number
+  losses: number
+  hitRate: number | null
+  realizedEur: number
+  unrealizedEur: number
+  totalEur: number
+  sumR: number
+  openPositions: number
+  openCostEur: number
+  flaggedTrades: number
+}
+
+export type StrigoiPnlFlag = 'INCOMPLETE_LEGS' | 'NO_PRICE' | 'NO_FX'
+
+/** One trade of a strigoi. Prices in `currency`; money in EUR, null (never 0) when unknown. */
+export interface StrigoiPnlTrade {
+  positionId: number
+  symbol: string
+  status: 'OPEN' | 'CLOSED'
+  entryDate: string | null
+  exitDate: string | null
+  qty: number | null
+  entryPrice: number | null
+  exitPrice: number | null
+  currency: string
+  realizedEur: number | null
+  unrealizedEur: number | null
+  r: number | null
+  exitReason: string | null
+  flags: StrigoiPnlFlag[]
+}
+
+export interface StrigoiPnlOverview {
+  connection: string
+  currency: 'EUR'
+  fxBasis: 'current'
+  strigoi: StrigoiPnlSummary[]
+}
+
+export interface StrigoiPnlDetail {
+  connection: string
+  currency: 'EUR'
+  fxBasis: 'current'
+  summary: StrigoiPnlSummary
+  trades: StrigoiPnlTrade[]
+}
+
 export interface ChartPoint {
   t: string
   value: number

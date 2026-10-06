@@ -35,3 +35,20 @@ describe('MockApiClient.searchInstruments', () => {
     expect(await client.searchInstruments('m')).toEqual([])
   })
 })
+
+describe('MockApiClient strigoi P&L', () => {
+  it('returns rows for depot-1 and none for another depot', async () => {
+    const client = new MockApiClient()
+    const own = await client.getStrigoiPnl('depot-1')
+    const other = await client.getStrigoiPnl('saxo-live-1')
+    expect(own?.strigoi.map(r => r.strigoi)).toEqual(['strigoi-echo', 'strigoi-spin'])
+    expect(other?.strigoi).toEqual([])
+  })
+
+  it('returns an empty detail for a strigoi without trades', async () => {
+    const detail = await new MockApiClient().getStrigoiPnlDetail('strigoi-lazarus')
+    expect(detail?.trades).toEqual([])
+    expect(detail?.summary.closedTrades).toBe(0)
+    expect(detail?.summary.hitRate).toBeNull()
+  })
+})

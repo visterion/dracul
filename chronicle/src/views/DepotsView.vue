@@ -32,6 +32,7 @@
       </label>
 
       <DepotSection v-if="selectedDepot" :key="selectedDepot.id" :depot="selectedDepot" />
+      <StrigoiPnlTable v-if="selectedDepot" :key="`pnl-${selectedDepot.id}`" :connection="selectedDepot.id" />
     </template>
 
     <div class="depots-calibration">
@@ -48,6 +49,7 @@ import PageHead from '../components/common/PageHead.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
 import InfoDot from '../components/common/InfoDot.vue'
 import DepotSection from '../components/depot/DepotSection.vue'
+import StrigoiPnlTable from '../components/depot/StrigoiPnlTable.vue'
 import CalibrationCard from '../components/CalibrationCard.vue'
 import { useApi } from '../api'
 import type { Depot } from '../api/types'

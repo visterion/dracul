@@ -58,11 +58,13 @@ let depotsResponse: DepotsResponse
 let getDepotChartImpl: (connection: string, range: ChartRange) => Promise<DepotEquityCurve> =
   async () => mockDepotChart
 const mockGetDepots = vi.fn(async () => depotsResponse)
+const mockGetStrigoiPnl = vi.fn(async (connection: string) => ({ connection, currency: 'EUR' as const, fxBasis: 'current' as const, strigoi: [] }))
 
 vi.mock('../api', () => ({
   useApi: () => ({
     getDepots: mockGetDepots,
     getDepotChart: vi.fn((connection: string, range: ChartRange) => getDepotChartImpl(connection, range)),
+    getStrigoiPnl: mockGetStrigoiPnl,
   }),
 }))
 
@@ -72,6 +74,7 @@ const router = createRouter({
   routes: [
     { path: '/depots', name: 'depots', component: DepotsView },
     { path: '/depots/:connection/:symbol', name: 'depot-position-detail', component: { template: '<div/>' } },
+    { path: '/strigoi/:name', name: 'strigoi-detail', component: { template: '<div/>' } },
   ],
 })
 
@@ -85,6 +88,7 @@ beforeEach(() => {
   router.push('/depots')
   getDepotChartImpl = async () => mockDepotChart
   mockGetDepots.mockClear()
+  mockGetStrigoiPnl.mockClear()
 })
 
 describe('DepotsView', () => {
@@ -363,5 +367,13 @@ describe('DepotsView', () => {
     const options = w.find('[data-testid="depot-select"]').findAll('option')
     expect(options[0].text()).not.toContain('LIVE')
     expect(options[1].text()).toContain('LIVE')
+  })
+
+  it('renders the strigoi P&L table for the selected depot', async () => {
+    depotsResponse = { depots: [depot({ id: 'depot-1' })], error: null }
+    const w = mountView()
+    await flushPromises()
+    expect(mockGetStrigoiPnl).toHaveBeenCalledWith('depot-1')
+    expect(w.find('[data-testid="strigoi-pnl"]').exists()).toBe(true)
   })
 })

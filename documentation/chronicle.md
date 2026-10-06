@@ -39,7 +39,7 @@ Both documents are required reading before implementing any view.
 | 8 | Settings | `/settings` | Providers, budgets, agent config, notifications; embedded Schatzkammer (admin-only) | Variable | ✅ Etappe 11 |
 | 9 | Exit Signal Detail | `/exit-signal/:id` | Full rationale, fired rules, thesis status, position context (resolved by symbol against depot-1) | Low (prose) | ✅ |
 | 10 | Morning Report | `/report` | Daily morning report — per-position stop, +2R target, current price, distance-to-stop, and a read-only order ticket | Medium | ✅ |
-| 11 | Depots | `/depots` | Trade-Republic-style live broker overview: summary bar (Σ equity, day change, total cash), one section per depot (header with provider/environment/probe status/"Stand:" freshness, headline value + day change + P&L, cash/invested/buying-power stats, performance chart with 1T/1W/1M/1J/Max ranges, allocation bar, positions table, orders), plus the operator-analytics Calibration card | High | ✅ Task C2 / A9 |
+| 11 | Depots | `/depots` | Trade-Republic-style live broker overview: summary bar (Σ equity, day change, total cash), one section per depot (header with provider/environment/probe status/"Stand:" freshness, headline value + day change + P&L, cash/invested/buying-power stats, performance chart with 1T/1W/1M/1J/Max ranges, allocation bar, positions table, orders), the per-strigoi result table and the operator-analytics Calibration card | High | ✅ Task C2 / A9 |
 | 12 | Depot Position Detail | `/depots/:connection/:symbol` | Trade-Republic-style instrument page: header (price + selected-timeframe change), 1T/1W/1M/1J/Max chart with dotted baseline, stat tiles, open orders, profile description, and horizontally scrollable News/Ereignisse/Insights/Finanzen card rows | High | ✅ Task C3 |
 | 13 | Agent Activity (Inspector) | `/inspector` | Operator-only browser of every Vistierie run across all agents: agent filter (client-side constant list of known agents + "all"), paginated run list (agent, started-at, status, error marker, snippet), click-to-expand raw transcript via `RawTranscriptPanel`, "load more" pagination | Low (operator tool) | ✅ Agent Activity Inspector, Task 4 |
 | 14 | Proposals | `/proposals` | Read-only view of renfield's daily watchlist review: `GET /api/renfield/proposals?days=7`, grouped by run (newest first), action items (buy/add/trim/sell/drop_from_watchlist) shown separately from plain `hold` observations; live-refreshes on the `proposal.new` SSE event | Medium | ✅ T1.6 renfield repair |
@@ -511,6 +511,16 @@ rules, thesis status, and confidence, plus a **Position** section resolved by
 scans `GET /api/depots`'s `depots[].positions[]` for a `symbol` match) — not by
 the legacy `watchlistItemId`, which gropar's depot-sourced signals never
 populate. The back link returns to `/depots`.
+
+**Strigoi result table** (`components/depot/StrigoiPnlTable.vue`,
+`data-testid="strigoi-pnl"`):
+- **Placement and data.** It sits under the selected depot's section and fetches its own data: `GET /api/executor/pnl/strigoi?connection=<selected depot>`.
+- **Columns.** "Ergebnis pro Strigoi" has the columns Strigoi, Trades (closed, plus "+ n offen"), Treffer %, Realisiert €, Offen €, Gesamt € and Σ R. EUR cells are coloured by sign.
+- **Flagged rows.** A `*` on Gesamt € marks a strigoi whose sum leaves out flagged trades (missing price, leg or FX rate).
+- **Row links.** A row opens `/strigoi/:name`. The `unknown` group (positions without `source_agent`) is not clickable.
+- **FX note.** The line "Umrechnung in € zum aktuellen Wechselkurs" below the table states the `fxBasis: "current"` approximation.
+- **Empty and absent states.** No trades shows "Noch keine Trades". A 404 (executor disabled, or the connection not visible) hides the section.
+- **Mock mode.** It serves synthetic rows for `depot-1` (`mocks/strigoiPnl.ts`).
 
 **Calibration card** (`CalibrationCard.vue`, `data-testid="calibration-card"`):
 sits below the depot section on the Depots view (moved here from the retired

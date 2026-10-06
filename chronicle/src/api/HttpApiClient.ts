@@ -10,6 +10,7 @@ import type {
   ExecutorCalibration, ExecutorBehavior,
   DepotsResponse, DepotChart, DepotEquityCurve, ChartRange, InstrumentInfo, DepotPositionView, DepotOrderView,
   DepotHistory, RunTranscript, InspectorRunsResponse, DepotMove, InstrumentSearchHit, ProposalRun,
+  StrigoiPnlOverview, StrigoiPnlDetail,
 } from './types'
 
 export class HttpApiClient implements ApiClient {
@@ -369,6 +370,23 @@ export class HttpApiClient implements ApiClient {
     if (res.status === 503) throw new Error(`getDepotHistory: depot unavailable: ${connection}`)
     if (!res.ok) throw new Error(`getDepotHistory failed: HTTP ${res.status}`)
     return res.json() as Promise<DepotHistory>
+  }
+
+  async getStrigoiPnl(connection: string): Promise<StrigoiPnlOverview | null> {
+    const res = await fetch(
+      `${this.baseUrl}/api/executor/pnl/strigoi?connection=${encodeURIComponent(connection)}`,
+    )
+    if (res.status === 404) return null
+    if (!res.ok) throw new Error(`getStrigoiPnl failed: HTTP ${res.status}`)
+    return res.json() as Promise<StrigoiPnlOverview>
+  }
+
+  async getStrigoiPnlDetail(name: string, connection?: string): Promise<StrigoiPnlDetail | null> {
+    const query = connection ? `?connection=${encodeURIComponent(connection)}` : ''
+    const res = await fetch(`${this.baseUrl}/api/executor/pnl/strigoi/${encodeURIComponent(name)}${query}`)
+    if (res.status === 404) return null
+    if (!res.ok) throw new Error(`getStrigoiPnlDetail failed: HTTP ${res.status}`)
+    return res.json() as Promise<StrigoiPnlDetail>
   }
 
   async getRunTranscript(runId: string): Promise<RunTranscript> {

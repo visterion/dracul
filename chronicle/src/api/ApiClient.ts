@@ -9,6 +9,7 @@ import type {
   ExecutorCalibration, ExecutorBehavior,
   DepotsResponse, DepotChart, DepotEquityCurve, ChartRange, InstrumentInfo, DepotPositionView, DepotOrderView,
   DepotHistory, RunTranscript, InspectorRunsResponse, DepotMove, InstrumentSearchHit, ProposalRun,
+  StrigoiPnlOverview, StrigoiPnlDetail,
 } from './types'
 
 export interface ApiClient {
@@ -59,6 +60,8 @@ export interface ApiClient {
     symbol: string,
   ): Promise<{ position: DepotPositionView; orders: DepotOrderView[]; asOf: string | null; runId: string | null; moves: DepotMove[] }>
   getDepotHistory(connection: string): Promise<DepotHistory>
+  getStrigoiPnl(connection: string): Promise<StrigoiPnlOverview | null>
+  getStrigoiPnlDetail(name: string, connection?: string): Promise<StrigoiPnlDetail | null>
   getRunTranscript(runId: string): Promise<RunTranscript>
   getInspectorTranscript(runId: string): Promise<RunTranscript>
   getInspectorRuns(agent: string | null, limit?: number, offset?: number): Promise<InspectorRunsResponse>
