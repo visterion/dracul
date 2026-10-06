@@ -120,7 +120,7 @@ class ExecutorPositionCopySiteContractTest {
 
         List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
-        verify(positionRepo).syncEntryPrice(70L, new BigDecimal("99.50"));
+        verify(positionRepo).syncEntryPrice(70L, new BigDecimal("99.500000"));
         assertThat(survivors).singleElement()
                 .satisfies(ExecutorPositionCopySiteContractTest::assertCarried);
     }

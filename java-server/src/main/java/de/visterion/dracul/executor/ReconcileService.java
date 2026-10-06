@@ -1970,7 +1970,12 @@ public class ReconcileService {
         // Book = broker: the broker's average open price is the entry-price truth. The submitted
         // limit stays in submitted_limit_price (slippage = entry_price - submitted_limit_price).
         // Idempotent: converges after tranche-2 fills too; logs only on an actual change.
-        BigDecimal brokerBasis = bp.avgEntryPrice();
+        // Spec 2026-10-06 §8: the broker average has 14+ decimals, entry_price NUMERIC(18,6). Compare
+        // and persist at scale 6 (Postgres rounds HALF_UP too) — a raw compareTo was != 0 forever and
+        // wrote an ENTRY_PRICE_SYNC row on every pass. The rounded value is also what the rest of this
+        // pass carries in memory.
+        BigDecimal brokerBasis = bp.avgEntryPrice() == null
+                ? null : bp.avgEntryPrice().setScale(6, RoundingMode.HALF_UP);
         if (brokerBasis != null && brokerBasis.signum() > 0
                 && p.entryPrice().compareTo(brokerBasis) != 0) {
             positionRepo.syncEntryPrice(p.id(), brokerBasis);

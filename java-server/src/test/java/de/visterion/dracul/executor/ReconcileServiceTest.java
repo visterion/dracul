@@ -428,7 +428,7 @@ class ReconcileServiceTest {
 
         List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
-        verify(positionRepo).syncEntryPrice(20L, new BigDecimal("100.00"));
+        verify(positionRepo).syncEntryPrice(20L, new BigDecimal("100.000000"));
 
         assertThat(survivors).hasSize(1);
         ExecutorPosition survivor = survivors.get(0);
@@ -491,7 +491,7 @@ class ReconcileServiceTest {
 
         List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
-        verify(positionRepo).syncEntryPrice(30L, new BigDecimal("99.50"));
+        verify(positionRepo).syncEntryPrice(30L, new BigDecimal("99.500000"));
         ArgumentCaptor<BigDecimal> highestCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         verify(positionRepo).updateMaintenance(eq(30L), highestCaptor.capture(), any(), eq(0),
                 any(), isNull(), any());
@@ -534,7 +534,7 @@ class ReconcileServiceTest {
 
         List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
-        verify(positionRepo).syncEntryPrice(32L, new BigDecimal("100.50"));
+        verify(positionRepo).syncEntryPrice(32L, new BigDecimal("100.500000"));
         ArgumentCaptor<BigDecimal> highestCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         verify(positionRepo).updateMaintenance(eq(32L), highestCaptor.capture(), any(), eq(0),
                 any(), isNull(), any());
@@ -586,7 +586,7 @@ class ReconcileServiceTest {
 
         List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
-        verify(positionRepo).syncEntryPrice(34L, new BigDecimal("101.00"));
+        verify(positionRepo).syncEntryPrice(34L, new BigDecimal("101.000000"));
         ArgumentCaptor<BigDecimal> highestCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         verify(positionRepo).updateMaintenance(eq(34L), highestCaptor.capture(), any(), eq(0),
                 any(), isNull(), any());
@@ -3076,7 +3076,7 @@ class ReconcileServiceTest {
 
         List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
-        verify(positionRepo).syncEntryPrice(70L, new BigDecimal("99.50"));
+        verify(positionRepo).syncEntryPrice(70L, new BigDecimal("99.500000"));
         assertThat(survivors).singleElement().satisfies(ReconcileServiceTest::assertKillCarried);
     }
 
@@ -3444,5 +3444,36 @@ class ReconcileServiceTest {
         verify(positionRepo).close(eq(91L), any(), r.capture(), eq("HARD_STOP"), eq("FILL"), rValue.capture());
         assertThat(r.getValue()).isEqualByComparingTo("-0.476190");   // (50 − 60) / 21
         assertThat(rValue.getValue()).isEqualByComparingTo("21.00");
+    }
+
+    /** Spec 2026-10-06 §8: the broker average carries 14+ decimals, the column 6 — comparing the raw
+     *  value made ENTRY_PRICE_SYNC fire on every pass forever. Equal at scale 6 ⇒ no sync, no row. */
+    @Test
+    void entryPriceSyncIsANoOpAtAnEqualScale6Value() {
+        ExecutorPosition p = openPosition(95L, "SYNTH", "BUY", new BigDecimal("105.778947"),
+                new BigDecimal("65"), "brk-95", "stop-95", null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        gateway.seedPosition(new BrokerPosition("SYNTH", "BUY", BigDecimal.TEN,
+                new BigDecimal("105.77894736842105"), new BigDecimal("106"), null));
+
+        service.reconcile("c", "run1");
+
+        verify(positionRepo, never()).syncEntryPrice(anyLong(), any());
+        assertThat(reasonCodes()).doesNotContain("ENTRY_PRICE_SYNC");
+    }
+
+    /** A real change syncs once, persisting AND carrying the rounded value. */
+    @Test
+    void entryPriceSyncPersistsTheScale6Value() {
+        ExecutorPosition p = openPosition(96L, "SYNTH", "BUY", new BigDecimal("100"),
+                new BigDecimal("65"), "brk-96", "stop-96", null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        gateway.seedPosition(new BrokerPosition("SYNTH", "BUY", BigDecimal.TEN,
+                new BigDecimal("105.77894736842105"), new BigDecimal("106"), null));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
+
+        verify(positionRepo).syncEntryPrice(96L, new BigDecimal("105.778947"));
+        assertThat(survivors.getFirst().entryPrice()).isEqualTo(new BigDecimal("105.778947"));
     }
 }
