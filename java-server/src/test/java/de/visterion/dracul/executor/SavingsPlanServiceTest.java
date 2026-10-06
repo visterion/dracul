@@ -512,4 +512,27 @@ class SavingsPlanServiceTest {
         service.releaseLease("pass-b");
         assertThat(service.leaseHolder()).isNull();
     }
+
+    /** §5.3 / R3: counted in weekdays (NY trade dates) — a Friday add is not stale before Tuesday;
+     *  raised once per row; the stage says why when it raises nothing. */
+    @Test
+    void aStaleAddIsRaisedOnceAndAFridayAddNotBeforeTuesday() {
+        ExecutorPosition p = SavingsFixtures.pos(1, "TECHA").build();
+        when(positionRepo.findById(1L)).thenReturn(p);
+        var r = savingsRepo.seed("2026-11", 1L, "TECHA", SavingsBuy.PLACED, "9", "112.20", "100.98",
+                "10", "100", "65.00", Instant.parse("2026-11-06T23:00:00Z"));          // Friday
+
+        assertThat(service.staleCheck("c", "run-mon", "pass-mon", Instant.parse("2026-11-09T23:00:00Z"))).isZero();
+        assertThat(service.staleCheck("c", "run-tue", "pass-tue", Instant.parse("2026-11-10T23:00:00Z"))).isEqualTo(1);
+        when(decisionRepo.countByReasonCodeForSavingsBuy("SAVINGS_ADD_STALE", r.id)).thenReturn(1);
+        assertThat(service.staleCheck("c", "run-tue2", "pass-tue2", Instant.parse("2026-11-10T23:30:00Z"))).isZero();
+
+        assertThat(decisions()).filteredOn(d -> "SAVINGS_ADD_STALE".equals(d.reasonCode())).hasSize(1);
+        assertThat(lines("savings-plan stage")).anySatisfy(l -> assertThat(l)
+                .contains("stage=stale").contains("outcome=did-nothing").contains("why=no-stale-rows"));
+        assertThat(lines("savings-plan stage")).anySatisfy(l -> assertThat(l)
+                .contains("stage=stale").contains("why=already-escalated"));
+        assertThat(appender.list).anySatisfy(e -> assertThat(e.getFormattedMessage())
+                .startsWith("savings-plan escalation").contains("code=SAVINGS_ADD_STALE").contains("severity=CRITICAL"));
+    }
 }

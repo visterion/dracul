@@ -729,4 +729,127 @@ class SavingsConsolidatorTest {
         assertThat(lines("savings-plan broker")).anySatisfy(l -> assertThat(l)
                 .contains("op=cancelOrder").contains("order=child-9").contains("phase=intent"));
     }
+
+    InMemorySavingsPlanRepository.Row consolidatingRow(String newStop) {
+        InMemorySavingsPlanRepository.Row r = placedRow();
+        r.status = SavingsBuy.CONSOLIDATING;
+        r.newStopOrderId = newStop;
+        r.targetQty = new BigDecimal("19");
+        r.targetStop = new BigDecimal("68.76");
+        return r;
+    }
+
+    /** §5.3 / R3: a crash between step 6 and 7 after a place-first place — the next pass keeps exactly
+     *  one stop (new_stop_order_id), cancels the other and books step 7. */
+    @Test
+    void resumeAfterACrashKeepsTheNewStopCancelsTheRestAndBooks() {
+        var r = consolidatingRow("pstop-9");
+        gateway.seedOrder(liveStop("stop-1", "TECHA", "10", "65.00"));
+        gateway.seedOrder(liveStop("pstop-9", "TECHA", "19", "68.76"));
+        broker("19", "105.77894736842105");
+
+        consolidator.consolidateStage("c", "run-3", "pass-3", NEXT_DAY);
+
+        assertThat(gateway.ops).containsExactly("cancel:stop-1");
+        verify(positionRepo).bookSavingsStop(1L, "pstop-9", new BigDecimal("68.76"), new BigDecimal("68.76"), false);
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.CONSOLIDATED);
+        assertThat(lines("savings-plan transition")).anySatisfy(l -> assertThat(l)
+                .contains("from=CONSOLIDATING").contains("to=CONSOLIDATING").contains("keep=pstop-9"));
+    }
+
+    @Test
+    void resumeAdoptsALiveStopMatchingQtyAndTargetWhenTheIdWasLost() {
+        var r = consolidatingRow(null);
+        gateway.seedOrder(liveStop("x-5", "TECHA", "19", "68.76"));
+        broker("19", "105.77894736842105");
+
+        consolidator.consolidateStage("c", "run-3", "pass-3", NEXT_DAY);
+
+        assertThat(gateway.ops).isEmpty();
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.CONSOLIDATED);
+        assertThat(row(r.id).newStopOrderId()).isNull();
+        verify(positionRepo).bookSavingsStop(1L, "x-5", new BigDecimal("68.76"), new BigDecimal("68.76"), false);
+    }
+
+    @Test
+    void resumeWithoutAnyLiveStopIsUnprotectedThenReplacesTheTarget() {
+        var r = consolidatingRow(null);
+        broker("19", "105.77894736842105");
+
+        consolidator.consolidateStage("c", "run-3", "pass-3", NEXT_DAY);
+
+        assertThat(gateway.ops).containsExactly("place:19@68.76");
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.CONSOLIDATED);
+        assertThat(reasonCodes()).contains("UNPROTECTED", "CONSOLIDATE_UNPROTECTED", "CONSOLIDATED");
+    }
+
+    @Test
+    void anUnprotectedRowEscalatesEveryPassWhileUncovered() {
+        var r = consolidatingRow(null);
+        r.status = SavingsBuy.UNPROTECTED;
+        broker("19", "105.77894736842105");
+        gateway.protectiveStopFailures.add(new BrokerUnavailableException("5xx"));
+        gateway.protectiveStopFailures.add(new BrokerUnavailableException("5xx"));
+
+        consolidator.consolidateStage("c", "run-3", "pass-3", NEXT_DAY);
+        consolidator.consolidateStage("c", "run-4", "pass-4", NEXT_DAY.plusSeconds(3600));
+
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.UNPROTECTED);
+        assertThat(reasonCodes().stream().filter("CONSOLIDATE_UNPROTECTED"::equals).count()).isGreaterThanOrEqualTo(2);
+    }
+
+    /** §12: the broker qty changed before the resume — the target is recomputed and a stop sized to the
+     *  old qty is NOT kept (no QTY_EXCEEDS_POSITION loop). */
+    @Test
+    void aChangedBrokerQtyRecomputesTheTargetOnResume() {
+        var r = consolidatingRow("pstop-9");
+        gateway.seedOrder(liveStop("pstop-9", "TECHA", "19", "68.76"));
+        broker("15", "104");
+
+        consolidator.consolidateStage("c", "run-3", "pass-3", NEXT_DAY);
+
+        assertThat(gateway.ops).containsExactly("cancel:pstop-9", "place:15@67.6");
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.CONSOLIDATED);
+        assertThat(row(r.id).stopAfter()).isEqualByComparingTo("67.60");
+    }
+
+    @Test
+    void aParentStillWorkingAfterItsCancelInTwoClosedPassesIsStuck() {
+        var r = placedRow();
+        legStops();
+        gateway.seedOrder(liveParent("brk-9", "sp-1-202611", "TECHA", "9", "112.20"));
+        gateway.failCancelForOrderId = "brk-9";
+        broker("10", "100");
+        when(decisionRepo.countByReasonCodeForSavingsBuy("CONSOLIDATE_CANCEL_FAILED", r.id)).thenReturn(0, 1);
+        when(decisionRepo.countByReasonCodeForSavingsBuy("CONSOLIDATE_STUCK", r.id)).thenReturn(0);
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+        assertThat(reasonCodes()).contains("CONSOLIDATE_CANCEL_FAILED").doesNotContain("CONSOLIDATE_STUCK");
+
+        consolidator.consolidateStage("c", "run-3", "pass-3", NEXT_DAY.plusSeconds(86_400));
+        assertThat(reasonCodes()).contains("CONSOLIDATE_STUCK");
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.PLACED);
+        assertThat(appender.list).anySatisfy(e -> {
+            assertThat(e.getLevel()).isEqualTo(Level.ERROR);
+            assertThat(e.getFormattedMessage()).contains("code=CONSOLIDATE_STUCK");
+        });
+    }
+
+    /** Merge with Task 7's coverage rule: live stops that cover less than bp.qty are "uncovered" on
+     *  resume too — UNPROTECTED + CRITICAL, then the target replaces them. */
+    @Test
+    void resumeWithLiveStopsBelowTheBrokerQtyIsUnprotectedThenReplacesTheTarget() {
+        var r = consolidatingRow(null);
+        gateway.seedOrder(liveStop("stop-1", "TECHA", "10", "65.00"));
+        broker("19", "105.77894736842105");
+
+        consolidator.consolidateStage("c", "run-3", "pass-3", NEXT_DAY);
+
+        assertThat(gateway.ops).containsExactly("cancel:stop-1", "place:19@68.76");
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.CONSOLIDATED);
+        assertThat(reasonCodes()).contains("RESUME", "UNPROTECTED", "CONSOLIDATE_UNPROTECTED", "CONSOLIDATED");
+        assertThat(appender.list).anySatisfy(e -> assertThat(e.getFormattedMessage())
+                .startsWith("savings-plan escalation").contains("code=CONSOLIDATE_UNPROTECTED")
+                .contains("cover_only_10_of_bp_qty_19"));
+    }
 }

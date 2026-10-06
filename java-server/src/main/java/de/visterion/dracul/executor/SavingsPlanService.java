@@ -477,6 +477,33 @@ public class SavingsPlanService {
         return out;
     }
 
+    /** §5.3 SAVINGS_ADD_STALE: a PLACING/PLACED row ≥ 2 weekdays after its NY trade date with no
+     *  closed pass that consolidated it. Runs on EVERY pass (no window, no lease); once per row. */
+    public int staleCheck(String connection, String runId, String pass, Instant now) {
+        int stale = 0;
+        int raised = 0;
+        for (SavingsBuy row : savingsRepo.findInFlight()) {
+            if (!SavingsBuy.PLACING.equals(row.status()) && !SavingsBuy.PLACED.equals(row.status())) continue;
+            if (!SavingsCalendar.stale(row.createdAt(), now)) continue;
+            ExecutorPosition p = positionRepo.findById(row.positionId());
+            if (p == null || !connection.equals(p.connection())) continue;
+            stale++;
+            if (audit.escalatedFor("SAVINGS_ADD_STALE", row.id())) continue;
+            LocalDate tradeDate = SavingsCalendar.nyTradeDate(row.createdAt());
+            audit.escalate(runId, pass, RowRef.of(row), row.symbol(), "SAVINGS_ADD_STALE", "CRITICAL",
+                    fields("status", row.status(), "ny_trade_date", tradeDate,
+                            "weekdays_since", SavingsCalendar.weekdaysAfter(tradeDate, SavingsCalendar.nyTradeDate(now)),
+                            "client_ref", row.clientRef(), "tif", row.tif()),
+                    "savings add " + row.clientRef() + " is still " + row.status()
+                            + " two weekdays after it was placed — no closed maintenance pass consolidated it");
+            raised++;
+        }
+        audit.stage("stale", runId, pass, raised > 0 ? "acted" : "did-nothing",
+                raised > 0 ? "-" : (stale > 0 ? "already-escalated" : "no-stale-rows"),
+                fields("stale", stale, "escalated", raised));
+        return raised;
+    }
+
     private ExecutorPositionLeg singleOpenLeg(long positionId) {
         List<ExecutorPositionLeg> legs = legRepo.findOpenByPosition(positionId);
         return legs.size() == 1 ? legs.getFirst() : null;

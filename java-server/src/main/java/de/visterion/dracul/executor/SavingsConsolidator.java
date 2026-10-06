@@ -206,6 +206,11 @@ public class SavingsConsolidator {
 
     /** §5.2 steps 1–7 for a row past the session gate. */
     String consolidate(SavingsBuy row, ExecutorPosition p, Ctx c) {
+        // §5.3: an interrupted consolidation (crash between 6 and 7, indeterminate place, failed
+        // restore) — keep exactly ONE stop, never place next to an unknown one.
+        if (CONSOLIDATING.equals(row.status()) || UNPROTECTED.equals(row.status())) {
+            return resume(row, p, c);
+        }
         Broker b = read(row, p, c);
         BrokerOrder parent = liveParent(b, row);
         if (parent != null) {
@@ -246,6 +251,68 @@ public class SavingsConsolidator {
         PlaceOutcome placed = settings.placeFirst()
                 ? placeThenCancel(row, expected, p, c, bpQty, target, oldStops)
                 : cancelThenPlace(row, expected, p, c, bpQty, target, oldStops);
+        if (placed == null) return "escalated";
+        return book(row, expected, p, c, bpQty, avg, fillQty, fillPrice, target, placed);
+    }
+
+    /** §5.3 resume: recompute the target from the CURRENT broker state; keep new_stop_order_id if it
+     *  is live and sized to the broker qty, otherwise one live stop with qty == bp.qty and price ==
+     *  target; cancel every other live SELL stop and book step 7. If none qualifies, re-place the
+     *  target (UNPROTECTED + CRITICAL while the live stops cover less than bp.qty). A failed cancel/place goes
+     *  through the same coverage recovery as a first consolidation ({@link #recover}). */
+    String resume(SavingsBuy row, ExecutorPosition p, Ctx c) {
+        Broker b = read(row, p, c);
+        if (b.bp() == null || b.qty().signum() == 0 || b.avg() == null) return "broker-position-missing";
+        BigDecimal bpQty = b.qty();
+        BigDecimal avg = b.avg();
+        BigDecimal target = target(avg, p);
+        BigDecimal fillQty = bpQty.subtract(row.qtyBefore()).max(BigDecimal.ZERO);
+        BigDecimal fillPrice = fillQty.signum() > 0 ? derivedFillPrice(avg, bpQty, row) : null;
+        String status = row.status();
+        if (!savingsRepo.markConsolidating(row.id(), status, bpQty, target, avg)) return "unchanged";
+        List<BrokerOrder> live = liveSellStops(b, p.symbol());
+        BrokerOrder keep = live.stream()
+                .filter(o -> o.orderId().equals(row.newStopOrderId())
+                        && o.qty() != null && o.qty().abs().compareTo(bpQty) == 0)
+                .findFirst()
+                .orElseGet(() -> live.stream()
+                        .filter(o -> o.qty() != null && o.qty().abs().compareTo(bpQty) == 0
+                                && o.stopPrice() != null && o.stopPrice().compareTo(target) == 0)
+                        .findFirst().orElse(null));
+        audit.transition(c.runId(), c.pass(), RowRef.of(row), status, status, "SAVINGS_CONSOLIDATE", "RESUME",
+                fields("bp_qty", bpQty, "bp_avg", avg, "qty_before", row.qtyBefore(), "fill_qty", fillQty,
+                        "fill_price", fillPrice, "target_qty", bpQty, "target_stop", target,
+                        "new_stop_order_id", row.newStopOrderId(), "live_stops", ids(live),
+                        "keep", keep == null ? null : keep.orderId()),
+                "resume of an interrupted consolidation: keep exactly one stop");
+        if (keep != null) {
+            for (BrokerOrder o : live) {
+                if (o.orderId().equals(keep.orderId())) continue;
+                if (!cancel(row, p, c, o.orderId(), "surplus-stop")) {
+                    // the kept stop is live and sized to bp.qty, so the shares stay covered
+                    audit.escalate(c.runId(), c.pass(), RowRef.of(row), p.symbol(), "CONSOLIDATE_CANCEL_FAILED",
+                            "WARN", fields("order", o.orderId(), "keep", keep.orderId(), "status", status),
+                            "a surplus stop could not be cancelled on resume; the kept stop " + keep.orderId()
+                                    + " covers bp_qty, retried next closed pass");
+                    return "escalated";
+                }
+            }
+            BigDecimal rests = keep.stopPrice() != null ? keep.stopPrice() : target;
+            return book(row, status, p, c, bpQty, avg, fillQty, fillPrice, target,
+                    PlaceOutcome.placed(keep.orderId(), rests, rests.compareTo(target) > 0));
+        }
+        String expected = status;
+        BigDecimal coverage = qtySum(live);
+        if (coverage.compareTo(bpQty) < 0) {
+            // same coverage rule as recover(): live stops below bp.qty leave shares without a stop
+            unprotected(row, status, p, c, (live.isEmpty() ? "no live stop on " + p.symbol()
+                    : "the live stops on " + p.symbol() + " cover only " + plain(coverage) + " of bp_qty "
+                            + plain(bpQty)) + " while add " + row.clientRef() + " is " + status);
+            expected = UNPROTECTED;
+        }
+        PlaceOutcome placed = settings.placeFirst()
+                ? placeThenCancel(row, expected, p, c, bpQty, target, live)
+                : cancelThenPlace(row, expected, p, c, bpQty, target, live);
         if (placed == null) return "escalated";
         return book(row, expected, p, c, bpQty, avg, fillQty, fillPrice, target, placed);
     }
@@ -527,10 +594,19 @@ public class SavingsConsolidator {
                 fields("why", why), why + " — the close-based hard trigger guards the logical stop until one stop is live again");
     }
 
+    /** §5.3: CONSOLIDATE_CANCEL_FAILED every time; the SECOND one for the same row also raises
+     *  CONSOLIDATE_STUCK (CRITICAL, once) — the add can still fill while it works. */
     void cancelFailed(SavingsBuy row, ExecutorPosition p, Ctx c, String detail) {
+        int failures = audit.countFor("CONSOLIDATE_CANCEL_FAILED", row.id()) + 1;
         audit.escalate(c.runId(), c.pass(), RowRef.of(row), p.symbol(), "CONSOLIDATE_CANCEL_FAILED", "WARN",
-                fields("detail", detail, "status", row.status()),
+                fields("detail", detail, "status", row.status(), "failures", failures),
                 detail + " — row stays " + row.status() + ", retried next closed pass");
+        if (failures >= 2 && !audit.escalatedFor("CONSOLIDATE_STUCK", row.id())) {
+            audit.escalate(c.runId(), c.pass(), RowRef.of(row), p.symbol(), "CONSOLIDATE_STUCK", "CRITICAL",
+                    fields("failures", failures, "detail", detail, "client_ref", row.clientRef()),
+                    "the add's BUY parent is still working after its cancel in " + failures
+                            + " closed passes — it can still fill; cancel it at the broker");
+        }
     }
 
     // ---- broker helpers (each call is traced) ---------------------------------------------------
@@ -633,11 +709,6 @@ public class SavingsConsolidator {
     BigDecimal close(String symbol) {
         ExecutorIndicators.Levels lv = indicators.levels(symbol, atrPeriod, swingPeriod);
         return lv != null && lv.available() ? lv.referencePrice() : null;
-    }
-
-    ExecutorPositionLeg singleOpenLeg(long positionId) {
-        List<ExecutorPositionLeg> legs = legRepo.findOpenByPosition(positionId);
-        return legs.size() == 1 ? legs.getFirst() : null;
     }
 
     /** Comma-joined order ids — never a {@code List.toString()}, whose spaces would surface as
