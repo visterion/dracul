@@ -504,16 +504,11 @@ public class HardTriggerService {
     }
 
     private BigDecimal computeR(ExecutorPosition p, BigDecimal close) {
-        BigDecimal numerator;
-        BigDecimal denominator;
-        if ("SELL".equals(p.side())) {
-            numerator = p.entryPrice().subtract(close);
-            denominator = p.initialStop().subtract(p.entryPrice());
-        } else {
-            numerator = close.subtract(p.entryPrice());
-            denominator = p.entryPrice().subtract(p.initialStop());
-        }
-        if (denominator.compareTo(BigDecimal.ZERO) == 0) return null;
+        BigDecimal denominator = RiskPerShare.of(p, convictionProfile);
+        if (denominator == null || denominator.compareTo(BigDecimal.ZERO) == 0) return null;
+        BigDecimal numerator = "SELL".equals(p.side())
+                ? p.entryPrice().subtract(close)
+                : close.subtract(p.entryPrice());
         return numerator.divide(denominator, 6, RoundingMode.HALF_UP);
     }
 

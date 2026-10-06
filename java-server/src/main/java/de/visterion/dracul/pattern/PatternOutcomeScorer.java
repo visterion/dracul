@@ -47,7 +47,7 @@ public class PatternOutcomeScorer {
      *  (via source_signal_id) executor_signal — singular table names per V17. */
     record ScorableOutcome(String logIdRef, BigDecimal realizedR, String computedAt,
             String symbol, BigDecimal entryPrice, BigDecimal initialStop, String sector,
-            String closedAt, String mechanism, Double confidence) {}
+            String closedAt, String mechanism, Double confidence, BigDecimal rValue) {}
 
     private record ParsedGate(String patternId, GatePredicate predicate) {}
 
@@ -100,7 +100,7 @@ public class PatternOutcomeScorer {
     private List<ScorableOutcome> fetchScorables() {
         return jdbc.sql("""
                 SELECT o.log_id_ref, o.realized_r, o.computed_at,
-                       p.symbol, p.entry_price, p.initial_stop, p.sector, p.closed_at,
+                       p.symbol, p.entry_price, p.initial_stop, p.sector, p.closed_at, p.r_value,
                        s.mechanism, s.confidence
                 FROM outcome_log o
                 JOIN executor_position p ON p.id = o.position_id
@@ -119,7 +119,8 @@ public class PatternOutcomeScorer {
                         rs.getString("closed_at"),
                         rs.getString("mechanism"),
                         rs.getObject("confidence") == null ? null
-                                : ((Number) rs.getObject("confidence")).doubleValue()))
+                                : ((Number) rs.getObject("confidence")).doubleValue(),
+                        rs.getBigDecimal("r_value")))
                 .list();
     }
 
@@ -132,7 +133,10 @@ public class PatternOutcomeScorer {
                     o.logIdRef());
             return;
         }
-        BigDecimal rPerShare = o.entryPrice().subtract(o.initialStop()).abs();
+        // Spec 2026-10-06 §5.2 (R3 M3): the persisted r_value when present (CONVICTION averages move).
+        BigDecimal rPerShare = (o.rValue() != null && o.rValue().signum() != 0)
+                ? o.rValue().abs()
+                : o.entryPrice().subtract(o.initialStop()).abs();
         if (rPerShare.signum() == 0) {
             log.debug("pattern scorer: outcome {} skipped (zero r_per_share)", o.logIdRef());
             return;

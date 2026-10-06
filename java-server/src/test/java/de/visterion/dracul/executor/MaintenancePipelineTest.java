@@ -43,8 +43,8 @@ class MaintenancePipelineTest {
     void setUp() {
         when(signalRepo.findPending(50)).thenReturn(List.of());
         pipeline = new MaintenancePipeline(reconcile, entryExpiry, sweeper, hardTrigger, ratchet,
-                softEval, indicators, positionRepo, signalRepo, tranche2Detector,
-                3.0, 22, 20);
+                softEval, indicators, positionRepo, signalRepo, tranche2Detector, ConvictionProfile.defaults(),
+                 3.0, 22, 20);
     }
 
     private ExecutorPosition openPosition(long id, String symbol, BigDecimal activeStop,
@@ -344,7 +344,7 @@ class MaintenancePipelineTest {
                         java.time.ZoneOffset.UTC));
         MaintenancePipeline gatedPipeline = new MaintenancePipeline(reconcile, entryExpiry, sweeper,
                 realHardTrigger, ratchet, softEval, indicators, positionRepo, signalRepo,
-                tranche2Detector, 3.0, 22, 20);
+                tranche2Detector, ConvictionProfile.defaults(),  3.0, 22, 20);
 
         ExecutorPosition unfilled = ExecutorPositionFixtures.withKillLevel(openPosition(2L, "AAA",
                 new BigDecimal("30"), new BigDecimal("110"), null, 0, List.of("close below 40")),
@@ -388,7 +388,7 @@ class MaintenancePipelineTest {
                         java.time.ZoneOffset.UTC));
         MaintenancePipeline realPipeline = new MaintenancePipeline(reconcile, entryExpiry, sweeper,
                 realHardTrigger, ratchet, softEval, indicators, positionRepo, signalRepo,
-                tranche2Detector, 3.0, 22, 20);
+                tranche2Detector, ConvictionProfile.defaults(),  3.0, 22, 20);
 
         ExecutorPosition stored = ExecutorPositionFixtures.withKillLevel(openPosition(3L, "KLV",
                 new BigDecimal("30"), new BigDecimal("110"), null, 0), new BigDecimal("40"), null);
@@ -424,7 +424,7 @@ class MaintenancePipelineTest {
                         java.time.ZoneOffset.UTC));
         MaintenancePipeline realPipeline = new MaintenancePipeline(reconcile, entryExpiry, sweeper,
                 realHardTrigger, ratchet, softEval, indicators, positionRepo, signalRepo,
-                tranche2Detector, 3.0, 22, 20);
+                tranche2Detector, ConvictionProfile.defaults(),  3.0, 22, 20);
 
         ExecutorPosition pending = ExecutorPositionFixtures.withKillLevel(
                 ExecutorPositionFixtures.withoutKillLevel(4L, "c", "PEX", "BUY", BigDecimal.TEN,
@@ -911,5 +911,27 @@ class MaintenancePipelineTest {
             assertThat(e.killCriteriaBreached()).isEmpty();
             assertThat(e.tranche2Eligible()).isFalse();
         });
+    }
+
+    /** Spec 2026-10-06 §5.2: the enriched R of a CONVICTION row uses entry × 0.35. */
+    @Test
+    void convictionRCurrentUsesTheAverageRisk() {
+        ExecutorPosition p = ExecutorPositionFixtures.conviction(ExecutorPositionFixtures.withoutKillLevel(
+                1L, "c", "TECHC", "BUY", BigDecimal.TEN, new BigDecimal("60"), new BigDecimal("65"),
+                new BigDecimal("39.00"), 1, null, List.of(), "sig-1", "agent", "2026-06-01", null,
+                "OPEN", "brk-1", new BigDecimal("60"), null, 0, null, null, null, null, "stop-1",
+                null, null, null, null, 0, null, null, null, null, null, null, false, null,
+                "2026-07-02T00:00:00Z"));
+        List<ExecutorPosition> survivors = List.of(p);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(survivors, Set.of()));
+        when(indicators.levels("TECHC", 22, 20)).thenReturn(new ExecutorIndicators.Levels(true,
+                new BigDecimal("2.0"), null, new BigDecimal("50"), null));
+        when(hardTrigger.apply(eq(survivors), any(), eq("r1"))).thenReturn(survivors);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        List<EnrichedPosition> result = pipeline.run("c", "r1");
+
+        assertThat(result).singleElement()
+                .satisfies(e -> assertThat(e.rCurrent()).isEqualByComparingTo("-0.476190"));
     }
 }

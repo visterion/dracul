@@ -139,8 +139,13 @@ public class OutcomeBatchJob {
 
         BigDecimal entryPrice = p.entryPrice();
         BigDecimal initialStop = p.initialStop();
-        BigDecimal rPerShare = (entryPrice != null && initialStop != null)
-                ? entryPrice.subtract(initialStop).abs() : null;
+        // Spec 2026-10-06 §5.2 (R3 M3): the persisted r_value IS the denominator realized_r was
+        // divided by (RiskPerShare at close). For CONVICTION with savings adds entry − initial_stop
+        // can be zero or negative; the fallback serves rows closed before r_value was written.
+        BigDecimal rPerShare = (p.rValue() != null && p.rValue().signum() != 0)
+                ? p.rValue().abs()
+                : (entryPrice != null && initialStop != null)
+                        ? entryPrice.subtract(initialStop).abs() : null;
 
         LocalDate entryDate = parseLocalDate(p.entryDate());
         LocalDate closedDate = parseLocalDate(p.closedAt());
@@ -277,6 +282,7 @@ public class OutcomeBatchJob {
             JsonNode oj = t.orderJson();
             BigDecimal qtyClosed = bigDecimalOrNull(oj, "qty_closed");
             BigDecimal price = bigDecimalOrNull(oj, "price");
+            BigDecimal trimEntry = bigDecimalOrNull(oj, "entry_price");
             String orderId = oj == null ? null : oj.path("order_id").asString(null);
             if (price == null && orderId != null && fillByOrderId.containsKey(orderId)) {
                 JsonNode foj = fillByOrderId.get(orderId);
@@ -298,7 +304,7 @@ public class OutcomeBatchJob {
                 computable = false;
                 continue;
             }
-            BigDecimal r = computeR(p, price, rPerShare);
+            BigDecimal r = computeR(p, price, rPerShare, trimEntry);
             weightedSum = weightedSum.add(qtyClosed.multiply(r));
             totalQty = totalQty.add(qtyClosed);
         }
@@ -306,7 +312,7 @@ public class OutcomeBatchJob {
         BigDecimal finalQty = p.qty();
         BigDecimal finalPrice = p.exitPrice();
         if (computable && finalQty != null && finalPrice != null) {
-            BigDecimal r = computeR(p, finalPrice, rPerShare);
+            BigDecimal r = computeR(p, finalPrice, rPerShare, null);
             weightedSum = weightedSum.add(finalQty.multiply(r));
             totalQty = totalQty.add(finalQty);
         } else {
@@ -319,12 +325,14 @@ public class OutcomeBatchJob {
         return new WeightedR(realizedR, partialExits);
     }
 
-    /** Side-aware R of {@code price} against the position's entry, mirroring
-     *  {@code ExecutorWebhookController.computeR}'s BUY/SELL formula. */
-    private BigDecimal computeR(ExecutorPosition p, BigDecimal price, BigDecimal rPerShare) {
+    /** Side-aware R of {@code price} against {@code entryOverride} (a TRIM's own entry_price,
+     *  spec 2026-10-06 R4 M2) or, when null, the position's final entry. */
+    private BigDecimal computeR(ExecutorPosition p, BigDecimal price, BigDecimal rPerShare,
+            BigDecimal entryOverride) {
+        BigDecimal entry = entryOverride != null ? entryOverride : p.entryPrice();
         BigDecimal delta = "SELL".equals(p.side())
-                ? p.entryPrice().subtract(price)
-                : price.subtract(p.entryPrice());
+                ? entry.subtract(price)
+                : price.subtract(entry);
         return delta.divide(rPerShare, 4, RoundingMode.HALF_UP);
     }
 

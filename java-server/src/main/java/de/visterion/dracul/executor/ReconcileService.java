@@ -164,6 +164,7 @@ public class ReconcileService {
     private final int pendingExitStaleHours;
     private final ExecutorPositionLegRepository legRepo;
     private final BigDecimal priceSanityPct;
+    private final ConvictionProfile convictionProfile;
     private final Clock clock;
 
     @Autowired
@@ -179,10 +180,11 @@ public class ReconcileService {
             @Value("${dracul.executor.cooldown-days:3}") int cooldownDays,
             @Value("${dracul.executor.pending-exit-stale-hours:24}") int pendingExitStaleHours,
             ExecutorPositionLegRepository legRepo,
-            @Value("${dracul.executor.price-sanity-pct:0.50}") BigDecimal priceSanityPct) {
+            @Value("${dracul.executor.price-sanity-pct:0.50}") BigDecimal priceSanityPct,
+            ConvictionProfile convictionProfile) {
         this(gateway, positionRepo, decisionRepo, cooldownRepo, ruleVersions, mapper, telegram,
                 executorNotifier, cooldownDays, pendingExitStaleHours, legRepo, priceSanityPct,
-                Clock.systemUTC());
+                convictionProfile, Clock.systemUTC());
     }
 
     ReconcileService(
@@ -198,6 +200,7 @@ public class ReconcileService {
             int pendingExitStaleHours,
             ExecutorPositionLegRepository legRepo,
             BigDecimal priceSanityPct,
+            ConvictionProfile convictionProfile,
             Clock clock) {
         this.gateway = gateway;
         this.positionRepo = positionRepo;
@@ -211,6 +214,7 @@ public class ReconcileService {
         this.pendingExitStaleHours = pendingExitStaleHours;
         this.legRepo = legRepo;
         this.priceSanityPct = priceSanityPct;
+        this.convictionProfile = convictionProfile;
         this.clock = clock;
     }
 
@@ -2124,32 +2128,23 @@ public class ReconcileService {
      *  land on the wrong side of the stop (a long filled below its stop), which inverts an entry-stop denominator
      *  and flips a realized loss into a positive R. Numerator uses the real open/close fills. */
     private RCalc realizedRAgainstPlannedRisk(ExecutorPosition planned, BigDecimal realEntry, BigDecimal realExit) {
-        BigDecimal plannedRisk;
-        BigDecimal pnl;
-        if ("SELL".equals(planned.side())) {
-            plannedRisk = planned.initialStop().subtract(planned.entryPrice());
-            pnl = realEntry.subtract(realExit);
-        } else {
-            plannedRisk = planned.entryPrice().subtract(planned.initialStop());
-            pnl = realExit.subtract(realEntry);
-        }
-        if (plannedRisk.signum() <= 0) return new RCalc(null, null);   // guard <= 0, not == 0
+        BigDecimal plannedRisk = RiskPerShare.of(planned, convictionProfile);
+        BigDecimal pnl = "SELL".equals(planned.side())
+                ? realEntry.subtract(realExit)
+                : realExit.subtract(realEntry);
+        if (plannedRisk == null || plannedRisk.signum() <= 0) return new RCalc(null, null);   // guard <= 0, not == 0
         BigDecimal r = pnl.divide(plannedRisk, 6, RoundingMode.HALF_UP);
         return new RCalc(r, plannedRisk);
     }
 
     private RCalc computeR(ExecutorPosition p, BigDecimal exitPrice) {
         if (exitPrice == null) return new RCalc(null, null);
-        BigDecimal denominator;
-        BigDecimal numerator;
-        if ("SELL".equals(p.side())) {
-            numerator = p.entryPrice().subtract(exitPrice);
-            denominator = p.initialStop().subtract(p.entryPrice());
-        } else {
-            numerator = exitPrice.subtract(p.entryPrice());
-            denominator = p.entryPrice().subtract(p.initialStop());
-        }
-        if (denominator.compareTo(BigDecimal.ZERO) == 0) return new RCalc(null, null);
+        // Spec 2026-10-06 §5.2: CONVICTION uses entry × emergency-stop-pct (RiskPerShare).
+        BigDecimal denominator = RiskPerShare.of(p, convictionProfile);
+        if (denominator == null || denominator.compareTo(BigDecimal.ZERO) == 0) return new RCalc(null, null);
+        BigDecimal numerator = "SELL".equals(p.side())
+                ? p.entryPrice().subtract(exitPrice)
+                : exitPrice.subtract(p.entryPrice());
         BigDecimal r = numerator.divide(denominator, 6, RoundingMode.HALF_UP);
         return new RCalc(r, denominator);
     }

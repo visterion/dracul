@@ -278,4 +278,18 @@ class PatternOutcomeScorerIT {
         assertThat(cases(sectorGate)).isEmpty();   // fail-open, no evidence
         assertThat(cases(mechOnly)).hasSize(1);    // mechanism condition still evaluable
     }
+
+    /** Spec 2026-10-06 §5.2 (R3 M3): the persisted r_value is the R-per-share basis when present. */
+    @Test
+    void persistedRValueIsTheReturnBasis() {
+        String patternId = gatedPattern("ACTIVE", mechGate("SCR_PEAD_RV"));
+        tradeOutcome("SCRRVA", "SCR_PEAD_RV", "Tech", "10", "9", "-1", true, "2026-07-01T00:00:00Z");
+        jdbc.sql("UPDATE executor_position SET r_value = 2 WHERE symbol = 'SCRRVA'").update();
+
+        scorer.score();
+
+        // realized_r -1 × r_value 2 / entry 10 = -20 % (with |entry − initial_stop| it would be -10 %)
+        assertThat(cases(patternId)).singleElement()
+                .satisfies(c -> assertThat(c.returnPercent()).isEqualTo(-20.0));
+    }
 }

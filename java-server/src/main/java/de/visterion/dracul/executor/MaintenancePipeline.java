@@ -58,6 +58,7 @@ public class MaintenancePipeline {
     private final ExecutorPositionRepository positionRepo;
     private final ExecutorSignalRepository signalRepo;
     private final Tranche2Detector tranche2Detector;
+    private final ConvictionProfile convictionProfile;
     private final double chandelierMult;
     private final int atrPeriod;
     private final int swingPeriod;
@@ -73,6 +74,7 @@ public class MaintenancePipeline {
             ExecutorPositionRepository positionRepo,
             ExecutorSignalRepository signalRepo,
             Tranche2Detector tranche2Detector,
+            ConvictionProfile convictionProfile,
             @Value("${dracul.executor.chandelier-mult:3.0}") double chandelierMult,
             @Value("${dracul.executor.atr-period:22}") int atrPeriod,
             @Value("${dracul.executor.swing-period:20}") int swingPeriod) {
@@ -86,6 +88,7 @@ public class MaintenancePipeline {
         this.positionRepo = positionRepo;
         this.signalRepo = signalRepo;
         this.tranche2Detector = tranche2Detector;
+        this.convictionProfile = convictionProfile;
         this.chandelierMult = chandelierMult;
         this.atrPeriod = atrPeriod;
         this.swingPeriod = swingPeriod;
@@ -299,16 +302,11 @@ public class MaintenancePipeline {
 
     private BigDecimal computeR(ExecutorPosition p, BigDecimal currentPrice, boolean sell) {
         if (currentPrice == null) return null;
-        BigDecimal numerator;
-        BigDecimal denominator;
-        if (sell) {
-            numerator = p.entryPrice().subtract(currentPrice);
-            denominator = p.initialStop().subtract(p.entryPrice());
-        } else {
-            numerator = currentPrice.subtract(p.entryPrice());
-            denominator = p.entryPrice().subtract(p.initialStop());
-        }
-        if (denominator.compareTo(BigDecimal.ZERO) == 0) return null;
+        BigDecimal denominator = RiskPerShare.of(p, convictionProfile);
+        if (denominator == null || denominator.compareTo(BigDecimal.ZERO) == 0) return null;
+        BigDecimal numerator = sell
+                ? p.entryPrice().subtract(currentPrice)
+                : currentPrice.subtract(p.entryPrice());
         return numerator.divide(denominator, 6, RoundingMode.HALF_UP);
     }
 

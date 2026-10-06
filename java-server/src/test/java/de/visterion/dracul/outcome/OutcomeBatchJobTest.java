@@ -1348,4 +1348,69 @@ class OutcomeBatchJobTest {
         verify(outcomeLog).upsert(captor.capture());
         assertThat(captor.getValue().realizedR()).isEqualByComparingTo("3.5");
     }
+
+    private ExecutorPosition closedConviction(long id, String symbol, String signalId) {
+        // average 60 after falling adds, immutable initial stop 65, closed at 50; r_value 21 = 60 × 0.35
+        return de.visterion.dracul.executor.ExecutorPositionFixtures.conviction(
+                ExecutorPositionFixtures.withoutKillLevel(id, "depot-1", symbol, "BUY", bd("10"),
+                        bd("60"), bd("65"), bd("39"), 1, bd("21"), List.of(), signalId,
+                        "strigoi-tech", "2026-06-01 10:00:00.0", null, "CLOSED", null, bd("60"),
+                        null, 0, bd("50"), bd("-0.476190"), "HARD_STOP", "2026-06-10 10:00:00.0",
+                        null, null, null, null, null, 0, bd("48"), null, null, null, null, null,
+                        false, null, null));
+    }
+
+    private void wireTrade(String symbol, String signalId, ExecutorPosition closed, List<DecisionLog> trims) {
+        DecisionLog enter = decisionRow("enter-" + signalId, signalId, symbol, "ENTER", null, null,
+                mapper.createObjectNode().put("limit_price", bd("100")), "strigoi-tech", "v1");
+        when(positions.findClosed()).thenReturn(List.of(closed));
+        when(decisionLog.findBySignalIdAndAction(signalId, "ENTER")).thenReturn(enter);
+        when(outcomeLog.isComplete("enter-" + signalId)).thenReturn(false);
+        when(decisionLog.findBySymbolAndActionsBetween(eq(symbol), eq(List.of("TRIM")), any(), any()))
+                .thenReturn(trims);
+        when(decisionLog.findBySymbolAndActionsBetween(eq(symbol), eq(List.of("TRIM_FILL")), any(), any()))
+                .thenReturn(List.of());
+        when(decisionLog.findBySymbolAndActionsBetween(
+                eq(symbol), eq(List.of("EXIT_FULL", "LOG_HARD_EXIT", "RECONCILE_CLOSE")), any(), any()))
+                .thenReturn(List.of());
+        when(decisionLog.findBySymbolAndActionsBetween(eq(symbol), eq(List.of("ENTER")), any(), any()))
+                .thenReturn(List.of());
+        when(decisionLog.findSignalRowsByAction("REJECT")).thenReturn(List.of());
+    }
+
+    /** Spec 2026-10-06 §5.2 / §12 R3: outcome_log R equals the position's R — the persisted r_value
+     *  (21) is the denominator, not |entry − initial_stop| (5). MAE uses the same basis. */
+    @Test
+    void convictionOutcomeUsesThePersistedRValue() {
+        wireTrade("TECHD", "sig-tech-d", closedConviction(71L, "TECHD", "sig-tech-d"), List.of());
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog, times(1)).upsert(captor.capture());
+        assertThat(captor.getValue().realizedR()).isEqualByComparingTo("-0.4762");   // (50−60)/21
+        assertThat(captor.getValue().maeR()).isEqualByComparingTo("-0.5714");       // (48−60)/21
+    }
+
+    /** Spec 2026-10-06 §6.1 (R4 M2): a TRIM carrying its own entry_price (the average the sold shares
+     *  were bought at) is valued against it, not against the position's final average. */
+    @Test
+    void aTrimIsValuedAgainstItsOwnEntryPrice() {
+        var trimJson = mapper.createObjectNode();
+        trimJson.put("qty_closed", bd("5"));
+        trimJson.put("qty_remaining", bd("10"));
+        trimJson.put("price", bd("91"));
+        trimJson.put("entry_price", bd("70"));
+        trimJson.put("position_id", 72L);
+        DecisionLog trim = decisionRow("trim-72", null, "TECHE", "TRIM", "SAVINGS_WINDOW_STOP", null,
+                trimJson, null, null);
+        wireTrade("TECHE", "sig-tech-e", closedConviction(72L, "TECHE", "sig-tech-e"), List.of(trim));
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog, times(1)).upsert(captor.capture());
+        // (5 × (91−70)/21 + 10 × (50−60)/21) / 15 = (5 × 1.0000 + 10 × −0.4762) / 15 = 0.0159
+        assertThat(captor.getValue().realizedR()).isEqualByComparingTo("0.0159");
+    }
 }

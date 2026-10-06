@@ -1016,4 +1016,21 @@ class HardTriggerServiceTest {
                 + "(breached: 0); catastrophe flagged: 0, targets hit: 0, rebalance exits: 2");
     }
 
+    /** Spec 2026-10-06 §5.2: current_r of a CONVICTION row uses entry × 0.35, not entry − initial_stop. */
+    @Test
+    void convictionCurrentRUsesTheAverageRisk() {
+        ExecutorPosition base = ExecutorPositionFixtures.withoutKillLevel(41L, "c", "TECHB", "BUY",
+                BigDecimal.TEN, new BigDecimal("60"), new BigDecimal("65"), new BigDecimal("39.00"),
+                1, null, List.of(), "sig-41", "strigoi-tech", "2026-07-01", null, "OPEN", "brk-41",
+                null, null, 0, null, null, null, null, "stop-41", null, null, null, null, 0, null,
+                null, null, null, null, null, false, new BigDecimal("39.00"), "2026-07-01T09:00:00Z");
+        ExecutorPosition p = ExecutorPositionFixtures.withProfileFields(base, ExitProfile.CONVICTION,
+                "synthetic fraud finding", "2026-07-07 22:30:00+00", null, false);
+
+        service.apply(List.of(p), Map.of("TECHB", new BigDecimal("50")), "run1");
+
+        DecisionLog row = onlyRow();
+        assertThat(row.inputsSnapshot().path("current_r").decimalValue()).isEqualByComparingTo("-0.476190");
+    }
+
 }

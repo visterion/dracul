@@ -89,7 +89,7 @@ class ReconcileServiceTest {
         when(ruleVersions.active()).thenReturn("exec-v0.2");
         service = new ReconcileService(gateway, positionRepo, decisionRepo, cooldownRepo,
                 ruleVersions, mapper, telegram, executorNotifier, 10, 24, legRepo,
-                new BigDecimal("0.50"), clock);
+                new BigDecimal("0.50"), ConvictionProfile.defaults(), clock);
     }
 
     private ExecutorPosition openPosition(long id, String symbol, String side, BigDecimal entry,
@@ -3424,5 +3424,25 @@ class ReconcileServiceTest {
         verify(decisionRepo).insert(logCaptor.capture());
         assertThat(logCaptor.getValue().action()).isEqualTo("LOG_HARD_EXIT");
         assertThat(logCaptor.getValue().reasonCode()).isEqualTo("HARD_REBALANCE");
+    }
+
+    /** Spec 2026-10-06 §5.2 / §12 "R": a CONVICTION position whose savings adds pulled the average
+     *  (60) below the immutable initial stop (65) books a NEGATIVE R for a loss — no sign flip —
+     *  and persists the denominator it used (60 × 0.35 = 21). */
+    @Test
+    void convictionWithFallingAddsBooksANegativeRAgainstTheAverageRisk() {
+        ExecutorPosition p = ExecutorPositionFixtures.conviction(openPosition(91L, "TECHA", "BUY",
+                new BigDecimal("60"), new BigDecimal("65"), "brk-91", "stop-91", null, null));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        gateway.seedOrder(new BrokerOrder("stop-91", "ref-91", "TECHA", OrderRole.STOP_LOSS,
+                OrderStatus.FILLED, BigDecimal.TEN, BigDecimal.TEN, new BigDecimal("50"), "brk-91"));
+
+        service.reconcile("c", "run1");
+
+        ArgumentCaptor<BigDecimal> r = ArgumentCaptor.forClass(BigDecimal.class);
+        ArgumentCaptor<BigDecimal> rValue = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).close(eq(91L), any(), r.capture(), eq("HARD_STOP"), eq("FILL"), rValue.capture());
+        assertThat(r.getValue()).isEqualByComparingTo("-0.476190");   // (50 − 60) / 21
+        assertThat(rValue.getValue()).isEqualByComparingTo("21.00");
     }
 }

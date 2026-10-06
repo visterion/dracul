@@ -2204,16 +2204,12 @@ public class ExecutorWebhookController {
     }
 
     private RCalc computeR(ExecutorPosition p, BigDecimal exitPrice) {
-        BigDecimal numerator;
-        BigDecimal denominator;
-        if ("SELL".equals(p.side())) {
-            numerator = p.entryPrice().subtract(exitPrice);
-            denominator = p.initialStop().subtract(p.entryPrice());
-        } else {
-            numerator = exitPrice.subtract(p.entryPrice());
-            denominator = p.entryPrice().subtract(p.initialStop());
-        }
-        if (denominator.compareTo(BigDecimal.ZERO) == 0) return new RCalc(null, null);
+        // Spec 2026-10-06 §5.2: one risk-per-share helper for every R site.
+        BigDecimal denominator = RiskPerShare.of(p, convictionProfile);
+        if (denominator == null || denominator.compareTo(BigDecimal.ZERO) == 0) return new RCalc(null, null);
+        BigDecimal numerator = "SELL".equals(p.side())
+                ? p.entryPrice().subtract(exitPrice)
+                : exitPrice.subtract(p.entryPrice());
         BigDecimal r = numerator.divide(denominator, 6, RoundingMode.HALF_UP);
         return new RCalc(r, denominator);
     }
