@@ -24,21 +24,21 @@ class RuleVersionProviderTest {
     static final String DEFAULTS_VERSION = "exec-test-sp2-" + UUID.randomUUID();
     static final String OVERRIDES_VERSION = "exec-test-sp2-ovr-" + UUID.randomUUID();
 
-    static final String CHANGES = "on top of exec-v1.1: exit profile MOMENTUM for mechanism "
-            + "MOMENTUM_12_1 (strigoi-momentum, monthly 12-1 rebalance) -- CONVICTION's wide "
-            + "emergency stop (35 % below entry, broker leg at the entry band, widened after the "
-            + "fill) and fixed notional per name (momentum position-pct 0.025 of total-budget, "
-            + "FX-converted, SIZE_TOO_SMALL below min-entry-qty 1), no take-profit, no target-half, "
-            + "no trail, no catastrophe flag, no soft exit, no tranche 2, exit_position rejects it "
-            + "with PROFILE_MANAGED; a position flagged by the strigoi-momentum completion is "
-            + "flattened fully (HARD_REBALANCE: without a close before the close-null skip, with a "
-            + "close after the stop, which wins the reason code); for a MOMENTUM signal, MOMENTUM "
-            + "rows with a committed rebalance exit are excluded from MECHANISM_BUDGET and BUDGET "
-            + "open exposure and from MAX_POSITIONS (the BUDGET cash check still requires cash >= "
-            + "charge); LOW_CONFIDENCE, CHASED_AWAY and BELOW_ANCHOR skipped for MOMENTUM; "
-            + "PACE_LIMIT counts STANDARD entries only and is skipped for CONVICTION and MOMENTUM; "
-            + "max_positions 25 -> 35; MECHANISM_BUDGET MOMENTUM_12_1 0.28; executor max_turns "
-            + "25 -> 40; all other exec-v1.1 gates unchanged";
+    static final String CHANGES = "on top of exec-v1.2: Tech-Sparplan for exit profile CONVICTION -- "
+            + "on the first weekday of the month (catch-up weekdays 2-3, UTC calendar) inside the "
+            + "closed-market window from 21:15 UTC, code splits monthly-pct 0.02 of total-budget "
+            + "equally across eligible CONVICTION positions (per-position cap 0.08 and basket cap 0.50 "
+            + "of total-budget at market value, fractional carry per position, at any price incl. "
+            + "below entry) and buys them as a bracket add (limit = close x 1.02, child stop at the "
+            + "entry band, tif gtc|day); after one US session consolidation books one position, one "
+            + "leg, one stop at the new average x 0.65 (the stop may move down, initial_stop "
+            + "unchanged; order cancel-first|place-first); the add is never a tranche; if the pre-add "
+            + "emergency stop fills while an add is in flight the add shares are sold too (D8); "
+            + "in-flight positions are excluded from hard triggers and the ratchet (UNPROTECTED ones "
+            + "keep the stop breach and catastrophe checks); R per share for CONVICTION = entry_price "
+            + "x emergency-stop-pct, outcome and pattern scoring use the persisted r_value; "
+            + "MECHANISM_BUDGET TECH_CONVICTION 0.33 -> 0.50 (cost-based, new names only); "
+            + "ENTRY_PRICE_SYNC compares at scale 6; all other exec-v1.2 gates unchanged";
 
     @Nested
     @SpringBootTest
@@ -64,7 +64,7 @@ class RuleVersionProviderTest {
             assertThat(v.params().path("confidence_min").asDouble()).isEqualTo(0.4);
             assertThat(v.params().path("max_positions").asInt()).isEqualTo(35);
             assertThat(v.params().path("mechanism_budget_pct").asString())
-                    .isEqualTo("MERGER_ARB:0.20,QUALITY_52W_LOW:0.15,TECH_CONVICTION:0.33,MOMENTUM_12_1:0.28");
+                    .isEqualTo("MERGER_ARB:0.20,QUALITY_52W_LOW:0.15,TECH_CONVICTION:0.50,MOMENTUM_12_1:0.28");
             // SP1 parameters still recorded
             assertThat(v.params().path("broker_stop_buffer_atr").asDouble()).isEqualTo(1.0);
             assertThat(v.params().path("risk_pct").asDouble()).isEqualTo(0.005);
@@ -92,6 +92,17 @@ class RuleVersionProviderTest {
             // Exit profile MOMENTUM (exec-v1.2)
             assertThat(v.params().path("momentum_position_pct").decimalValue()).isEqualByComparingTo("0.025");
             assertThat(v.params().path("momentum_min_entry_qty").asInt()).isEqualTo(1);
+            // Tech-Sparplan (exec-v1.3)
+            assertThat(v.params().path("savings_plan_monthly_pct").decimalValue()).isEqualByComparingTo("0.02");
+            assertThat(v.params().path("savings_plan_max_position_pct").decimalValue()).isEqualByComparingTo("0.08");
+            assertThat(v.params().path("savings_plan_basket_cap_pct").decimalValue()).isEqualByComparingTo("0.50");
+            assertThat(v.params().path("savings_plan_limit_premium_pct").decimalValue()).isEqualByComparingTo("0.02");
+            assertThat(v.params().path("savings_plan_catch_up_weekdays").asInt()).isEqualTo(3);
+            assertThat(v.params().path("savings_plan_window_start_utc").asString()).isEqualTo("21:15");
+            assertThat(v.params().path("savings_plan_tif").asString()).isEqualTo("gtc");
+            assertThat(v.params().path("savings_plan_place_first").asBoolean()).isFalse();
+            assertThat(v.params().path("conviction_r_per_share").asString())
+                    .isEqualTo("entry_price x emergency_stop_pct");
         }
     }
 

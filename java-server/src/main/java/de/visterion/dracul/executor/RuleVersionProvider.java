@@ -40,9 +40,10 @@ public class RuleVersionProvider {
     private final int cooldownDays;
     private final MechanismBudget mechanismBudget;
     private final ConvictionProfile convictionProfile;
+    private final SavingsPlanSettings savingsPlanSettings;
 
     public RuleVersionProvider(
-            @Value("${dracul.executor.rule-version:exec-v1.2}") String active,
+            @Value("${dracul.executor.rule-version:exec-v1.3}") String active,
             RuleVersionRepository repo,
             ObjectMapper mapper,
             @Value("${dracul.executor.broker-stop-buffer-atr:1.0}") BigDecimal brokerStopBufferAtr,
@@ -58,7 +59,8 @@ public class RuleVersionProvider {
             @Value("${dracul.executor.max-per-sector:5}") int maxPerSector,
             @Value("${dracul.executor.cooldown-days:3}") int cooldownDays,
             MechanismBudget mechanismBudget,
-            ConvictionProfile convictionProfile) {
+            ConvictionProfile convictionProfile,
+            SavingsPlanSettings savingsPlanSettings) {
         this.active = active;
         this.repo = repo;
         this.mapper = mapper;
@@ -76,6 +78,7 @@ public class RuleVersionProvider {
         this.cooldownDays = cooldownDays;
         this.mechanismBudget = mechanismBudget;
         this.convictionProfile = convictionProfile;
+        this.savingsPlanSettings = savingsPlanSettings;
     }
 
     @PostConstruct
@@ -113,10 +116,36 @@ public class RuleVersionProvider {
                     .put("conviction_entry_broker_stop_pct", convictionProfile.entryBrokerStopPct())
                     .put("conviction_position_pct", convictionProfile.positionPct())
                     .put("momentum_position_pct", convictionProfile.momentumPositionPct())
-                    .put("momentum_min_entry_qty", convictionProfile.momentumMinEntryQty());
+                    .put("momentum_min_entry_qty", convictionProfile.momentumMinEntryQty())
+                    .put("savings_plan_monthly_pct", savingsPlanSettings.monthlyPct())
+                    .put("savings_plan_max_position_pct", savingsPlanSettings.maxPositionPct())
+                    .put("savings_plan_basket_cap_pct", savingsPlanSettings.basketCapPct())
+                    .put("savings_plan_limit_premium_pct", savingsPlanSettings.limitPremiumPct())
+                    .put("savings_plan_catch_up_weekdays", savingsPlanSettings.catchUpWeekdays())
+                    .put("savings_plan_window_start_utc", savingsPlanSettings.windowStartUtc().toString())
+                    .put("savings_plan_tif", savingsPlanSettings.tif())
+                    .put("savings_plan_place_first", savingsPlanSettings.placeFirst())
+                    .put("conviction_r_per_share", "entry_price x emergency_stop_pct");
             // seed() only inserts when the version string is NEW, so this text is written once and
             // is then permanent for the version it describes -- it is the audit record of what
             // that version changed, and prod verification asserts it verbatim.
+            //
+            // exec-v1.2 history (no longer seeded; prod seeded it on the strigoi-momentum deploy,
+            // insert-if-absent keeps that row as first written): "on top of exec-v1.1: exit profile
+            // MOMENTUM for mechanism MOMENTUM_12_1 (strigoi-momentum, monthly 12-1 rebalance) --
+            // CONVICTION's wide emergency stop (35 % below entry, broker leg at the entry band,
+            // widened after the fill) and fixed notional per name (momentum position-pct 0.025 of
+            // total-budget, FX-converted, SIZE_TOO_SMALL below min-entry-qty 1), no take-profit, no
+            // target-half, no trail, no catastrophe flag, no soft exit, no tranche 2, exit_position
+            // rejects it with PROFILE_MANAGED; a position flagged by the strigoi-momentum completion
+            // is flattened fully (HARD_REBALANCE: without a close before the close-null skip, with a
+            // close after the stop, which wins the reason code); for a MOMENTUM signal, MOMENTUM
+            // rows with a committed rebalance exit are excluded from MECHANISM_BUDGET and BUDGET
+            // open exposure and from MAX_POSITIONS (the BUDGET cash check still requires cash >=
+            // charge); LOW_CONFIDENCE, CHASED_AWAY and BELOW_ANCHOR skipped for MOMENTUM;
+            // PACE_LIMIT counts STANDARD entries only and is skipped for CONVICTION and MOMENTUM;
+            // max_positions 25 -> 35; MECHANISM_BUDGET MOMENTUM_12_1 0.28; executor max_turns
+            // 25 -> 40; all other exec-v1.1 gates unchanged"
             //
             // exec-v1.1 history (no longer seeded; never reached prod on its own -- it shipped
             // together with exec-v1.2): "on top of exec-v1.0 (exit profile CONVICTION for mechanism
@@ -130,6 +159,8 @@ public class RuleVersionProvider {
             // EUR/USD drift); all other exec-v1.0 gates (CORRELATED, CONCENTRATION and HEAT_LIMIT
             // skipped for the profile, exit_position rejects the profile with PROFILE_MANAGED,
             // partial exits repoint the leg rows) unchanged"
+            // (the 0.33 above is history: exec-v1.3 raised TECH_CONVICTION to 0.50 for the
+            // Tech-Sparplan basket cap)
             //
             // exec-v1.0 history (no longer seeded; prod seeded this verbatim on 2026-10-04, insert-
             // if-absent means changing this string never reaches that row -- so it is restored here
@@ -166,21 +197,21 @@ public class RuleVersionProvider {
             // entry cap (MERGER_ARB 20%, QUALITY_52W_LOW 15% of budget), transient like
             // MAX_POSITIONS; max_positions 8"
             repo.upsert(new RuleVersion(active, LocalDate.now().toString(),
-                    "on top of exec-v1.1: exit profile MOMENTUM for mechanism "
-                            + "MOMENTUM_12_1 (strigoi-momentum, monthly 12-1 rebalance) -- CONVICTION's wide "
-                            + "emergency stop (35 % below entry, broker leg at the entry band, widened after the "
-                            + "fill) and fixed notional per name (momentum position-pct 0.025 of total-budget, "
-                            + "FX-converted, SIZE_TOO_SMALL below min-entry-qty 1), no take-profit, no target-half, "
-                            + "no trail, no catastrophe flag, no soft exit, no tranche 2, exit_position rejects it "
-                            + "with PROFILE_MANAGED; a position flagged by the strigoi-momentum completion is "
-                            + "flattened fully (HARD_REBALANCE: without a close before the close-null skip, with a "
-                            + "close after the stop, which wins the reason code); for a MOMENTUM signal, MOMENTUM "
-                            + "rows with a committed rebalance exit are excluded from MECHANISM_BUDGET and BUDGET "
-                            + "open exposure and from MAX_POSITIONS (the BUDGET cash check still requires cash >= "
-                            + "charge); LOW_CONFIDENCE, CHASED_AWAY and BELOW_ANCHOR skipped for MOMENTUM; "
-                            + "PACE_LIMIT counts STANDARD entries only and is skipped for CONVICTION and MOMENTUM; "
-                            + "max_positions 25 -> 35; MECHANISM_BUDGET MOMENTUM_12_1 0.28; executor max_turns "
-                            + "25 -> 40; all other exec-v1.1 gates unchanged",
+                    "on top of exec-v1.2: Tech-Sparplan for exit profile CONVICTION -- "
+                            + "on the first weekday of the month (catch-up weekdays 2-3, UTC calendar) inside the "
+                            + "closed-market window from 21:15 UTC, code splits monthly-pct 0.02 of total-budget "
+                            + "equally across eligible CONVICTION positions (per-position cap 0.08 and basket cap 0.50 "
+                            + "of total-budget at market value, fractional carry per position, at any price incl. "
+                            + "below entry) and buys them as a bracket add (limit = close x 1.02, child stop at the "
+                            + "entry band, tif gtc|day); after one US session consolidation books one position, one "
+                            + "leg, one stop at the new average x 0.65 (the stop may move down, initial_stop "
+                            + "unchanged; order cancel-first|place-first); the add is never a tranche; if the pre-add "
+                            + "emergency stop fills while an add is in flight the add shares are sold too (D8); "
+                            + "in-flight positions are excluded from hard triggers and the ratchet (UNPROTECTED ones "
+                            + "keep the stop breach and catastrophe checks); R per share for CONVICTION = entry_price "
+                            + "x emergency-stop-pct, outcome and pattern scoring use the persisted r_value; "
+                            + "MECHANISM_BUDGET TECH_CONVICTION 0.33 -> 0.50 (cost-based, new names only); "
+                            + "ENTRY_PRICE_SYNC compares at scale 6; all other exec-v1.2 gates unchanged",
                     null, params));
         }
     }

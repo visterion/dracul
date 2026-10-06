@@ -247,4 +247,15 @@ class Tranche2DetectorTest {
         assertThat(detector.detect(p, new BigDecimal("140"), List.of(), "MOMENTUM_12_1")
                 .eligible()).isFalse();
     }
+
+    /** Spec 2026-10-06 D7 / §12 contract: the savings plan is the ONLY below-entry buyer; the LLM's
+     *  tranche-2 path stays NOT_ELIGIBLE for CONVICTION at any price. */
+    @Test
+    void convictionStaysNotEligibleBelowEntryToo() {
+        ExecutorPosition p = ExecutorPositionFixtures.conviction(position(1, "BUY",
+                new BigDecimal("100"), new BigDecimal("65"), new BigDecimal("101"), "SYNA", "OPEN"));
+        assertThat(detector.detect(p, new BigDecimal("80"), List.of(), "TECH_CONVICTION").eligible()).isFalse();
+        assertThat(detector.detect(p, new BigDecimal("80"), List.of(signal("SYNA", "BUY", "PEAD")),
+                "TECH_CONVICTION").eligible()).isFalse();
+    }
 }
