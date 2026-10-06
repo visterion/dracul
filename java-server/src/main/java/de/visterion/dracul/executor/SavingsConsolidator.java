@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static de.visterion.dracul.executor.SavingsBuy.CONSOLIDATED;
@@ -52,7 +53,8 @@ public class SavingsConsolidator {
     static final String STAGE = "consolidate";
     private static final Logger log = LoggerFactory.getLogger(SavingsConsolidator.class);
     private static final Set<String> IDLE =
-            Set.of("waiting-session-gate", "waiting-adoption", "waiting-reconcile", "unchanged");
+            Set.of("waiting-session-gate", "waiting-adoption", "waiting-reconcile", "unchanged",
+                    "other-connection", "position-missing");
 
     enum PlaceResult { PLACED, REJECTED, INDETERMINATE }
 
@@ -121,7 +123,17 @@ public class SavingsConsolidator {
         List<SavingsBuy> rows = savingsRepo.findInFlight();
         for (SavingsBuy row : rows) {
             ExecutorPosition p = positionRepo.findById(row.positionId());
-            if (p == null || !connection.equals(p.connection())) continue;
+            if (p == null) {
+                // V54's FK cascades a deleted position, so only a race lands here — never silent
+                log.warn("savings-plan row failed row={} position={} symbol={} status={} run={} pass={} error=position-missing",
+                        row.id(), row.positionId(), row.symbol(), row.status(), runId, pass);
+                tally.merge("position-missing", 1, Integer::sum);
+                continue;
+            }
+            if (!connection.equals(p.connection())) {
+                tally.merge("other-connection", 1, Integer::sum);
+                continue;
+            }
             savingsRepo.renewLease(pass);
             String outcome;
             try {
@@ -136,7 +148,11 @@ public class SavingsConsolidator {
         boolean acted = tally.keySet().stream().anyMatch(k -> !IDLE.contains(k));
         String why = rows.isEmpty() ? "no-rows"
                 : acted ? "-"
-                : tally.containsKey("waiting-session-gate") ? "session-gate-not-passed" : "nothing-to-do";
+                : tally.containsKey("waiting-session-gate") ? "session-gate-not-passed"
+                : tally.containsKey("waiting-adoption") ? "waiting-adoption"
+                : tally.containsKey("position-missing") ? "position-missing"
+                : tally.containsKey("other-connection") && tally.size() == 1 ? "other-connection"
+                : "nothing-to-do";
         audit.stage(STAGE, runId, pass, acted ? "acted" : "did-nothing", why,
                 fields("rows", rows.size(), "outcomes", SavingsPlanAudit.renderCounts(tally), "consolidated", tally.getOrDefault("consolidated", 0)));
         return tally;
@@ -262,6 +278,8 @@ public class SavingsConsolidator {
             BigDecimal fillQty, BigDecimal fillPrice, BigDecimal target, PlaceOutcome placed) {
         BigDecimal refund = refund(row, row.qty().subtract(fillQty == null ? BigDecimal.ZERO : fillQty));
         boolean movedDown = row.stopBefore() != null && target.compareTo(row.stopBefore()) < 0;
+        List<ExecutorPositionLeg> legs = legRepo.findOpenByPosition(p.id());
+        ExecutorPositionLeg leg = legs.size() == 1 ? legs.getFirst() : null;
         Boolean done = tx.execute(status -> {
             if (!savingsRepo.finish(row.id(), expected, CONSOLIDATED, fillQty, fillPrice, avg, target)) {
                 status.setRollbackOnly();
@@ -269,7 +287,6 @@ public class SavingsConsolidator {
             }
             positionRepo.bookSavingsQtyAndAvg(p.id(), bpQty, avg);
             positionRepo.bookSavingsStop(p.id(), placed.orderId(), target, placed.brokerStop(), placed.narrow());
-            ExecutorPositionLeg leg = singleOpenLeg(p.id());
             if (leg != null) legRepo.setStopAndQty(leg.id(), placed.orderId(), bpQty);
             if (refund.signum() > 0) savingsRepo.addCarry(row.positionId(), refund);
             audit.transition(c.runId(), c.pass(), RowRef.of(row), expected, CONSOLIDATED, "SAVINGS_CONSOLIDATE",
@@ -277,12 +294,17 @@ public class SavingsConsolidator {
                             "fill_price", fillPrice, "target_qty", bpQty, "target_stop", target,
                             "new_stop_order_id", placed.orderId(), "broker_stop", placed.brokerStop(),
                             "broker_stop_narrow", placed.narrow(), "stop_before", row.stopBefore(),
-                            "stop_moved_down", movedDown, "carry_refund_eur", refund),
+                            "stop_moved_down", movedDown, "carry_refund_eur", refund,
+                            "open_legs", legs.size(), "leg_id", leg == null ? null : leg.id()),
                     movedDown
                             ? "consolidated; the add was below the old average, so the stop moves DOWN — audited bypass of StopRatchetGuard, initial_stop unchanged"
                             : "consolidated into one position, one leg, one stop");
             return true;
         });
+        if (Boolean.TRUE.equals(done) && leg == null) {
+            legsNotSingle(row, p, c, legs.size(), "step 7 booked the position at qty " + plain(bpQty)
+                    + " and stop " + placed.orderId() + " but no leg was updated");
+        }
         return Boolean.TRUE.equals(done) ? "consolidated" : "unchanged";
     }
 
@@ -294,14 +316,16 @@ public class SavingsConsolidator {
         List<BrokerOrder> cancelled = new ArrayList<>();
         for (BrokerOrder old : oldStops) {
             if (!cancel(row, p, c, old.orderId(), "old-stop")) {
-                boolean restored = restore(row, expected, p, c, cancelled);
+                Recovery r = recover(row, expected, p, c, qty, oldStops);
                 audit.escalate(c.runId(), c.pass(), ref, p.symbol(), "CONSOLIDATE_CANCEL_FAILED", "WARN",
-                        fields("order", old.orderId(), "cancelled_before", ids(cancelled), "restored", restored),
-                        restored
-                                ? "cancel of an old stop failed (cancel-first): the stops already cancelled were "
-                                        + "re-placed at their old qty/price, no new stop placed, row stays " + expected
-                                : "cancel of an old stop failed (cancel-first) and re-placing the stops already "
-                                        + "cancelled failed too — row is UNPROTECTED (see CONSOLIDATE_UNPROTECTED)");
+                        fields("order", old.orderId(), "cancelled_before", ids(cancelled),
+                                "restored_old_stops", ids(r.restored()), "coverage", r.coverage(), "bp_qty", qty,
+                                "covered", r.covered()),
+                        r.covered()
+                                ? "cancel of an old stop failed (cancel-first): every old stop no longer live was "
+                                        + "re-placed at its old qty/price and live stops cover bp_qty; no new stop placed, row stays " + expected
+                                : "cancel of an old stop failed (cancel-first) and the live stops do not cover bp_qty "
+                                        + "after the restore — row is UNPROTECTED (see CONSOLIDATE_UNPROTECTED)");
                 return null;
             }
             cancelled.add(old);
@@ -309,14 +333,15 @@ public class SavingsConsolidator {
         PlaceOutcome o = placeTarget(row, expected, p, c, qty, target);
         if (o.result() == PlaceResult.PLACED) return o;
         if (o.result() == PlaceResult.REJECTED) {
-            boolean restored = restore(row, expected, p, c, cancelled);
+            Recovery r = recover(row, expected, p, c, qty, oldStops);
             audit.escalate(c.runId(), c.pass(), ref, p.symbol(), "CONSOLIDATE_PLACE_FAILED",
-                    restored ? "WARN" : "CRITICAL",
-                    fields("target", target, "qty", qty, "restored_old_stops", ids(cancelled), "restored", restored),
-                    restored
-                            ? "target and band stop both rejected; the old stops were re-placed at their old qty/price"
-                            : "target and band stop both rejected and re-placing the old stops failed — row is "
-                                    + "UNPROTECTED (see CONSOLIDATE_UNPROTECTED)");
+                    r.covered() ? "WARN" : "CRITICAL",
+                    fields("target", target, "qty", qty, "restored_old_stops", ids(r.restored()),
+                            "coverage", r.coverage(), "covered", r.covered()),
+                    r.covered()
+                            ? "target and band stop both rejected; the old stops were re-placed at their old qty/price and cover bp_qty"
+                            : "target and band stop both rejected and the live stops do not cover bp_qty after the "
+                                    + "restore — row is UNPROTECTED (see CONSOLIDATE_UNPROTECTED)");
             return null;
         }
         unprotected(row, expected, p, c, "the target stop's place got no verdict after the old stops were cancelled");
@@ -328,11 +353,20 @@ public class SavingsConsolidator {
         RowRef ref = RowRef.of(row);
         PlaceOutcome o = placeTarget(row, expected, p, c, qty, target);
         if (o.result() != PlaceResult.PLACED) {
+            BigDecimal coverage = qtySum(oldStops);
+            boolean covered = coverage.compareTo(qty) >= 0;
             audit.escalate(c.runId(), c.pass(), ref, p.symbol(), "CONSOLIDATE_PLACE_FAILED", "WARN",
-                    fields("target", target, "qty", qty, "result", o.result()),
-                    o.result() == PlaceResult.REJECTED
+                    fields("target", target, "qty", qty, "result", o.result(), "coverage", coverage,
+                            "covered", covered),
+                    !covered
+                            ? "no new stop (place-first) and the old stops do not cover bp_qty — row goes UNPROTECTED"
+                            : o.result() == PlaceResult.REJECTED
                             ? "target and band stop both rejected (place-first): the old stops were never cancelled and stay live"
                             : "no verdict on the target stop (place-first): the old stops stay live; the next closed pass keeps exactly one");
+            if (!covered) {
+                unprotected(row, expected, p, c, "no new stop (place-first) and the live old stops cover only "
+                        + plain(coverage) + " of bp_qty " + plain(qty));
+            }
             return null;
         }
         for (BrokerOrder old : oldStops) {
@@ -401,6 +435,46 @@ public class SavingsConsolidator {
         }
     }
 
+    /** Result of {@link #recover}: what was re-placed, the live-stop qty afterwards, and whether it
+     *  covers bp.qty (false ⇒ the row is UNPROTECTED and CRITICAL was raised). */
+    record Recovery(List<BrokerOrder> restored, BigDecimal coverage, boolean covered) {
+    }
+
+    /** §5.3 cancel-first failure: a cancel that failed (indeterminate, or refused as ORDER_NOT_FOUND)
+     *  may still have taken effect, so the orders are read again and EVERY old stop that is no
+     *  longer live is re-placed at its old qty/price — not only the ones this pass saw cancel. If
+     *  the live stops then do not cover {@code bpQty}, or the re-read itself fails, the row goes
+     *  UNPROTECTED: shares must never sit without a stop while the row is trigger-excluded. */
+    Recovery recover(SavingsBuy row, String expected, ExecutorPosition p, Ctx c, BigDecimal bpQty,
+            List<BrokerOrder> oldStops) {
+        List<BrokerOrder> live;
+        try {
+            List<BrokerOrder> open = audit.broker(STAGE, c.runId(), c.pass(), "orders",
+                    "row=" + row.id() + " why=coverage-after-failure",
+                    () -> gateway.orders(c.connection()), l -> "count=" + l.size());
+            live = liveSellStops(new Broker(null, open, List.of()), p.symbol());
+        } catch (BrokerUnavailableException e) {
+            unprotected(row, expected, p, c, "the order re-read after a failed step 6 got no answer, "
+                    + "so the stop coverage is unknown: " + e.getMessage());
+            return new Recovery(List.of(), BigDecimal.ZERO, false);
+        }
+        Set<String> liveIds = live.stream().map(BrokerOrder::orderId).collect(Collectors.toSet());
+        List<BrokerOrder> gone = oldStops.stream().filter(o -> !liveIds.contains(o.orderId())).toList();
+        if (!restore(row, expected, p, c, gone)) return new Recovery(gone, qtySum(live), false);
+        BigDecimal coverage = qtySum(live).add(qtySum(gone));
+        if (coverage.compareTo(bpQty) < 0) {
+            unprotected(row, expected, p, c, "after the restore the live stops cover only " + plain(coverage)
+                    + " of bp_qty " + plain(bpQty));
+            return new Recovery(gone, coverage, false);
+        }
+        return new Recovery(gone, coverage, true);
+    }
+
+    private static BigDecimal qtySum(List<BrokerOrder> orders) {
+        return orders.stream().map(BrokerOrder::qty).filter(Objects::nonNull).map(BigDecimal::abs)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
     /** Re-places every stop already cancelled at its OLD qty/price (levels Saxo already accepted). A
      *  re-placed leg-1 stop is repointed in the book. @return false when protection could not be
      *  restored — the row is then UNPROTECTED (CRITICAL). */
@@ -419,15 +493,28 @@ public class SavingsConsolidator {
             }
             if (old.orderId().equals(p.stopOrderId())) {
                 positionRepo.setStopOrderId(p.id(), newId);
-                ExecutorPositionLeg leg = singleOpenLeg(p.id());
+                List<ExecutorPositionLeg> legs = legRepo.findOpenByPosition(p.id());
+                ExecutorPositionLeg leg = legs.size() == 1 ? legs.getFirst() : null;
                 if (leg != null) legRepo.repointLegStop(leg.id(), newId);
                 audit.transition(c.runId(), c.pass(), RowRef.of(row), expected, expected, "SAVINGS_CONSOLIDATE",
                         "LEG1_STOP_REPOINTED", fields("old_stop_order_id", old.orderId(), "new_stop_order_id", newId,
-                                "qty", old.qty(), "stop", old.stopPrice()),
+                                "qty", old.qty(), "stop", old.stopPrice(), "open_legs", legs.size(),
+                                "leg_id", leg == null ? null : leg.id()),
                         "leg-1 stop re-placed at its old level and repointed");
+                if (leg == null) {
+                    legsNotSingle(row, p, c, legs.size(), "the position's stop was repointed to " + newId
+                            + " but no leg was");
+                }
             }
         }
         return true;
+    }
+
+    /** §8a: a leg update that could not be made is never silent. */
+    void legsNotSingle(SavingsBuy row, ExecutorPosition p, Ctx c, int openLegs, String what) {
+        audit.escalate(c.runId(), c.pass(), RowRef.of(row), p.symbol(), "SAVINGS_QTY_UNEXPLAINED", "WARN",
+                fields("detail", "open_legs:" + openLegs, "open_legs", openLegs),
+                what + " — expected exactly one OPEN leg, found " + openLegs + "; leg state is stale until fixed");
     }
 
     void unprotected(SavingsBuy row, String expected, ExecutorPosition p, Ctx c, String why) {
@@ -492,6 +579,11 @@ public class SavingsConsolidator {
             audit.transition(c.runId(), c.pass(), RowRef.of(row), expected, expected, "SAVINGS_CONSOLIDATE",
                     "NEW_STOP_PERSISTED", fields("new_stop_order_id", id, "stop", price),
                     "new stop id persisted before any further broker call");
+        } else {
+            audit.escalate(c.runId(), c.pass(), RowRef.of(row), row.symbol(), "NEW_STOP_NOT_PERSISTED", "WARN",
+                    fields("new_stop_order_id", id, "stop", price, "expected_status", expected, "persisted", false),
+                    "the new stop " + id + " is live but its id could not be persisted (row no longer " + expected
+                            + ") — reconcile cannot attribute its fill by new_stop_order_id");
         }
     }
 

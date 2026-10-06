@@ -51,6 +51,8 @@ class SavingsConsolidatorTest {
     /** Records the order of broker writes — §5.2 step 6 has two legal orders. */
     static class SequencedGateway extends FakeExecutionGateway {
         final List<String> ops = new ArrayList<>();
+        /** Cancels that TAKE EFFECT at the broker and then still throw (timeout / ORDER_NOT_FOUND). */
+        final java.util.Map<String, RuntimeException> effectiveCancelFailures = new java.util.HashMap<>();
 
         @Override
         public String placeProtectiveStop(String c, String s, BigDecimal q, BigDecimal p) {
@@ -62,6 +64,8 @@ class SavingsConsolidatorTest {
         public void cancelOrder(String c, String id) {
             ops.add("cancel:" + id);
             super.cancelOrder(c, id);
+            RuntimeException after = effectiveCancelFailures.get(id);
+            if (after != null) throw after;
         }
 
         @Override
@@ -75,7 +79,13 @@ class SavingsConsolidatorTest {
     final SequencedGateway gateway = new SequencedGateway();
     final ExecutorPositionRepository positionRepo = mock(ExecutorPositionRepository.class);
     final ExecutorPositionLegRepository legRepo = mock(ExecutorPositionLegRepository.class);
-    final InMemorySavingsPlanRepository savingsRepo = new InMemorySavingsPlanRepository();
+    boolean failNewStopCas;
+    final InMemorySavingsPlanRepository savingsRepo = new InMemorySavingsPlanRepository() {
+        @Override
+        public boolean setNewStopOrderId(long id, String expected, String newStopOrderId) {
+            return !failNewStopCas && super.setNewStopOrderId(id, expected, newStopOrderId);
+        }
+    };
     final ExecutorIndicators indicators = mock(ExecutorIndicators.class);
     final DecisionLogRepository decisionRepo = mock(DecisionLogRepository.class);
     final RuleVersionProvider ruleVersions = mock(RuleVersionProvider.class);
@@ -458,23 +468,212 @@ class SavingsConsolidatorTest {
         assertThat(row(r.id).status()).isEqualTo(SavingsBuy.REJECTED);
         assertThat(savingsRepo.carryOf(1)).isEqualByComparingTo("908.82");
     }
-    /** A REFUSED cancel (not only an indeterminate one) is a failed cancel: nothing new is placed,
-     *  the row stays CONSOLIDATING and is escalated — it must never throw out half-done. */
+    /** Review I1: a cancel refused as ORDER_NOT_FOUND means the stop is GONE — the fresh order read
+     *  finds it no longer live and it is re-placed at its old qty/price, never left uncovered. */
     @Test
-    void aRefusedOldStopCancelIsAFailedCancelNotARowFailure() {
+    void aRefusedOldStopCancelWhoseStopIsGoneIsRestored() {
         var r = placedRow();
         legStops();
         broker("19", "105.77894736842105");
-        gateway.rejectCancelWith = new BrokerRejectedException("gone", "ORDER_NOT_FOUND", List.of());
+        gateway.effectiveCancelFailures.put("stop-1",
+                new BrokerRejectedException("gone", "ORDER_NOT_FOUND", List.of()));
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(gateway.ops).containsExactly("cancel:stop-1", "place:10@65");
+        verify(positionRepo).setStopOrderId(1L, "pstop-1");
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.CONSOLIDATING);
+        assertThat(lines("savings-plan row failed")).isEmpty();
+        assertThat(lines("savings-plan escalation")).anySatisfy(l -> assertThat(l)
+                .contains("code=CONSOLIDATE_CANCEL_FAILED").contains("restored_old_stops=stop-1")
+                .contains("coverage=19").contains("covered=true"));
+        assertThat(lines("savings-plan stage")).singleElement().satisfies(l -> assertThat(l)
+                .contains("outcome=acted").contains("outcomes={escalated:1}"));
+    }
+
+    /** Review I1: stop-1 cancels, the child-9 cancel times out but took effect — BOTH are re-placed. */
+    @Test
+    void aTimedOutCancelThatTookEffectIsRestoredToo() {
+        var r = placedRow();
+        legStops();
+        broker("19", "105.77894736842105");
+        gateway.effectiveCancelFailures.put("child-9", new BrokerUnavailableException("timeout"));
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(gateway.ops).containsExactly("cancel:stop-1", "cancel:child-9", "place:10@65", "place:9@89.76");
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.CONSOLIDATING);
+        assertThat(lines("savings-plan escalation")).anySatisfy(l -> assertThat(l)
+                .contains("code=CONSOLIDATE_CANCEL_FAILED").contains("restored_old_stops=stop-1,child-9")
+                .contains("covered=true"));
+    }
+
+    /** Review I1: after the recovery the live stops cover less than bp.qty (the child was never
+     *  live) — the row goes UNPROTECTED (CRITICAL) instead of a trigger-excluded CONSOLIDATING. */
+    @Test
+    void aFailedCancelWithShortCoverageIsUnprotected() {
+        var r = placedRow();
+        gateway.seedOrder(liveStop("stop-1", "TECHA", "10", "65.00"));
+        broker("19", "105.77894736842105");
+        gateway.failCancelForOrderId = "stop-1";
 
         consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
 
         assertThat(gateway.ops).containsExactly("cancel:stop-1");
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.UNPROTECTED);
+        assertThat(appender.list).anySatisfy(e -> {
+            assertThat(e.getLevel()).isEqualTo(Level.ERROR);
+            assertThat(e.getFormattedMessage()).contains("code=CONSOLIDATE_UNPROTECTED")
+                    .contains("cover only 10 of bp_qty 19");
+        });
+    }
+
+    /** Review I2: no live old stop at all + target and band rejected ⇒ nothing covers the shares. */
+    @Test
+    void noOldStopsAndBothPlacesRejectedIsUnprotectedNotARestoreClaim() {
+        var r = placedRow();
+        broker("19", "105.77894736842105");
+        gateway.protectiveStopFailures.add(new BrokerRejectedException("no", "X", List.of()));
+        gateway.protectiveStopFailures.add(new BrokerRejectedException("no", "X", List.of()));
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(gateway.ops).containsExactly("place:19@68.76", "place:19@88");
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.UNPROTECTED);
+        assertThat(lines("savings-plan escalation")).anySatisfy(l -> assertThat(l)
+                .contains("code=CONSOLIDATE_PLACE_FAILED").contains("severity=CRITICAL").contains("covered=false")
+                .doesNotContain("were re-placed"));
+        assertThat(lines("savings-plan escalation")).anySatisfy(l -> assertThat(l)
+                .contains("code=CONSOLIDATE_UNPROTECTED").contains("severity=CRITICAL"));
+    }
+
+    /** Review I2, place-first: no new stop and the old stops do not cover bp.qty ⇒ UNPROTECTED. */
+    @Test
+    void placeFirstWithoutCoveringOldStopsIsUnprotected() {
+        consolidator = consolidator(true, true);
+        var r = placedRow();
+        gateway.seedOrder(liveStop("stop-1", "TECHA", "10", "65.00"));
+        broker("19", "105.77894736842105");
+        gateway.protectiveStopFailures.add(new BrokerUnavailableException("5xx"));
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(gateway.ops).containsExactly("place:19@68.76");
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.UNPROTECTED);
+    }
+
+    @Test
+    void placeFirstWithCoveringOldStopsStaysConsolidatingAndWarns() {
+        consolidator = consolidator(true, true);
+        var r = placedRow();
+        legStops();
+        broker("19", "105.77894736842105");
+        gateway.protectiveStopFailures.add(new BrokerUnavailableException("5xx"));
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
         assertThat(row(r.id).status()).isEqualTo(SavingsBuy.CONSOLIDATING);
-        assertThat(reasonCodes()).contains("CONSOLIDATE_CANCEL_FAILED");
-        assertThat(lines("savings-plan row failed")).isEmpty();
+        assertThat(lines("savings-plan escalation")).anySatisfy(l -> assertThat(l)
+                .contains("code=CONSOLIDATE_PLACE_FAILED").contains("covered=true"));
+    }
+
+    /** Review I3: a step-7 booking with != 1 OPEN leg is never silent. */
+    @Test
+    void aBookingWithoutASingleOpenLegEscalates() {
+        var r = placedRow();
+        legStops();
+        broker("19", "105.77894736842105");
+        ExecutorPositionLeg leg = SavingsFixtures.leg(position);
+        when(legRepo.findOpenByPosition(1L)).thenReturn(List.of(leg, leg));
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.CONSOLIDATED);
+        verify(legRepo, never()).setStopAndQty(anyLong(), any(), any());
+        assertThat(lines("savings-plan transition")).anySatisfy(l -> assertThat(l)
+                .contains("to=CONSOLIDATED").contains("open_legs=2").contains("leg_id=null"));
+        assertThat(lines("savings-plan escalation")).anySatisfy(l -> assertThat(l)
+                .contains("code=SAVINGS_QTY_UNEXPLAINED").contains("detail=open_legs:2"));
+    }
+
+    @Test
+    void theConsolidatedLineNamesTheLeg() {
+        placedRow();
+        legStops();
+        broker("19", "105.77894736842105");
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(lines("savings-plan transition")).anySatisfy(l -> assertThat(l)
+                .contains("to=CONSOLIDATED").contains("open_legs=1").contains("leg_id=10"));
+        assertThat(lines("savings-plan escalation")).isEmpty();
+    }
+
+    @Test
+    void aRepointWithoutASingleOpenLegEscalates() {
+        placedRow();
+        legStops();
+        broker("19", "105.77894736842105");
+        gateway.failCancelForOrderId = "child-9";
+        when(legRepo.findOpenByPosition(1L)).thenReturn(List.of());
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        verify(legRepo, never()).repointLegStop(anyLong(), any());
+        assertThat(lines("savings-plan transition")).anySatisfy(l -> assertThat(l)
+                .contains("open_legs=0").contains("new_stop_order_id=pstop-1"));
+        assertThat(lines("savings-plan escalation")).anySatisfy(l -> assertThat(l)
+                .contains("code=SAVINGS_QTY_UNEXPLAINED").contains("detail=open_legs:0"));
+    }
+
+    /** Review Minor 1: other-connection and missing-position rows are counted, the latter at WARN. */
+    @Test
+    void otherConnectionAndMissingPositionRowsAreCounted() {
+        savingsRepo.seed("2026-11", 2, "TECHB", SavingsBuy.PLACED, "1", "50", "45", "5", "50", "32.50", ADD_AT);
+        savingsRepo.seed("2026-11", 3, "TECHC", SavingsBuy.PLACED, "1", "50", "45", "5", "50", "32.50", ADD_AT);
+        ExecutorPosition other = SavingsFixtures.pos(2, "TECHB").build();
+        when(positionRepo.findById(2L)).thenReturn(other);
+
+        consolidator.consolidateStage("other-conn", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(lines("savings-plan row failed")).singleElement().satisfies(l -> assertThat(l)
+                .contains("position=3").contains("error=position-missing"));
+        assertThat(appender.list).anySatisfy(e -> {
+            assertThat(e.getLevel()).isEqualTo(Level.WARN);
+            assertThat(e.getFormattedMessage()).contains("error=position-missing");
+        });
         assertThat(lines("savings-plan stage")).singleElement().satisfies(l -> assertThat(l)
-                .contains("outcome=acted").contains("outcomes={escalated:1}"));
+                .contains("outcome=did-nothing").contains("why=position-missing")
+                .contains("outcomes={other-connection:1,position-missing:1}"));
+    }
+
+    /** Review Minor 3: a lost CAS on new_stop_order_id is a WARN, never silent. */
+    @Test
+    void aLostNewStopCasIsEscalated() {
+        placedRow();
+        legStops();
+        broker("19", "105.77894736842105");
+        failNewStopCas = true;
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(lines("savings-plan escalation")).anySatisfy(l -> assertThat(l)
+                .contains("code=NEW_STOP_NOT_PERSISTED").contains("new_stop_order_id=pstop-1")
+                .contains("persisted=false"));
+    }
+
+    /** Review Minor 4: rows that only wait for adoption say so. */
+    @Test
+    void aPassThatOnlyWaitsForAdoptionSaysSo() {
+        savingsRepo.seed("2026-11", 1, "TECHA", SavingsBuy.PLACING, "9", "112.20", "100.98",
+                "10", "100", "65.00", ADD_AT);
+        legStops();
+        broker("10", "100");
+
+        consolidator.consolidateStage("c", "run-1b", "pass-1b", Instant.parse("2026-11-02T23:05:00Z"));
+
+        assertThat(lines("savings-plan stage")).singleElement().satisfies(l -> assertThat(l)
+                .contains("outcome=did-nothing").contains("why=waiting-adoption"));
     }
 
     /** §5.3: re-placing an already-cancelled old stop is refused → UNPROTECTED, CRITICAL. */
