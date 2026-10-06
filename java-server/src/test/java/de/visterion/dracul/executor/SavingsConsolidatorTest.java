@@ -1,0 +1,533 @@
+package de.visterion.dracul.executor;
+
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import de.visterion.dracul.executor.broker.BrokerOrder;
+import de.visterion.dracul.executor.broker.BrokerPosition;
+import de.visterion.dracul.executor.broker.BrokerRejectedException;
+import de.visterion.dracul.executor.broker.BrokerUnavailableException;
+import de.visterion.dracul.executor.broker.FakeExecutionGateway;
+import de.visterion.dracul.executor.broker.ModifyResult;
+import de.visterion.dracul.executor.broker.OrderRole;
+import de.visterion.dracul.executor.broker.OrderStatus;
+import de.visterion.dracul.notify.TelegramNotifier;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.slf4j.LoggerFactory;
+import org.springframework.transaction.support.TransactionOperations;
+import tools.jackson.databind.ObjectMapper;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalTime;
+import java.util.ArrayList;
+import java.util.List;
+
+import static de.visterion.dracul.executor.SavingsFixtures.filledParent;
+import static de.visterion.dracul.executor.SavingsFixtures.liveParent;
+import static de.visterion.dracul.executor.SavingsFixtures.liveStop;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeast;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+/** Spec 2026-10-06 §5, §12 ConsolidationTest. Standard book: TECHA, 10 shares at 100, leg-1 stop
+ *  "stop-1" 10 @ 65.00; the November add (row PLACED, 9 @ 112.20, child "child-9" 9 @ 89.76) was
+ *  placed Mon 2026-11-02 23:00 UTC; the consolidating pass is Tue 2026-11-03 23:00 UTC. */
+class SavingsConsolidatorTest {
+
+    static final Instant ADD_AT = Instant.parse("2026-11-02T23:00:00Z");
+    static final Instant NEXT_DAY = Instant.parse("2026-11-03T23:00:00Z");
+
+    /** Records the order of broker writes — §5.2 step 6 has two legal orders. */
+    static class SequencedGateway extends FakeExecutionGateway {
+        final List<String> ops = new ArrayList<>();
+
+        @Override
+        public String placeProtectiveStop(String c, String s, BigDecimal q, BigDecimal p) {
+            ops.add("place:" + q.stripTrailingZeros().toPlainString() + "@" + p.stripTrailingZeros().toPlainString());
+            return super.placeProtectiveStop(c, s, q, p);
+        }
+
+        @Override
+        public void cancelOrder(String c, String id) {
+            ops.add("cancel:" + id);
+            super.cancelOrder(c, id);
+        }
+
+        @Override
+        public ModifyResult modifyBracket(String c, String o, String s, BigDecimal st, BigDecimal t,
+                String so, String to) {
+            ops.add("modify:" + so + "@" + st.stripTrailingZeros().toPlainString());
+            return super.modifyBracket(c, o, s, st, t, so, to);
+        }
+    }
+
+    final SequencedGateway gateway = new SequencedGateway();
+    final ExecutorPositionRepository positionRepo = mock(ExecutorPositionRepository.class);
+    final ExecutorPositionLegRepository legRepo = mock(ExecutorPositionLegRepository.class);
+    final InMemorySavingsPlanRepository savingsRepo = new InMemorySavingsPlanRepository();
+    final ExecutorIndicators indicators = mock(ExecutorIndicators.class);
+    final DecisionLogRepository decisionRepo = mock(DecisionLogRepository.class);
+    final RuleVersionProvider ruleVersions = mock(RuleVersionProvider.class);
+    final TelegramNotifier telegram = mock(TelegramNotifier.class);
+    final HardTriggerService hardTrigger = mock(HardTriggerService.class);
+    ListAppender<ILoggingEvent> appender;
+    SavingsConsolidator consolidator;
+    ExecutorPosition position;
+
+    @BeforeEach
+    void setUp() {
+        when(ruleVersions.active()).thenReturn("exec-v1.3");
+        gateway.cancelRemovesOrder = true;
+        savingsRepo.now = NEXT_DAY;
+        appender = new ListAppender<>();
+        appender.start();
+        ((Logger) LoggerFactory.getLogger(SavingsPlanAudit.class)).addAppender(appender);
+        ((Logger) LoggerFactory.getLogger(SavingsConsolidator.class)).addAppender(appender);
+        consolidator = consolidator(false, true);
+        position = SavingsFixtures.pos(1, "TECHA").build();
+        book(position);
+        when(indicators.levels("TECHA", 22, 20)).thenReturn(SavingsFixtures.levels("110"));
+    }
+
+    @AfterEach
+    void detach() {
+        ((Logger) LoggerFactory.getLogger(SavingsPlanAudit.class)).detachAndStopAllAppenders();
+        ((Logger) LoggerFactory.getLogger(SavingsConsolidator.class)).detachAndStopAllAppenders();
+    }
+
+    SavingsConsolidator consolidator(boolean placeFirst, boolean enabled) {
+        SavingsPlanSettings s = new SavingsPlanSettings(enabled, new BigDecimal("0.02"),
+                new BigDecimal("0.08"), new BigDecimal("0.50"), new BigDecimal("0.02"), 3,
+                LocalTime.of(21, 15), "gtc", placeFirst);
+        return new SavingsConsolidator(gateway, positionRepo, legRepo, savingsRepo, indicators,
+                ConvictionProfile.defaults(), s,
+                new SavingsPlanAudit(decisionRepo, ruleVersions, new ObjectMapper(), telegram),
+                TransactionOperations.withoutTransaction(), hardTrigger, 22, 20);
+    }
+
+    void book(ExecutorPosition p) {
+        when(positionRepo.findById(p.id())).thenReturn(p);
+        when(legRepo.findOpenByPosition(p.id())).thenReturn(List.of(SavingsFixtures.leg(p)));
+    }
+
+    InMemorySavingsPlanRepository.Row placedRow() {
+        InMemorySavingsPlanRepository.Row r = savingsRepo.seed("2026-11", 1, "TECHA", SavingsBuy.PLACED,
+                "9", "112.20", "100.98", "10", "100", "65.00", ADD_AT);
+        r.entryOrderId = "brk-9";
+        r.childStopOrderId = "child-9";
+        return r;
+    }
+
+    void legStops() {
+        gateway.seedOrder(liveStop("stop-1", "TECHA", "10", "65.00"));
+        gateway.seedOrder(liveStop("child-9", "TECHA", "9", "89.76"));
+    }
+
+    void broker(String qty, String avg) {
+        gateway.seedPosition(new BrokerPosition("TECHA", "BUY", new BigDecimal(qty), new BigDecimal(avg),
+                new BigDecimal("110"), null));
+    }
+
+    List<String> lines(String prefix) {
+        return appender.list.stream().map(ILoggingEvent::getFormattedMessage).filter(m -> m.startsWith(prefix)).toList();
+    }
+
+    List<String> reasonCodes() {
+        ArgumentCaptor<DecisionLog> c = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo, atLeast(0)).insert(c.capture());
+        return c.getAllValues().stream().map(DecisionLog::reasonCode).toList();
+    }
+
+    SavingsBuy row(long id) {
+        return savingsRepo.findById(id);
+    }
+
+    @Test
+    void aFullFillCancelsEveryLiveStopThenPlacesOneStopAtTheAverageTimes065() {
+        var r = placedRow();
+        legStops();
+        gateway.seedOrder(filledParent("brk-9", "sp-1-202611", "TECHA", "9", "112.20"));
+        broker("19", "105.77894736842105");
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(gateway.ops).containsExactly("cancel:stop-1", "cancel:child-9", "place:19@68.76");
+        String newStop = "pstop-1";                     // the fake's first protective-stop id
+        verify(positionRepo).bookSavingsQtyAndAvg(1L, new BigDecimal("19"), new BigDecimal("105.778947"));
+        verify(positionRepo).bookSavingsStop(1L, newStop, new BigDecimal("68.76"), new BigDecimal("68.76"), false);
+        verify(legRepo).setStopAndQty(10L, newStop, new BigDecimal("19"));
+        SavingsBuy done = row(r.id);
+        assertThat(done.status()).isEqualTo(SavingsBuy.CONSOLIDATED);
+        assertThat(done.fillQty()).isEqualByComparingTo("9");
+        assertThat(done.fillPrice()).isEqualByComparingTo("112.199999");
+        assertThat(done.avgAfter()).isEqualByComparingTo("105.778947");
+        assertThat(done.stopAfter()).isEqualByComparingTo("68.76");
+        assertThat(done.newStopOrderId()).isEqualTo(newStop);
+        assertThat(savingsRepo.carryOf(1)).isEqualByComparingTo("0");
+
+        assertThat(lines("savings-plan transition")).anySatisfy(l -> assertThat(l)
+                .contains("from=PLACED").contains("to=CONSOLIDATING").contains("bp_qty=19")
+                .contains("bp_avg=105.778947").contains("target_stop=68.76").contains("qty_before=10"));
+        assertThat(lines("savings-plan transition")).anySatisfy(l -> assertThat(l)
+                .contains("from=CONSOLIDATING").contains("to=CONSOLIDATED").contains("fill_qty=9")
+                .contains("new_stop_order_id=" + newStop).contains("stop_moved_down=false"));
+        assertThat(lines("savings-plan stage")).singleElement().satisfies(l -> assertThat(l)
+                .contains("stage=consolidate").contains("outcome=acted").contains("consolidated=1"));
+        assertThat(reasonCodes()).contains("CONSOLIDATING", "NEW_STOP_PERSISTED", "CONSOLIDATED");
+    }
+
+    @Test
+    void placeFirstPlacesTheNewStopBeforeCancellingTheOldOnes() {
+        consolidator = consolidator(true, true);
+        placedRow();
+        legStops();
+        broker("19", "105.77894736842105");
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(gateway.ops).containsExactly("place:19@68.76", "cancel:stop-1", "cancel:child-9");
+    }
+
+    @Test
+    void aPartialFillTakesItsQtyFromTheBrokerPositionAndRefundsTheRest() {
+        var r = placedRow();
+        legStops();
+        gateway.seedOrder(new BrokerOrder("brk-9", "sp-1-202611", "TECHA", OrderRole.OTHER,
+                OrderStatus.PARTIALLY_FILLED, new BigDecimal("9"), new BigDecimal("4"),
+                new BigDecimal("112.20"), null, "buy", "limit", "partialfill", "open",
+                new BigDecimal("112.20"), null, null));
+        broker("14", "103.48571428571");
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(gateway.ops).containsExactly("cancel:brk-9", "cancel:stop-1", "cancel:child-9", "place:14@67.27");
+        assertThat(row(r.id).fillQty()).isEqualByComparingTo("4");
+        assertThat(row(r.id).fillPrice()).isEqualByComparingTo("112.199999");
+        assertThat(savingsRepo.carryOf(1)).isEqualByComparingTo("504.90");   // (9 − 4) × 100.98
+    }
+
+    @Test
+    void noFillExpiresRefundsTheCarryCancelsTheChildAndLeavesLegOne() {
+        var r = placedRow();
+        legStops();
+        broker("10", "100");
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(gateway.ops).containsExactly("cancel:child-9");
+        assertThat(gateway.protectiveStops).isEmpty();
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.EXPIRED);
+        assertThat(savingsRepo.carryOf(1)).isEqualByComparingTo("908.82");     // 9 × 100.98
+        verify(positionRepo, never()).bookSavingsStop(anyLong(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+        assertThat(lines("savings-plan transition")).anySatisfy(l -> assertThat(l)
+                .contains("from=PLACED").contains("to=EXPIRED").contains("carry_refund_eur=908.82"));
+    }
+
+    @Test
+    void aWorkingGtcParentIsCancelledBeforeItExpires() {
+        var r = placedRow();
+        legStops();
+        gateway.seedOrder(liveParent("brk-9", "sp-1-202611", "TECHA", "9", "112.20"));
+        broker("10", "100");
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(gateway.ops).containsExactly("cancel:brk-9", "cancel:child-9");
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.EXPIRED);
+    }
+
+    @Test
+    void aNullChildIdIsSweptBySymbol() {
+        var r = placedRow();
+        r.childStopOrderId = null;
+        gateway.seedOrder(liveStop("stop-1", "TECHA", "10", "65.00"));
+        gateway.seedOrder(liveStop("x-77", "TECHA", "9", "89.76"));
+        broker("19", "105.77894736842105");
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(gateway.ops).containsExactly("cancel:stop-1", "cancel:x-77", "place:19@68.76");
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.CONSOLIDATED);
+    }
+
+    /** §12: two consecutive months on one position; the second add is below the old average, so the
+     *  stop moves DOWN (audited bypass of StopRatchetGuard; initial_stop untouched). */
+    @Test
+    void theSecondMonthConsolidatesTheConsolidatedPositionAndTheStopMovesDown() {
+        position = SavingsFixtures.pos(1, "TECHA").qty("19").entry("105.778947").activeStop("68.76").stop("cons-1").build();
+        book(position);
+        var r = savingsRepo.seed("2026-12", 1, "TECHA", SavingsBuy.PLACED, "8", "100.00", "90.00", "19",
+                "105.778947", "68.76", Instant.parse("2026-12-01T23:00:00Z"));
+        r.entryOrderId = "brk-12";
+        r.childStopOrderId = "child-12";
+        gateway.seedOrder(liveStop("cons-1", "TECHA", "19", "68.76"));
+        gateway.seedOrder(liveStop("child-12", "TECHA", "8", "80.00"));
+        broker("27", "104.06666666667");
+        Instant dec2 = Instant.parse("2026-12-02T23:00:00Z");
+        savingsRepo.now = dec2;
+
+        consolidator.consolidateStage("c", "run-3", "pass-3", dec2);
+
+        assertThat(gateway.ops).containsExactly("cancel:cons-1", "cancel:child-12", "place:27@67.65");
+        assertThat(row(r.id).fillPrice()).isEqualByComparingTo("100.000002");
+        assertThat(row(r.id).stopAfter()).isEqualByComparingTo("67.65");
+        assertThat(lines("savings-plan transition")).anySatisfy(l -> assertThat(l)
+                .contains("to=CONSOLIDATED").contains("stop_before=68.76").contains("target_stop=67.65")
+                .contains("stop_moved_down=true"));
+    }
+
+    @Test
+    void afterAHalfSaleTheTargetIsNeverBelowTheTrail() {
+        position = SavingsFixtures.pos(1, "TECHA").trimCount(1).activeStop("80.00").build();
+        book(position);
+        placedRow();
+        legStops();
+        broker("19", "105.77894736842105");
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(gateway.ops).contains("place:19@80");
+    }
+
+    @Test
+    void aBandRejectPlacesAtTheBandThenModifiesToTheTarget() {
+        var r = placedRow();
+        legStops();
+        broker("19", "105.77894736842105");
+        gateway.protectiveStopFailures.add(new BrokerRejectedException("band", "PRICE_OUT_OF_BAND", List.of()));
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(gateway.ops).containsExactly("cancel:stop-1", "cancel:child-9", "place:19@68.76",
+                "place:19@88", "modify:pstop-1@68.76");
+        verify(positionRepo).bookSavingsStop(1L, "pstop-1", new BigDecimal("68.76"), new BigDecimal("68.76"), false);
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.CONSOLIDATED);
+    }
+
+    @Test
+    void aRejectedModifyLeavesTheNarrowBandStopAndEscalates() {
+        var r = placedRow();
+        legStops();
+        broker("19", "105.77894736842105");
+        gateway.protectiveStopFailures.add(new BrokerRejectedException("band", "PRICE_OUT_OF_BAND", List.of()));
+        gateway.modifyFailures = 1;
+        gateway.modifyRejectCode = "PRICE_OUT_OF_BAND";
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        verify(positionRepo).bookSavingsStop(eq(1L), eq("pstop-1"), eq(new BigDecimal("68.76")),
+                org.mockito.ArgumentMatchers.argThat(b -> b.compareTo(new BigDecimal("88")) == 0), eq(true));
+        assertThat(reasonCodes()).contains("CONSOLIDATE_NARROW");
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.CONSOLIDATED);
+    }
+
+    @Test
+    void aFailedCancelReplacesTheAlreadyCancelledStopsAndPlacesNothingNew() {
+        var r = placedRow();
+        legStops();
+        broker("19", "105.77894736842105");
+        gateway.failCancelForOrderId = "child-9";
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(gateway.ops).containsExactly("cancel:stop-1", "cancel:child-9", "place:10@65");
+        verify(positionRepo).setStopOrderId(1L, "pstop-1");
+        verify(legRepo).repointLegStop(10L, "pstop-1");
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.CONSOLIDATING);
+        assertThat(reasonCodes()).contains("CONSOLIDATE_CANCEL_FAILED");
+    }
+
+    @Test
+    void bothPlacesRejectedReplacesTheOldStops() {
+        var r = placedRow();
+        legStops();
+        broker("19", "105.77894736842105");
+        gateway.protectiveStopFailures.add(new BrokerRejectedException("no", "X", List.of()));
+        gateway.protectiveStopFailures.add(new BrokerRejectedException("no", "X", List.of()));
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(gateway.ops).containsExactly("cancel:stop-1", "cancel:child-9", "place:19@68.76",
+                "place:19@88", "place:10@65", "place:9@89.76");
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.CONSOLIDATING);
+        assertThat(reasonCodes()).contains("CONSOLIDATE_PLACE_FAILED");
+    }
+
+    @Test
+    void anIndeterminatePlaceAfterTheCancelsIsUnprotectedAndCritical() {
+        var r = placedRow();
+        legStops();
+        broker("19", "105.77894736842105");
+        gateway.protectiveStopFailures.add(new BrokerUnavailableException("5xx"));
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.UNPROTECTED);
+        assertThat(appender.list).anySatisfy(e -> {
+            assertThat(e.getLevel()).isEqualTo(Level.ERROR);
+            assertThat(e.getFormattedMessage()).startsWith("savings-plan escalation")
+                    .contains("code=CONSOLIDATE_UNPROTECTED").contains("severity=CRITICAL");
+        });
+    }
+
+    @Test
+    void theSessionGateKeepsASameEveningPassAwayAndSaysSo() {
+        var r = placedRow();
+        legStops();
+        broker("19", "105.77894736842105");
+
+        consolidator.consolidateStage("c", "run-op", "pass-op", Instant.parse("2026-11-02T23:05:00Z"));
+
+        assertThat(gateway.ops).isEmpty();
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.PLACED);
+        assertThat(lines("savings-plan stage")).singleElement().satisfies(l -> assertThat(l)
+                .contains("outcome=did-nothing").contains("why=session-gate-not-passed"));
+    }
+
+    @Test
+    void aStageWithoutRowsSaysWhy() {
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(lines("savings-plan stage")).singleElement().satisfies(l -> assertThat(l)
+                .contains("stage=consolidate").contains("outcome=did-nothing").contains("why=no-rows"));
+    }
+
+    @Test
+    void enabledFalseStillConsolidatesAPlacedRow() {
+        consolidator = consolidator(false, false);
+        var r = placedRow();
+        legStops();
+        broker("19", "105.77894736842105");
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.CONSOLIDATED);
+    }
+
+    @Test
+    void anIndeterminatePlacingRowIsAdoptedViaTheHistoryAndConsolidated() {
+        var r = savingsRepo.seed("2026-11", 1, "TECHA", SavingsBuy.PLACING, "9", "112.20", "100.98",
+                "10", "100", "65.00", ADD_AT);
+        legStops();
+        gateway.seedOrder(filledParent("brk-9", "sp-1-202611", "TECHA", "9", "112.20"));
+        broker("19", "105.77894736842105");
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.CONSOLIDATED);
+        assertThat(row(r.id).entryOrderId()).isEqualTo("brk-9");
+        assertThat(reasonCodes()).contains("ADOPTED").doesNotContain("REJECTED");
+    }
+
+    /** R3 M4: a partial-then-expired parent is NOT in the FILLED-only history; the broker qty adopts it. */
+    @Test
+    void aPartialThenExpiredParentIsAdoptedViaTheQtyTest() {
+        var r = savingsRepo.seed("2026-11", 1, "TECHA", SavingsBuy.PLACING, "9", "112.20", "100.98",
+                "10", "100", "65.00", ADD_AT);
+        legStops();
+        broker("13", "102.82307692308");
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.CONSOLIDATED);
+        assertThat(row(r.id).fillQty()).isEqualByComparingTo("3");
+    }
+
+    @Test
+    void aPlacingRowTheBrokerNeverSawIsRejectedOnlyAfterTheSessionGate() {
+        var r = savingsRepo.seed("2026-11", 1, "TECHA", SavingsBuy.PLACING, "9", "112.20", "100.98",
+                "10", "100", "65.00", ADD_AT);
+        legStops();
+        broker("10", "100");
+
+        consolidator.consolidateStage("c", "run-1b", "pass-1b", Instant.parse("2026-11-02T23:05:00Z"));
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.PLACING);
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.REJECTED);
+        assertThat(savingsRepo.carryOf(1)).isEqualByComparingTo("908.82");
+    }
+    /** A REFUSED cancel (not only an indeterminate one) is a failed cancel: nothing new is placed,
+     *  the row stays CONSOLIDATING and is escalated — it must never throw out half-done. */
+    @Test
+    void aRefusedOldStopCancelIsAFailedCancelNotARowFailure() {
+        var r = placedRow();
+        legStops();
+        broker("19", "105.77894736842105");
+        gateway.rejectCancelWith = new BrokerRejectedException("gone", "ORDER_NOT_FOUND", List.of());
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(gateway.ops).containsExactly("cancel:stop-1");
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.CONSOLIDATING);
+        assertThat(reasonCodes()).contains("CONSOLIDATE_CANCEL_FAILED");
+        assertThat(lines("savings-plan row failed")).isEmpty();
+        assertThat(lines("savings-plan stage")).singleElement().satisfies(l -> assertThat(l)
+                .contains("outcome=acted").contains("outcomes={escalated:1}"));
+    }
+
+    /** §5.3: re-placing an already-cancelled old stop is refused → UNPROTECTED, CRITICAL. */
+    @Test
+    void aRefusedRestoreLeavesTheRowUnprotectedAndCritical() {
+        var r = placedRow();
+        legStops();
+        broker("19", "105.77894736842105");
+        gateway.failCancelForOrderId = "child-9";
+        gateway.protectiveStopFailures.add(new BrokerRejectedException("no", "X", List.of()));
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(gateway.ops).containsExactly("cancel:stop-1", "cancel:child-9", "place:10@65");
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.UNPROTECTED);
+        assertThat(appender.list).anySatisfy(e -> {
+            assertThat(e.getLevel()).isEqualTo(Level.ERROR);
+            assertThat(e.getFormattedMessage()).contains("code=CONSOLIDATE_UNPROTECTED");
+        });
+    }
+
+    /** No verdict on the band→target modify: book the band (tighter, protective) as narrow. */
+    @Test
+    void anIndeterminateModifyBooksTheBandAsNarrowAndEscalates() {
+        var r = placedRow();
+        legStops();
+        broker("19", "105.77894736842105");
+        gateway.protectiveStopFailures.add(new BrokerRejectedException("band", "PRICE_OUT_OF_BAND", List.of()));
+        gateway.modifyFailures = 1;
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        verify(positionRepo).bookSavingsStop(eq(1L), eq("pstop-1"), eq(new BigDecimal("68.76")),
+                org.mockito.ArgumentMatchers.argThat(b -> b.compareTo(new BigDecimal("88")) == 0), eq(true));
+        assertThat(lines("savings-plan escalation")).anySatisfy(l -> assertThat(l)
+                .contains("code=CONSOLIDATE_NARROW").contains("reject_code=indeterminate"));
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.CONSOLIDATED);
+    }
+
+    @Test
+    void brokerCallsAreTracedBeforeAndAfter() {
+        placedRow();
+        legStops();
+        broker("19", "105.77894736842105");
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(lines("savings-plan broker")).anySatisfy(l -> assertThat(l)
+                .contains("op=placeProtectiveStop").contains("phase=intent").contains("qty=19").contains("stop=68.76"));
+        assertThat(lines("savings-plan broker")).anySatisfy(l -> assertThat(l)
+                .contains("op=placeProtectiveStop").contains("phase=result").contains("result=accepted")
+                .contains("order=pstop-1"));
+        assertThat(lines("savings-plan broker")).anySatisfy(l -> assertThat(l)
+                .contains("op=cancelOrder").contains("order=child-9").contains("phase=intent"));
+    }
+}
