@@ -184,6 +184,19 @@ public class DecisionLogRepository {
                 .single();
     }
 
+    /** Rows with {@code reasonCode} whose {@code order_json.savings_buy_id} is {@code buyId} — the
+     *  once-per-add rate limit of the Sparplan escalations (spec 2026-10-06 §5.3). */
+    public int countByReasonCodeForSavingsBuy(String reasonCode, long buyId) {
+        return jdbc.sql("""
+                SELECT count(*) FROM decision_log
+                WHERE reason_code = :rc AND order_json->>'savings_buy_id' = :bid
+                """)
+                .param("rc", reasonCode)
+                .param("bid", Long.toString(buyId))
+                .query(Integer.class)
+                .single();
+    }
+
     /** The submission of a pending trim (spec 2026-10-03 §5.7): when and in which run the TRIM row
      *  carrying {@code order_json.order_id = orderId} was written, and how many shares it booked
      *  out ({@code qty_closed}, null when absent). */

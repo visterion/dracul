@@ -170,6 +170,13 @@ public class ExecutorPositionLegRepository {
                 .update();
     }
 
+    /** Savings consolidation (spec 2026-10-06 §5.2 step 7) and D8: the single leg takes the new stop
+     *  and the broker quantity together. {@code stopOrderId} may be null (D8 without a child id). */
+    public void setStopAndQty(long legId, String stopOrderId, BigDecimal qty) {
+        jdbc.sql("UPDATE executor_position_leg SET stop_order_id = :sid, qty = :qty WHERE id = :id")
+                .param("sid", stopOrderId).param("qty", qty).param("id", legId).update();
+    }
+
     public void closeLeg(long legId, BigDecimal exitPrice, String exitReason, Instant closedAt) {
         jdbc.sql("""
                 UPDATE executor_position_leg

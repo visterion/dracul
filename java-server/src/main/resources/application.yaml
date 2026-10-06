@@ -413,6 +413,19 @@ dracul:
     ratchet-retry-backoff-ms: ${DRACUL_EXECUTOR_RATCHET_RETRY_BACKOFF_MS:500}
     ratchet-retry-budget-ms: ${DRACUL_EXECUTOR_RATCHET_RETRY_BUDGET_MS:20000}
     notify-enabled: ${DRACUL_EXECUTOR_NOTIFY_ENABLED:true}
+    # Tech-Sparplan (spec 2026-10-06): monthly cost-averaging adds for exit profile CONVICTION.
+    # enabled gates only NEW adds; consolidation of in-flight adds always runs (safe rollback).
+    # tif (gtc|day) and place-first (consolidation order) are the two SIM-probe switches (V4 g, V3 b).
+    savings-plan:
+      enabled: ${DRACUL_EXECUTOR_SAVINGS_PLAN_ENABLED:false}
+      monthly-pct: ${DRACUL_EXECUTOR_SAVINGS_PLAN_MONTHLY_PCT:0.02}
+      max-position-pct: ${DRACUL_EXECUTOR_SAVINGS_PLAN_MAX_POSITION_PCT:0.08}
+      basket-cap-pct: ${DRACUL_EXECUTOR_SAVINGS_PLAN_BASKET_CAP_PCT:0.50}
+      limit-premium-pct: ${DRACUL_EXECUTOR_SAVINGS_PLAN_LIMIT_PREMIUM_PCT:0.02}
+      catch-up-weekdays: ${DRACUL_EXECUTOR_SAVINGS_PLAN_CATCH_UP_WEEKDAYS:3}
+      window-start-utc: "${DRACUL_EXECUTOR_SAVINGS_PLAN_WINDOW_START_UTC:21:15}"
+      tif: ${DRACUL_EXECUTOR_SAVINGS_PLAN_TIF:gtc}
+      place-first: ${DRACUL_EXECUTOR_SAVINGS_PLAN_PLACE_FIRST:false}
     # Exit profile CONVICTION (strigoi-tech basket, spec 2026-10-03 §5.2). The per-name size is
     # dracul.strigoi.tech.position-pct (one key, read by executor and hunter).
     profiles:

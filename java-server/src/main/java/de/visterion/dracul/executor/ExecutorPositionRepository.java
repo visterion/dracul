@@ -199,6 +199,31 @@ public class ExecutorPositionRepository {
                 .update();
     }
 
+    /** Savings consolidation / D8 (spec 2026-10-06 §5.2 step 7, §6.1): the broker's quantity and
+     *  average become the book. initial_stop is never touched (it stays immutable). */
+    public void bookSavingsQtyAndAvg(long id, BigDecimal qty, BigDecimal entryPrice) {
+        jdbc.sql("UPDATE executor_position SET qty = :qty, entry_price = :ep WHERE id = :id")
+                .param("qty", qty).param("ep", entryPrice).param("id", id).update();
+    }
+
+    /** Savings consolidation step 7: the ONE stop. {@code activeStop} may move DOWN when the add
+     *  was below the old average — a deliberate, audited bypass of StopRatchetGuard (spec §5.2). */
+    public void bookSavingsStop(long id, String stopOrderId, BigDecimal activeStop,
+            BigDecimal brokerStop, boolean brokerStopNarrow) {
+        jdbc.sql("""
+                UPDATE executor_position
+                SET stop_order_id = :sid, active_stop = :as, broker_stop = :bs, broker_stop_narrow = :bn
+                WHERE id = :id
+                """).param("sid", stopOrderId).param("as", activeStop).param("bs", brokerStop)
+                .param("bn", brokerStopNarrow).param("id", id).update();
+    }
+
+    /** Repoints (or nulls) the position's stop-order column only. */
+    public void setStopOrderId(long id, String stopOrderId) {
+        jdbc.sql("UPDATE executor_position SET stop_order_id = :sid WHERE id = :id")
+                .param("sid", stopOrderId).param("id", id).update();
+    }
+
     /** Stamps a submitted-but-not-yet-confirmed exit onto an OPEN position (status stays OPEN
      *  until the fill is confirmed and {@link #close} is called). */
     public void markPendingExit(long id, String reason, String exitOrderId, BigDecimal fillPrice,
