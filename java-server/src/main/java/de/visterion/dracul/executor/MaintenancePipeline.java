@@ -17,6 +17,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -167,8 +168,28 @@ public class MaintenancePipeline {
                 log.warn("savings-plan stage failed stage=stale run={} pass={} error={}", runId, pass, e.toString(), e);
             }
             // Consolidation (this pass or a parallel one) changed qty / stops: re-read those survivors.
-            survivors = rereadTouched(survivors, passStart);
-            Map<Long, String> inFlight = savingsPlan.inFlightStatuses();
+            // No savings read may ever keep the hard triggers from running: every read below fails
+            // towards "triggers run", never towards an aborted pass.
+            survivors = rereadTouched(survivors, passStart, runId, pass);
+            Map<Long, String> inFlight;
+            String exclusionReason;
+            try {
+                inFlight = savingsPlan.inFlightStatuses();
+                exclusionReason = inFlight.isEmpty() ? "nothing-in-flight" : "savings-add-in-flight";
+            } catch (RuntimeException e) {
+                // In-flight state unknown: any CONVICTION position might have a BUY resting. Treat
+                // them all as stop-only — stop breach and catastrophe run, no TARGET_HALF (which
+                // could trim under a resting add) and no ratchet. Excluding them entirely would
+                // blind the stop; excluding none would allow the half-sale.
+                log.warn("savings-plan stage failed stage=exclusion run={} pass={} error={}", runId, pass, e.toString(), e);
+                inFlight = new LinkedHashMap<>();
+                for (ExecutorPosition p : survivors) {
+                    if (p.profile() == ExitProfile.CONVICTION && "OPEN".equals(p.status())) {
+                        inFlight.put(p.id(), SavingsBuy.UNPROTECTED);
+                    }
+                }
+                exclusionReason = "in-flight-unknown";
+            }
             Set<Long> excludedInFlight = new LinkedHashSet<>();
             Set<Long> stopOnly = new LinkedHashSet<>();
             for (Map.Entry<Long, String> e : inFlight.entrySet()) {
@@ -178,8 +199,7 @@ public class MaintenancePipeline {
             // §8a: once per pass, also when nothing is in flight, so "no exclusion" is visible.
             log.info("savings-plan exclusion run={} pass={} excluded={} stop_only={} reason={}",
                     runId, pass, describe(survivors, excludedInFlight, inFlight),
-                    describe(survivors, stopOnly, inFlight),
-                    inFlight.isEmpty() ? "nothing-in-flight" : "savings-add-in-flight");
+                    describe(survivors, stopOnly, inFlight), exclusionReason);
 
             // Only positions that will actually be evaluated below (filled, no pending exit) can
             // have a hard-trigger/ratchet check "silently skipped" by a missing indicator — an
@@ -278,7 +298,14 @@ public class MaintenancePipeline {
                             : afterHard.stream().filter(p -> !stopOnly.contains(p.id())).toList(),
                     atrBySymbol, atrShortBySymbol, atrEffBySymbol, closeBySymbol, runId);
 
-            if (leased) {
+            // The gap since the consolidate stage (indicators, triggers, ratchet broker writes) can be
+            // long: renew before the add, and if the lease is gone a parallel pass may own it now.
+            if (leased && !renewSavingsLease(pass, now, runId)) {
+                for (String stage : List.of("add", "stop-live")) {
+                    log.info("savings-plan stage stage={} run={} pass={} outcome=did-nothing why=lease-lost now={}",
+                            stage, runId, pass, now);
+                }
+            } else if (leased) {
                 try {
                     savingsPlan.addStage(connection, runId, pass, now);
                 } catch (RuntimeException e) {
@@ -317,7 +344,14 @@ public class MaintenancePipeline {
             }
             return enriched;
         } finally {
-            if (leased) savingsPlan.releaseLease(pass);
+            if (leased) {
+                try {
+                    savingsPlan.releaseLease(pass);
+                } catch (RuntimeException e) {
+                    // Never mask the pass result: the lease expires on its own after 10 minutes.
+                    log.warn("savings-plan stage failed stage=release run={} pass={} error={}", runId, pass, e.toString(), e);
+                }
+            }
         }
     }
 
@@ -325,12 +359,21 @@ public class MaintenancePipeline {
      *  that does nothing says why). @return true when this pass holds the savings lease */
     private boolean acquireSavingsLease(String pass, Instant now, String runId) {
         String why;
-        if (!savingsPlan.inWindow(now)) {
-            why = "outside-window";
-        } else if (savingsPlan.tryLease(pass)) {
-            return true;
-        } else {
-            why = "lease-held-by:" + savingsPlan.leaseHolder();
+        try {
+            if (!savingsPlan.inWindow(now)) {
+                why = "outside-window";
+            } else if (savingsPlan.tryLease(pass)) {
+                return true;
+            } else {
+                String holder = savingsPlan.leaseHolder();
+                // The holder's lease can expire between our failed acquire and this read.
+                why = holder == null ? "lease-expired-race" : "lease-held-by:" + holder;
+            }
+        } catch (RuntimeException e) {
+            // A tryLease that committed and then threw leaves the lease for at most 10 minutes —
+            // acceptable; losing the hard triggers is not.
+            log.warn("savings-plan stage failed stage=lease run={} pass={} error={}", runId, pass, e.toString(), e);
+            why = "lease-error";
         }
         for (String stage : List.of("consolidate", "add", "stop-live")) {
             log.info("savings-plan stage stage={} run={} pass={} outcome=did-nothing why={} now={}",
@@ -339,18 +382,46 @@ public class MaintenancePipeline {
         return false;
     }
 
+    /** Renews the lease before the add stage. @return false when the lease is lost (or the renew
+     *  failed) — the remaining savings stages are then skipped. */
+    private boolean renewSavingsLease(String pass, Instant now, String runId) {
+        try {
+            return savingsPlan.renewLease(pass);
+        } catch (RuntimeException e) {
+            log.warn("savings-plan stage failed stage=renew run={} pass={} error={}", runId, pass, e.toString(), e);
+            return false;
+        }
+    }
+
     /** Spec §3.2: survivors whose savings row changed since the pass started (this pass's or a parallel
-     *  pass's consolidation) are re-read; a row no longer OPEN is dropped. */
-    private List<ExecutorPosition> rereadTouched(List<ExecutorPosition> survivors, Instant passStart) {
-        Set<Long> touched = savingsPlan.positionsTouchedSince(passStart.minusSeconds(60));
-        if (touched == null || touched.isEmpty()) return survivors;
+     *  pass's consolidation) are re-read; a row no longer OPEN is dropped. If the touched set cannot be
+     *  read, every survivor is re-read; a single failing re-read keeps the in-memory row (never drop a
+     *  position — its triggers would be lost). */
+    private List<ExecutorPosition> rereadTouched(List<ExecutorPosition> survivors, Instant passStart,
+            String runId, String pass) {
+        Set<Long> touched;
+        try {
+            touched = savingsPlan.positionsTouchedSince(passStart.minusSeconds(60));
+            if (touched == null || touched.isEmpty()) return survivors;
+        } catch (RuntimeException e) {
+            log.warn("savings-plan stage failed stage=reread run={} pass={} error={}", runId, pass, e.toString(), e);
+            touched = null;
+        }
         List<ExecutorPosition> out = new ArrayList<>();
         for (ExecutorPosition p : survivors) {
-            if (!touched.contains(p.id())) {
+            if (touched != null && !touched.contains(p.id())) {
                 out.add(p);
                 continue;
             }
-            ExecutorPosition fresh = positionRepo.findById(p.id());
+            ExecutorPosition fresh;
+            try {
+                fresh = positionRepo.findById(p.id());
+            } catch (RuntimeException e) {
+                log.warn("savings-plan row failed stage=reread position={} symbol={} run={} pass={} error={}",
+                        p.id(), p.symbol(), runId, pass, e.toString(), e);
+                out.add(p);
+                continue;
+            }
             if (fresh != null && "OPEN".equals(fresh.status())) out.add(fresh);
         }
         return out;

@@ -105,6 +105,10 @@ public class SavingsPlanService {
         return savingsRepo.tryAcquireLease(pass);
     }
 
+    public boolean renewLease(String pass) {
+        return savingsRepo.renewLease(pass);
+    }
+
     public void releaseLease(String pass) {
         savingsRepo.releaseLease(pass);
     }

@@ -15,6 +15,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -46,6 +47,7 @@ class MaintenancePipelineTest {
     @BeforeEach
     void setUp() {
         when(signalRepo.findPending(50)).thenReturn(List.of());
+        when(savingsPlan.renewLease(any())).thenReturn(true);
         pipeline = new MaintenancePipeline(reconcile, entryExpiry, sweeper, hardTrigger, ratchet,
                 softEval, indicators, positionRepo, signalRepo, tranche2Detector, ConvictionProfile.defaults(), savingsPlan, consolidator, clock,
                  3.0, 22, 20);
@@ -1022,8 +1024,12 @@ class MaintenancePipelineTest {
         order.verify(reconcile).reconcile("c", "r1");
         order.verify(savingsPlan).tryLease(any());
         order.verify(consolidator).consolidateStage(eq("c"), eq("r1"), any(), any());
+        order.verify(savingsPlan).staleCheck(eq("c"), eq("r1"), any(), any());
+        order.verify(savingsPlan).positionsTouchedSince(any());
+        order.verify(savingsPlan).inFlightStatuses();
         order.verify(hardTrigger).apply(any(), any(), eq("r1"));
         order.verify(ratchet).ratchet(any(), any(), any(), any(), any(), eq("r1"));
+        order.verify(savingsPlan).renewLease(any());
         order.verify(savingsPlan).addStage(eq("c"), eq("r1"), any(), any());
         order.verify(savingsPlan).checkStopsLive(eq("c"), eq("r1"), any());
         order.verify(savingsPlan).releaseLease(any());
@@ -1092,7 +1098,7 @@ class MaintenancePipelineTest {
         verify(savingsPlan, org.mockito.Mockito.never()).releaseLease(any());
         verify(savingsPlan).staleCheck(eq("c"), eq("r1"), any(), any());
         verify(savingsPlan).positionsTouchedSince(any());
-        assertThat(lines(log, "savings-plan stage")).allSatisfy(l -> assertThat(l)
+        assertThat(lines(log, "savings-plan stage")).hasSize(3).allSatisfy(l -> assertThat(l)
                 .contains("why=lease-held-by:other-pass-uuid"));
     }
 
@@ -1165,5 +1171,195 @@ class MaintenancePipelineTest {
         verify(consolidator).consolidateStage(eq("c"), org.mockito.ArgumentMatchers.isNull(), any(), any());
         verify(savingsPlan).addStage(eq("c"), org.mockito.ArgumentMatchers.isNull(), any(), any());
         verify(savingsPlan).releaseLease(any());
+    }
+
+    // ---- fix round 1: no savings read or lease call may keep the hard triggers from running ----
+
+    private ExecutorPosition convictionPosition(long id, String symbol) {
+        return ExecutorPositionFixtures.conviction(
+                openPosition(id, symbol, new BigDecimal("65"), new BigDecimal("110"), null, 0));
+    }
+
+    private static List<String> warns(
+            ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> a) {
+        return a.list.stream().filter(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN)
+                .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage).toList();
+    }
+
+    /** In-flight state unreadable: every OPEN CONVICTION survivor becomes stop-only (stop + catastrophe,
+     *  no TARGET_HALF, no ratchet); other profiles are untouched. */
+    @Test
+    void anUnreadableInFlightStateMakesEveryConvictionSurvivorStopOnly() {
+        anyLevels();
+        var log = pipelineLog();
+        ExecutorPosition conv = convictionPosition(1L, "TECHA");
+        ExecutorPosition std = openPosition(2L, "BBB", new BigDecimal("95"), new BigDecimal("110"), null, 0);
+        List<ExecutorPosition> both = List.of(conv, std);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(both, Set.of()));
+        when(savingsPlan.inFlightStatuses()).thenThrow(new IllegalStateException("synthetic db down"));
+        when(hardTrigger.apply(eq(both), any(), eq("r1"), eq(Set.of(1L)))).thenReturn(both);
+        when(positionRepo.findOpen()).thenReturn(both);
+
+        List<EnrichedPosition> result = pipeline.run("c", "r1");
+
+        verify(hardTrigger).apply(eq(both), any(), eq("r1"), eq(Set.of(1L)));
+        verify(ratchet).ratchet(eq(List.of(std)), any(), any(), any(), any(), eq("r1"));
+        assertThat(result).hasSize(2);
+        assertThat(warns(log)).anySatisfy(m -> assertThat(m).startsWith("savings-plan stage failed stage=exclusion"));
+        assertThat(lines(log, "savings-plan exclusion")).singleElement().satisfies(l -> assertThat(l)
+                .contains("stop_only=[1:TECHA:UNPROTECTED]").contains("reason=in-flight-unknown"));
+    }
+
+    /** A legacy pass (no savings rows, no CONVICTION) whose savings repo is down still runs the triggers
+     *  on the in-memory book, unchanged. */
+    @Test
+    void aLegacyPassStillRunsTheTriggersWhenTheSavingsRepoThrows() {
+        anyLevels();
+        var log = pipelineLog();
+        ExecutorPosition p = openPosition(2L, "BBB", new BigDecimal("95"), new BigDecimal("110"), null, 0);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(List.of(p), Set.of()));
+        RuntimeException down = new IllegalStateException("synthetic db down");
+        when(savingsPlan.inWindow(any())).thenThrow(down);
+        doThrow(down).when(savingsPlan).staleCheck(any(), any(), any(), any());
+        when(savingsPlan.positionsTouchedSince(any())).thenThrow(down);
+        when(savingsPlan.inFlightStatuses()).thenThrow(down);
+        when(positionRepo.findById(2L)).thenThrow(down);
+        when(hardTrigger.apply(eq(List.of(p)), any(), eq("r1"))).thenReturn(List.of(p));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        List<EnrichedPosition> result = pipeline.run("c", "r1");
+
+        verify(hardTrigger).apply(eq(List.of(p)), any(), eq("r1"));
+        verify(ratchet).ratchet(eq(List.of(p)), any(), any(), any(), any(), eq("r1"));
+        assertThat(result).hasSize(1);
+        assertThat(warns(log))
+                .anySatisfy(m -> assertThat(m).startsWith("savings-plan stage failed stage=lease"))
+                .anySatisfy(m -> assertThat(m).startsWith("savings-plan stage failed stage=stale"))
+                .anySatisfy(m -> assertThat(m).startsWith("savings-plan stage failed stage=reread"))
+                .anySatisfy(m -> assertThat(m).startsWith("savings-plan row failed stage=reread position=2"))
+                .anySatisfy(m -> assertThat(m).startsWith("savings-plan stage failed stage=exclusion"));
+    }
+
+    /** The touched set unreadable: every survivor is re-read; one failing re-read keeps its in-memory row. */
+    @Test
+    void anUnreadableTouchedSetReReadsEverySurvivorAndKeepsAFailingOne() {
+        anyLevels();
+        var log = pipelineLog();
+        ExecutorPosition staleA = openPosition(1L, "AAA", new BigDecimal("95"), new BigDecimal("110"), null, 0);
+        ExecutorPosition freshA = openPosition(1L, "AAA", new BigDecimal("96"), new BigDecimal("110"), null, 0);
+        ExecutorPosition b = openPosition(2L, "BBB", new BigDecimal("95"), new BigDecimal("110"), null, 0);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(List.of(staleA, b), Set.of()));
+        when(savingsPlan.positionsTouchedSince(any())).thenThrow(new IllegalStateException("synthetic"));
+        when(positionRepo.findById(1L)).thenReturn(freshA);
+        when(positionRepo.findById(2L)).thenThrow(new IllegalStateException("synthetic row"));
+        when(hardTrigger.apply(eq(List.of(freshA, b)), any(), eq("r1"))).thenReturn(List.of(freshA, b));
+        when(positionRepo.findOpen()).thenReturn(List.of(freshA, b));
+
+        pipeline.run("c", "r1");
+
+        verify(hardTrigger).apply(eq(List.of(freshA, b)), any(), eq("r1"));
+        assertThat(warns(log))
+                .anySatisfy(m -> assertThat(m).startsWith("savings-plan stage failed stage=reread"))
+                .anySatisfy(m -> assertThat(m).startsWith("savings-plan row failed stage=reread position=2"));
+    }
+
+    @Test
+    void aThrowingLeaseAcquireStillRunsTheTriggersAndNeverReleases() {
+        anyLevels();
+        var log = pipelineLog();
+        ExecutorPosition p = openPosition(2L, "BBB", new BigDecimal("95"), new BigDecimal("110"), null, 0);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(List.of(p), Set.of()));
+        when(savingsPlan.inWindow(any())).thenReturn(true);
+        when(savingsPlan.tryLease(any())).thenThrow(new IllegalStateException("synthetic"));
+        when(hardTrigger.apply(eq(List.of(p)), any(), eq("r1"))).thenReturn(List.of(p));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        assertThat(pipeline.run("c", "r1")).hasSize(1);
+
+        verify(hardTrigger).apply(eq(List.of(p)), any(), eq("r1"));
+        verify(consolidator, org.mockito.Mockito.never()).consolidateStage(any(), any(), any(), any());
+        verify(savingsPlan, org.mockito.Mockito.never()).releaseLease(any());
+        assertThat(lines(log, "savings-plan stage stage=")).hasSize(3)
+                .allSatisfy(l -> assertThat(l).contains("why=lease-error"));
+    }
+
+    @Test
+    void aThrowingReleaseNeverMasksThePassResult() {
+        anyLevels();
+        var log = pipelineLog();
+        ExecutorPosition p = openPosition(2L, "BBB", new BigDecimal("95"), new BigDecimal("110"), null, 0);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(List.of(p), Set.of()));
+        when(savingsPlan.inWindow(any())).thenReturn(true);
+        when(savingsPlan.tryLease(any())).thenReturn(true);
+        doThrow(new IllegalStateException("synthetic")).when(savingsPlan).releaseLease(any());
+        when(hardTrigger.apply(eq(List.of(p)), any(), eq("r1"))).thenReturn(List.of(p));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        assertThat(pipeline.run("c", "r1")).hasSize(1);
+
+        assertThat(warns(log)).anySatisfy(m -> assertThat(m).startsWith("savings-plan stage failed stage=release"));
+    }
+
+    /** The lease is renewed before the add; a lost lease skips add and stop-live, still releases nothing
+     *  it does not hold (release is holder-scoped). */
+    @Test
+    void aLostLeaseBeforeTheAddSkipsTheRemainingStages() {
+        anyLevels();
+        var log = pipelineLog();
+        ExecutorPosition p = openPosition(2L, "BBB", new BigDecimal("95"), new BigDecimal("110"), null, 0);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(List.of(p), Set.of()));
+        when(savingsPlan.inWindow(any())).thenReturn(true);
+        when(savingsPlan.tryLease(any())).thenReturn(true);
+        when(savingsPlan.renewLease(any())).thenReturn(false);
+        when(hardTrigger.apply(eq(List.of(p)), any(), eq("r1"))).thenReturn(List.of(p));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        pipeline.run("c", "r1");
+
+        verify(consolidator).consolidateStage(eq("c"), eq("r1"), any(), any());
+        verify(savingsPlan, org.mockito.Mockito.never()).addStage(any(), any(), any(), any());
+        verify(savingsPlan, org.mockito.Mockito.never()).checkStopsLive(any(), any(), any());
+        assertThat(lines(log, "savings-plan stage stage=")).hasSize(2)
+                .allSatisfy(l -> assertThat(l).contains("why=lease-lost"));
+    }
+
+    @Test
+    void aHolderThatExpiredMeanwhileIsNeverLoggedAsNull() {
+        anyLevels();
+        var log = pipelineLog();
+        ExecutorPosition p = openPosition(2L, "BBB", new BigDecimal("95"), new BigDecimal("110"), null, 0);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(List.of(p), Set.of()));
+        when(savingsPlan.inWindow(any())).thenReturn(true);
+        when(savingsPlan.tryLease(any())).thenReturn(false);
+        when(savingsPlan.leaseHolder()).thenReturn(null);
+        when(hardTrigger.apply(eq(List.of(p)), any(), eq("r1"))).thenReturn(List.of(p));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        pipeline.run("c", "r1");
+
+        assertThat(lines(log, "savings-plan stage stage=")).hasSize(3)
+                .allSatisfy(l -> assertThat(l).contains("why=lease-expired-race").doesNotContain("null"));
+    }
+
+    @Test
+    void throwingStaleAndStopLiveChecksAreGuarded() {
+        anyLevels();
+        var log = pipelineLog();
+        ExecutorPosition p = openPosition(2L, "BBB", new BigDecimal("95"), new BigDecimal("110"), null, 0);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(List.of(p), Set.of()));
+        when(savingsPlan.inWindow(any())).thenReturn(true);
+        when(savingsPlan.tryLease(any())).thenReturn(true);
+        doThrow(new IllegalStateException("synthetic")).when(savingsPlan).staleCheck(any(), any(), any(), any());
+        when(savingsPlan.checkStopsLive(any(), any(), any())).thenThrow(new IllegalStateException("synthetic"));
+        when(hardTrigger.apply(eq(List.of(p)), any(), eq("r1"))).thenReturn(List.of(p));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        assertThat(pipeline.run("c", "r1")).hasSize(1);
+
+        verify(hardTrigger).apply(eq(List.of(p)), any(), eq("r1"));
+        verify(savingsPlan).releaseLease(any());
+        assertThat(warns(log))
+                .anySatisfy(m -> assertThat(m).startsWith("savings-plan stage failed stage=stale"))
+                .anySatisfy(m -> assertThat(m).startsWith("savings-plan stage failed stage=stop-live"));
     }
 }
