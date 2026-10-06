@@ -999,8 +999,11 @@ boundary as the persisted rows. The broadcaster retains a generic `broadcast`
 triggers (turns last session's add into one position / one leg / one stop) and
 `SavingsPlanService.addStage` after the ratchet (places the month's adds, reading `findOpen()`
 itself). `ReconcileService` routes positions with an in-flight add (`savings_plan_buy`) through a
-savings branch. Broker calls never run inside a transaction; the step-7 booking and the reconcile
-matrix rows are the only transactions (`savingsPlanTransactions`).
+savings branch. Broker calls never run inside a transaction; each booking is its own short
+transaction via `savingsPlanTransactions` — the add's PLACING row + carry debit and a reject's carry
+refund (`SavingsPlanService`), the window-stop TRIM, the global-rule close, an EXPIRED carry refund
+and the step-7 consolidation booking (`SavingsConsolidator`), and the reconcile matrix rows
+(`ReconcileService`).
 
 ## Authentication & multi-user
 

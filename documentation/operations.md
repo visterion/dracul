@@ -887,11 +887,13 @@ row (`action='ESCALATE'`) plus a Telegram CRITICAL alert.
 - Enable by setting `DRACUL_EXECUTOR_SAVINGS_PLAN_ENABLED=true` in the host compose env list (not only
   `.env`) and recreating the container. `enabled=false` is a safe rollback: in-flight adds are still
   consolidated.
-- After the first plan day: one `savings_plan_month` row, one `savings_plan_buy` row per OPEN
-  CONVICTION position (PLACED or SKIPPED with a reason); the next evening's pass turns PLACED rows into
-  CONSOLIDATED / EXPIRED. Grep the app log for `savings-plan stage` (one line per stage and pass, with
-  the reason when nothing happened) and alarm on `savings-plan escalation`, `savings-plan stage failed`
-  and `savings-plan row failed`.
+- After the first plan day: one `savings_plan_month` row, and for each eligible OPEN CONVICTION
+  position a `savings_plan_buy` row — PLACED, REJECTED or still PLACING (indeterminate broker
+  answer) if a bracket was attempted, SKIPPED with a reason if it was not eligible; a stage-level
+  skip (no account, missing FX, basket cap full) writes no rows at all that day. The next evening's
+  pass turns PLACED rows into CONSOLIDATED / EXPIRED. Grep the app log for `savings-plan stage` (one
+  line per stage and pass, with the reason when nothing happened) and alarm on `savings-plan
+  escalation`, `savings-plan stage failed` and `savings-plan row failed`.
 
 ### `UNBOOKED_ROUND_TRIP`
 

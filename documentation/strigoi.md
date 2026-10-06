@@ -714,8 +714,8 @@ On top of the basket, code runs a monthly savings plan for exit profile CONVICTI
 executor's `fetch_open_positions` call starts the maintenance pass that runs it.
 
 - **When:** the first Mon–Fri of the month (UTC calendar), catch-up on weekdays 2–3, only inside the
-  closed-market window (UTC time in [21:15, 24:00)); weekday 4 without a completed month raises
-  `SAVINGS_PLAN_MISSED` once. No holiday calendar.
+  closed-market window (UTC time in [21:15, 24:00)); from weekday 4 on, without a completed month,
+  raises `SAVINGS_PLAN_MISSED` once per month. No holiday calendar.
 - **How much:** `total-budget × monthly-pct` (2 000), capped by the basket headroom
   (`total-budget × 0.50` − the CONVICTION market value; a position without a close counts at cost),
   split equally across eligible positions and capped per position at `total-budget × 0.08` − its
@@ -737,15 +737,13 @@ executor's `fetch_open_positions` call starts the maintenance pass that runs it.
   replaces it), excluded from hard triggers and the ratchet (UNPROTECTED: stop and catastrophe only);
   if the pre-add emergency stop fills while an add is in flight, the add shares are sold too (D8).
   Alarms: `SAVINGS_ADD_STALE`, `CONSOLIDATE_STUCK`, `CONSOLIDATE_UNPROTECTED`, `STOP_NOT_LIVE`
-  (CRITICAL); `CONSOLIDATE_CANCEL_FAILED`, `CONSOLIDATE_PLACE_FAILED`, `CONSOLIDATE_NARROW`,
-  `NEW_STOP_NOT_PERSISTED`, `SAVINGS_QTY_UNEXPLAINED`, `SAVINGS_ADD_REJECTED`,
-  `SAVINGS_ADD_INDETERMINATE`, `SAVINGS_PLAN_MISSED` (WARN).
+  (CRITICAL); `CONSOLIDATE_CANCEL_FAILED`, `CONSOLIDATE_NARROW`, `NEW_STOP_NOT_PERSISTED`,
+  `SAVINGS_QTY_UNEXPLAINED`, `SAVINGS_ADD_REJECTED`, `SAVINGS_ADD_INDETERMINATE`,
+  `SAVINGS_PLAN_MISSED` (WARN); `CONSOLIDATE_PLACE_FAILED` (WARN, or CRITICAL when the old stops
+  could not be restored and the position is left uncovered — `SavingsConsolidator.recover`).
 - **R:** for CONVICTION the risk per share is `entry_price × emergency-stop-pct` (the current
   average), so falling adds can never flip the sign of R. A savings-plan TRIM (window-stop or the D8
-  leg-1 exit) carries this same risk-per-share as its denominator; a STANDARD position's
-  `RECONCILE_GONE` matched-fill close carries the *planned* risk-per-share (planned entry vs. initial
-  stop, never the synced real fill) to keep a gapped fill from flipping a loss into a positive R.
-  Outcome and pattern scoring read the persisted `r_value` column rather than recomputing it.
+  leg-1 exit) carries this same risk-per-share as its denominator.
 - **Trace:** every status change is a `savings-plan transition` log line and a `decision_log` row
   (trigger `SAVINGS_PLAN`) with the deciding values; broker calls, stage summaries (also when a stage
   did nothing, with the reason) and skips have their own stable prefixes; WARN/ERROR only as
@@ -1664,7 +1662,8 @@ the LLM, which owns only the soft judgment call. Every call to
    retires positions the broker reports closed, applies `cooldown`. Positions with a Tech-Sparplan
    add in flight take a savings branch (skip list + stop-fill matrix; see "Tech-Sparplan"). Inside
    the closed-market window the pass holding the savings lease then consolidates adds before the
-   hard triggers and places the month's adds after the ratchet.
+   hard triggers and places the month's adds after the ratchet, which runs a stale check (every
+   pass, with or without the lease) and then `STOP_NOT_LIVE` (also lease-gated, after the add).
 2. **`HardTriggerService`** — force-closes a position on stop-breach,
    a breached structured kill level, or giveback (fraction of peak MFE-in-R
    given back, active once MFE clears `dracul.executor.giveback-active-from-r`)
