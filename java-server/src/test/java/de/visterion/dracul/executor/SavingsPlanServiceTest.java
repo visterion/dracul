@@ -151,7 +151,7 @@ class SavingsPlanServiceTest {
         assertThat(lines("savings-plan broker")).anySatisfy(l -> assertThat(l)
                 .contains("op=placeBracket").contains("phase=intent").contains("client_ref=sp-1-202611"));
         assertThat(lines("savings-plan broker")).anySatisfy(l -> assertThat(l)
-                .contains("op=placeBracket").contains("result=accepted").contains("parent=brk-"));
+                .contains("op=placeBracket").contains("result=accepted").contains("ids=").contains("parent:brk-"));
         assertThat(lines("savings-plan stage")).singleElement().satisfies(l -> assertThat(l)
                 .contains("stage=add").contains("outcome=acted").contains("placed=2").contains("eligible=2"));
         assertThat(decisions()).filteredOn(d -> "SAVINGS_ADD".equals(d.action()))
@@ -198,6 +198,10 @@ class SavingsPlanServiceTest {
                 .contains("reason=DATA").contains("close=null"));
         assertThat(lines("savings-plan transition")).anySatisfy(l -> assertThat(l)
                 .contains("position=4").contains("from=none").contains("to=SKIPPED").contains("reason=CAP"));
+        // Fix round 1 Minor 3: the skipped counts render as {REASON:n,...} — no Map.toString()
+        // space surviving into plain() as a stray "_".
+        assertThat(lines("savings-plan stage")).singleElement().satisfies(l -> assertThat(l)
+                .contains("skipped={CAP:1,DATA:1}"));
     }
 
     @Test
@@ -372,7 +376,7 @@ class SavingsPlanServiceTest {
         book(SavingsFixtures.pos(1, "TECHA").build());
         close("TECHA", "110");
 
-        service.addStage("c", "run-1", "pass-1", PLAN_DAY);
+        SavingsPlanService.AddResult r = service.addStage("c", "run-1", "pass-1", PLAN_DAY);
 
         assertThat(row(1, "2026-11").status()).isEqualTo(SavingsBuy.REJECTED);
         assertThat(savingsRepo.carryOf(1)).isEqualByComparingTo("2000");
@@ -383,6 +387,12 @@ class SavingsPlanServiceTest {
             assertThat(e.getLevel()).isEqualTo(ch.qos.logback.classic.Level.WARN);
             assertThat(e.getFormattedMessage()).startsWith("savings-plan escalation").contains("code=SAVINGS_ADD_REJECTED");
         });
+        // Fix round 1 Important #1: a pass whose only candidate was a determinate reject wrote a
+        // PLACING row and made a broker call — the stage line must say `acted`, never `did-nothing`.
+        assertThat(r.outcome()).isEqualTo("acted");
+        assertThat(r.why()).isEqualTo("-");
+        assertThat(lines("savings-plan stage")).singleElement().satisfies(l -> assertThat(l)
+                .contains("outcome=acted").contains("why=-").contains("rejected=1").contains("escalated=1"));
     }
 
     @Test
@@ -391,13 +401,18 @@ class SavingsPlanServiceTest {
         book(SavingsFixtures.pos(1, "TECHA").build());
         close("TECHA", "110");
 
-        service.addStage("c", "run-1", "pass-1", PLAN_DAY);
+        SavingsPlanService.AddResult r = service.addStage("c", "run-1", "pass-1", PLAN_DAY);
 
         assertThat(row(1, "2026-11").status()).isEqualTo(SavingsBuy.PLACING);
         // one candidate: share 2 000, qty floor(2 000 / 100.98) = 19, carry 2 000 − 1 918.62 stays decremented
         assertThat(savingsRepo.carryOf(1)).isEqualByComparingTo("81.38");
         assertThat(decisions()).extracting(DecisionLog::reasonCode).contains("SAVINGS_ADD_INDETERMINATE");
         assertThat(lines("savings-plan broker")).anySatisfy(l -> assertThat(l).contains("result=indeterminate"));
+        // Fix round 1 Important #1: an indeterminate placement is also `acted`, with an escalated count.
+        assertThat(r.outcome()).isEqualTo("acted");
+        assertThat(r.why()).isEqualTo("-");
+        assertThat(lines("savings-plan stage")).singleElement().satisfies(l -> assertThat(l)
+                .contains("outcome=acted").contains("why=-").contains("rejected=0").contains("escalated=1"));
     }
 
     @Test
@@ -420,16 +435,41 @@ class SavingsPlanServiceTest {
         book(SavingsFixtures.pos(1, "TECHA").build());
         close("TECHA", "110");
 
-        service.addStage("c", "run-1", "pass-1", Instant.parse("2026-11-02T15:00:00Z"));
-        service.addStage("c", "run-2", "pass-2", Instant.parse("2026-11-06T23:00:00Z"));
+        service.addStage("c", "run-1", "pass-1", Instant.parse("2026-11-02T15:00:00Z"));   // before the window
+        // Fix round 1 Minor 6: MISSED now covers every weekday >= catchUp+1 (never just the exact
+        // day), so a weekday that used to demo "not-plan-day" (NONE) no longer exists for a normal
+        // catch-up config — demo "month-done" instead, the other did-nothing reason with no WARN.
+        savingsRepo.months.put("2026-11", new SavingsMonth("2026-11", new BigDecimal("2000"), 1,
+                savingsRepo.now, null));
+        service.addStage("c", "run-2", "pass-2", PLAN_DAY);
         service(SavingsPlanSettings.defaults()).addStage("c", "run-3", "pass-3", PLAN_DAY);
 
         assertThat(lines("savings-plan stage")).satisfiesExactly(
                 l -> assertThat(l).contains("stage=add").contains("outcome=did-nothing").contains("why=outside-window"),
-                l -> assertThat(l).contains("outcome=did-nothing").contains("why=not-plan-day"),
+                l -> assertThat(l).contains("outcome=did-nothing").contains("why=month-done"),
                 l -> assertThat(l).contains("outcome=did-nothing").contains("why=disabled"));
         assertThat(appender.list).noneMatch(e -> e.getLevel().isGreaterOrEqual(ch.qos.logback.classic.Level.WARN));
         assertThat(gateway.placed).isEmpty();
+    }
+
+    /** Fix round 1 Minor 6: the first in-window pass at a weekday index >= catchUp+1 still raises
+     *  SAVINGS_PLAN_MISSED, even when no pass ran on the exact catchUp+1 day — the usual cause of a
+     *  miss is exactly an outage on that day. Still once per month. */
+    @Test
+    void missedAlarmStillFiresWhenTheOnlyInWindowPassIsAfterTheExactMissDay() {
+        book(SavingsFixtures.pos(1, "TECHA").build());
+        close("TECHA", "110");
+        Instant friday = Instant.parse("2026-11-06T23:00:00Z");   // weekday index 5 — no pass ran on index 4
+
+        SavingsPlanService.AddResult r = service.addStage("c", "run-1", "pass-1", friday);
+
+        assertThat(r.why()).isEqualTo("missed");
+        assertThat(decisions()).filteredOn(d -> "SAVINGS_PLAN_MISSED".equals(d.reasonCode())).hasSize(1);
+        assertThat(savingsRepo.findMonth("2026-11").missedAlertedAt()).isNotNull();
+        assertThat(gateway.placed).isEmpty();
+
+        service.addStage("c", "run-2", "pass-2", friday);
+        assertThat(decisions()).filteredOn(d -> "SAVINGS_PLAN_MISSED".equals(d.reasonCode())).hasSize(1);
     }
 
     @Test
@@ -452,6 +492,14 @@ class SavingsPlanServiceTest {
         assertThat(savingsRepo.findMonth("2026-11").monthAmountEur()).isEqualByComparingTo("2000");
         assertThat(gateway.placed).hasSize(2);
         assertThat(savingsRepo.findMonth("2026-11").completedAt()).isNotNull();
+        // Fix round 1 Minor 2: TECHB joining late must never make the month overpay — its share is
+        // capped at what TECHA's row did NOT already commit, not a second full 2 000 share.
+        BigDecimal totalCommitted = savingsRepo.findByMonth("2026-11").stream()
+                .filter(b -> b.qty() != null && b.qty().signum() > 0 && b.limitEur() != null)
+                .map(b -> b.qty().multiply(b.limitEur()))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        assertThat(totalCommitted).as("total committed across both rows never exceeds the month amount")
+                .isLessThanOrEqualTo(new BigDecimal("2000"));
     }
 
     @Test

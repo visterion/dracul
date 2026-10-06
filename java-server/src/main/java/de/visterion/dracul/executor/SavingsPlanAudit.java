@@ -70,6 +70,14 @@ public class SavingsPlanAudit {
         return j.toString();
     }
 
+    /** {@code {REASON:n,...}} — explicit, so no {@code Map.toString()} space survives into
+     *  {@link #plain} as a stray {@code _}. */
+    static String renderCounts(Map<String, Integer> counts) {
+        StringJoiner j = new StringJoiner(",", "{", "}");
+        counts.forEach((k, v) -> j.add(k + ":" + v));
+        return j.toString();
+    }
+
     /** One status change: INFO line + decision row (action/reason per the plan's code table). */
     public void transition(String runId, String pass, RowRef row, String from, String to,
             String action, String reasonCode, Map<String, Object> values, String reasoning) {
@@ -101,6 +109,15 @@ public class SavingsPlanAudit {
         oj.put("scope", "stage");
         oj.put("detail", detail);
         insert(runId, null, "SAVINGS_SKIP", reason, oj, null, detail);
+    }
+
+    /** A parallel pass already owns {@code (month, position)} — detected via a null insert id
+     *  (CAS / ON CONFLICT DO NOTHING). INFO only, never a decision row: the row the OTHER pass wrote
+     *  already carries the full trail, and this pass folds the occurrence into its single
+     *  {@code savings-plan stage} line's {@code raced} counter rather than emitting a second one. */
+    public void raced(String runId, String pass, String month, long positionId, String symbol) {
+        log.info("savings-plan skip scope=race month={} position={} symbol={} run={} pass={}",
+                month, positionId, symbol, runId, pass);
     }
 
     /** Exactly one per stage per pass — also (especially) when the stage did nothing. */
@@ -151,11 +168,17 @@ public class SavingsPlanAudit {
             return out;
         } catch (BrokerRejectedException e) {
             log.info("savings-plan broker stage={} run={} pass={} op={} phase=result result=rejected code={} text={}",
-                    stage, runId, pass, op, e.rejectCode(), e.getMessage());
+                    stage, runId, pass, op, e.rejectCode(), plain(e.getMessage()));
             throw e;
         } catch (BrokerUnavailableException e) {
             log.info("savings-plan broker stage={} run={} pass={} op={} phase=result result=indeterminate text={}",
-                    stage, runId, pass, op, e.getMessage());
+                    stage, runId, pass, op, plain(e.getMessage()));
+            throw e;
+        } catch (RuntimeException e) {
+            // Anything else (e.g. a mapping error) is NOT a broker verdict — still a phase=result
+            // line so no broker call is ever silent, then rethrown unchanged.
+            log.info("savings-plan broker stage={} run={} pass={} op={} phase=result result=error text={}",
+                    stage, runId, pass, op, plain(e.getMessage()));
             throw e;
         }
     }

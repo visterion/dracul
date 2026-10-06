@@ -195,8 +195,26 @@ public class SavingsPlanService {
                 ? BigDecimal.ZERO
                 : m.monthAmountEur().divide(BigDecimal.valueOf(m.candidateCount()), 6, RoundingMode.HALF_UP);
 
+        // Fix round 1 Minor 2: the per-candidate share is fixed on day 1 against that day's
+        // candidate count, but a catch-up pass can see MORE eligible candidates (one became
+        // eligible after day 1). Without a cap, every late candidate gets a full extra share and
+        // the month overpays. Cap what is left to allocate at the month amount minus what earlier
+        // passes already committed this month: realised spend (qty × limit_eur) of every row
+        // already on the books for this month. A CARRY/NO_CASH skip row's accrued share from an
+        // EARLIER pass is not persisted on the row (no limit_eur column for a SKIPPED row), so it
+        // is not reflected here — a known gap, not a silent one: it can only under- not over-cap.
+        BigDecimal committedFromEarlierPasses = savingsRepo.findByMonth(month).stream()
+                .filter(b -> b.qty() != null && b.qty().signum() > 0 && b.limitEur() != null)
+                .map(b -> b.qty().multiply(b.limitEur()))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal remainingBudget = (m.monthAmountEur() == null ? BigDecimal.ZERO : m.monthAmountEur())
+                .subtract(committedFromEarlierPasses).max(BigDecimal.ZERO);
+
         BigDecimal cash = account.cash();
         int placed = 0;
+        int rejected = 0;
+        int escalated = 0;
+        int raced = 0;
         Map<String, Integer> skipped = new TreeMap<>();
         for (ExecutorPosition p : book) {
             savingsRepo.renewLease(pass);
@@ -207,32 +225,44 @@ public class SavingsPlanService {
                 if (recordSkip(runId, pass, month, p, skip, null, Map.of())) skipped.merge(skip.reason(), 1, Integer::sum);
                 continue;
             }
-            Outcome o = addOne(connection, runId, pass, month, p, close, fxToAccount, share, cash);
+            BigDecimal positionBudget = share.min(remainingBudget).max(BigDecimal.ZERO);
+            Outcome o = addOne(connection, runId, pass, month, p, close, fxToAccount, positionBudget, cash);
+            remainingBudget = remainingBudget.subtract(o.committedEur()).max(BigDecimal.ZERO);
             cash = cash.subtract(o.cashUsed());
             if (o.placed()) placed++;
             if (o.skipReason() != null) skipped.merge(o.skipReason(), 1, Integer::sum);
+            if (o.rejected()) rejected++;
+            if (o.rejected() || o.indeterminate()) escalated++;
+            if (o.raced()) raced++;
         }
 
         boolean allDone = book.stream().allMatch(p -> savingsRepo.existsForMonth(month, p.id()));
         if (allDone) savingsRepo.completeMonth(month);
         int skippedTotal = skipped.values().stream().mapToInt(Integer::intValue).sum();
-        boolean acted = placed + skippedTotal > 0;
-        audit.stage(STAGE_ADD, runId, pass, acted ? "acted" : "did-nothing",
-                acted ? "-" : (book.isEmpty() ? "no-candidates" : "all-candidates-already-have-a-row"),
+        // Fix round 1 Important #1: a pass whose only candidates were a determinate reject or an
+        // indeterminate placement wrote a PLACING row and made a broker call — that is NOT
+        // did-nothing, and the log line must say so (§8a is the grep anchor for the daily analysis).
+        boolean acted = placed + skippedTotal + escalated > 0;
+        String why = acted ? "-" : (book.isEmpty() ? "no-candidates" : "all-candidates-already-have-a-row");
+        audit.stage(STAGE_ADD, runId, pass, acted ? "acted" : "did-nothing", why,
                 fields("month", month, "phase", phase, "amount_eur", m.monthAmountEur(),
                         "candidates", book.size(), "eligible", eligible, "placed", placed,
-                        "skipped", skipped, "cash_left_eur", cash, "carry_dropped", carryDropped,
-                        "month_completed", allDone));
+                        "rejected", rejected, "escalated", escalated, "raced", raced,
+                        "skipped", SavingsPlanAudit.renderCounts(skipped), "cash_left_eur", cash,
+                        "carry_dropped", carryDropped, "month_completed", allDone));
         if (acted) {
-            audit.digest("Sparplan " + month + ": " + placed + " Zukäufe platziert, " + skippedTotal
-                    + " übersprungen " + skipped);
+            audit.digest("Sparplan " + month + ": " + placed + " Zukäufe platziert, " + rejected
+                    + " abgelehnt, " + escalated + " eskaliert, " + skippedTotal + " übersprungen "
+                    + SavingsPlanAudit.renderCounts(skipped));
         }
-        return new AddResult(month, acted ? "acted" : "did-nothing", acted ? "-" : "no-candidates",
-                eligible, placed, skipped);
+        return new AddResult(month, acted ? "acted" : "did-nothing", why, eligible, placed, skipped);
     }
 
-    /** What one eligible position did to the pass: placed, skipped (reason), cash consumed. */
-    private record Outcome(boolean placed, String skipReason, BigDecimal cashUsed) {
+    /** What one eligible position did to the pass: placed, skipped (reason), cash consumed, the
+     *  amount it took out of (or returns to) the month's remaining budget, and whether it ended in
+     *  a determinate broker reject, an indeterminate broker outcome, or a parallel-pass race. */
+    private record Outcome(boolean placed, String skipReason, BigDecimal cashUsed, BigDecimal committedEur,
+            boolean rejected, boolean indeterminate, boolean raced) {
     }
 
     private Outcome addOne(String connection, String runId, String pass, String month,
@@ -262,18 +292,27 @@ public class SavingsPlanService {
             Skip s = new Skip("STOP_ABOVE_CLOSE", "stop_after_add=" + SavingsPlanAudit.plain(logicalStop)
                     + ">=close=" + SavingsPlanAudit.plain(close) + " avg_after_est="
                     + SavingsPlanAudit.plain(avgAfterEst));
-            return new Outcome(false, recordSkip(runId, pass, month, p, s, null, values) ? s.reason() : null, BigDecimal.ZERO);
+            boolean ok = recordSkip(runId, pass, month, p, s, null, values);
+            return ok ? new Outcome(false, s.reason(), BigDecimal.ZERO, BigDecimal.ZERO, false, false, false)
+                    : raced();
         }
         if (qty.signum() == 0) {
             Skip s = new Skip("CARRY", "carry_eur=" + SavingsPlanAudit.plain(carry) + "<limit_eur="
                     + SavingsPlanAudit.plain(limitEur));
-            return new Outcome(false, recordSkip(runId, pass, month, p, s, carry, values) ? s.reason() : null, BigDecimal.ZERO);
+            boolean ok = recordSkip(runId, pass, month, p, s, carry, values);
+            // positionShare is now committed: it left the remaining month budget for good — it
+            // sits in this position's carry, not back in the pool (spec §4.3: the money stays in
+            // carry, never retried this month).
+            return ok ? new Outcome(false, s.reason(), BigDecimal.ZERO, positionShare, false, false, false)
+                    : raced();
         }
         BigDecimal cost = qty.multiply(limitEur).setScale(6, RoundingMode.HALF_UP);
         if (cost.compareTo(cash) > 0) {
             Skip s = new Skip("NO_CASH", "cost_eur=" + SavingsPlanAudit.plain(cost) + ">cash_eur="
                     + SavingsPlanAudit.plain(cash));
-            return new Outcome(false, recordSkip(runId, pass, month, p, s, carry, values) ? s.reason() : null, BigDecimal.ZERO);
+            boolean ok = recordSkip(runId, pass, month, p, s, carry, values);
+            return ok ? new Outcome(false, s.reason(), BigDecimal.ZERO, positionShare, false, false, false)
+                    : raced();
         }
 
         ExecutorPositionLeg leg = singleOpenLeg(p.id());
@@ -286,9 +325,11 @@ public class SavingsPlanService {
             return newId;
         });
         if (id == null) {
-            audit.stage(STAGE_ADD, runId, pass, "row-skipped", "parallel-pass-owns-row",
-                    fields("month", month, "position", p.id(), "symbol", p.symbol()));
-            return new Outcome(false, null, BigDecimal.ZERO);
+            // Fix round 1 Minor 4: no second "savings-plan stage" line — "exactly one per stage
+            // per pass" is the contract. An INFO skip-style line, folded into the single
+            // summary's "raced" counter; the row the OTHER pass wrote already carries the trail.
+            audit.raced(runId, pass, month, p.id(), p.symbol());
+            return raced();
         }
         RowRef ref = new RowRef(id, month, p.id(), p.symbol());
         BigDecimal childStop = convictionProfile.entryBrokerStop("BUY", limit, logicalStop);
@@ -308,16 +349,16 @@ public class SavingsPlanService {
                             + " child_stop=" + SavingsPlanAudit.plain(childStop) + " tif=" + settings.tif()
                             + " client_ref=" + clientRef,
                     () -> gateway.placeBracket(connection, req),
-                    r -> "parent=" + r.bracketId() + " child=" + r.stopLegId());
+                    r -> "ids=parent:" + r.bracketId() + ",child:" + r.stopLegId());
             if (savingsRepo.markPlaced(id, pb.bracketId(), pb.stopLegId())) {
                 audit.transition(runId, pass, ref, SavingsBuy.PLACING, SavingsBuy.PLACED, "SAVINGS_ADD",
                         "SAVINGS_ADD", fields("qty", qty, "limit", limit, "entry_order_id", pb.bracketId(),
                                 "child_stop_order_id", pb.stopLegId(), "tif", settings.tif()),
                         "savings add placed");
             }
-            return new Outcome(true, null, cost);
+            return new Outcome(true, null, cost, cost, false, false, false);
         } catch (BrokerRejectedException e) {
-            Boolean rejected = tx.execute(status -> {
+            Boolean rejectedTxOk = tx.execute(status -> {
                 if (!savingsRepo.transition(id, SavingsBuy.PLACING, SavingsBuy.REJECTED)) {
                     status.setRollbackOnly();
                     return false;
@@ -325,21 +366,27 @@ public class SavingsPlanService {
                 savingsRepo.addCarry(p.id(), cost);
                 return true;
             });
-            if (Boolean.TRUE.equals(rejected)) {
+            if (Boolean.TRUE.equals(rejectedTxOk)) {
                 audit.transition(runId, pass, ref, SavingsBuy.PLACING, SavingsBuy.REJECTED, "SAVINGS_ADD",
                         "REJECTED", fields("reject_code", e.rejectCode(), "carry_refund_eur", cost),
                         "determinate broker reject — carry kept, not retried this month");
             }
             audit.escalate(runId, pass, ref, p.symbol(), "SAVINGS_ADD_REJECTED", "WARN",
                     fields("reject_code", e.rejectCode()), "broker rejected the savings add: " + e.getMessage());
-            return new Outcome(false, null, BigDecimal.ZERO);
+            // The refund re-adds `cost` to carry, so carry nets to carryBefore + positionShare —
+            // the same "share stayed in carry, not retried this month" shape as CARRY/NO_CASH.
+            return new Outcome(false, null, BigDecimal.ZERO, positionShare, true, false, false);
         } catch (BrokerUnavailableException e) {
             audit.escalate(runId, pass, ref, p.symbol(), "SAVINGS_ADD_INDETERMINATE", "WARN",
                     fields("client_ref", clientRef), "no broker verdict on the savings add — the row "
                             + "stays PLACING; the next closed pass adopts it via ordersByRef / broker qty: "
                             + e.getMessage());
-            return new Outcome(false, null, cost);
+            return new Outcome(false, null, cost, cost, false, true, false);
         }
+    }
+
+    private static Outcome raced() {
+        return new Outcome(false, null, BigDecimal.ZERO, BigDecimal.ZERO, false, false, true);
     }
 
     /** Writes the SKIPPED row (and, for CARRY/NO_CASH, the accrued carry) in one transaction, then

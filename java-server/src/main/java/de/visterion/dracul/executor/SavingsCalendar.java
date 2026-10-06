@@ -15,7 +15,11 @@ import java.time.ZonedDateTime;
  *
  * <ul>
  *   <li>Plan day = weekday index 1 of the UTC month (same calendar as momentum), catch-up on
- *       2..catchUp, MISSED on catchUp+1. No holiday calendar (§9).</li>
+ *       2..catchUp, MISSED on catchUp+1 **and every weekday after it** (fix round 1, task 6
+ *       review Minor 6): the first in-window pass at index &gt;= catchUp+1 still alarms, even when
+ *       no pass ran on index catchUp+1 itself — the usual cause of a miss is exactly an outage on
+ *       that day. {@code markMissedAlerted} keeps it to once per month regardless of how many
+ *       later days ask. No holiday calendar (§9).</li>
  *   <li>Window: UTC time in [windowStart, 24:00) on Mon–Fri — after the US close in summer
  *       (20:00) and winter (21:00).</li>
  *   <li>Session gate: the row's New York trade date ({@code created_at} in America/New_York) is
@@ -38,7 +42,10 @@ public final class SavingsCalendar {
         int index = MomentumCalendar.weekdayIndex(todayUtc);
         if (index == 1) return Phase.PLAN_DAY;
         if (index >= 2 && index <= catchUpWeekdays) return Phase.CATCH_UP;
-        if (index == catchUpWeekdays + 1) return Phase.MISSED;
+        // >= catchUp+1, not == : a pass that only runs after the exact miss day (e.g. an outage on
+        // catchUp+1 itself) must still see MISSED, not NONE — markMissedAlerted is what keeps the
+        // alarm to once per month, not this comparison.
+        if (index >= catchUpWeekdays + 1) return Phase.MISSED;
         return Phase.NONE;
     }
 

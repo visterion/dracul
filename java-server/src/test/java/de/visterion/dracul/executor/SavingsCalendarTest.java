@@ -20,8 +20,20 @@ class SavingsCalendarTest {
         assertThat(SavingsCalendar.phase(LocalDate.of(2026, 11, 3), 3)).isEqualTo(SavingsCalendar.Phase.CATCH_UP);
         assertThat(SavingsCalendar.phase(LocalDate.of(2026, 11, 4), 3)).isEqualTo(SavingsCalendar.Phase.CATCH_UP);
         assertThat(SavingsCalendar.phase(LocalDate.of(2026, 11, 5), 3)).isEqualTo(SavingsCalendar.Phase.MISSED);
-        assertThat(SavingsCalendar.phase(LocalDate.of(2026, 11, 6), 3)).isEqualTo(SavingsCalendar.Phase.NONE);
         assertThat(SavingsCalendar.month(LocalDate.of(2026, 11, 2))).isEqualTo("2026-11");
+    }
+
+    /** Fix round 1, task 6 review Minor 6: MISSED must not be blind to an outage that skips the
+     *  exact catchUp+1 day — the first in-window pass on ANY later weekday still sees MISSED
+     *  (once per month is {@code markMissedAlerted}'s job, not this method's). */
+    @Test
+    void missedCoversEveryWeekdayAfterCatchUpPlusOneNotJustTheExactDay() {
+        assertThat(SavingsCalendar.phase(LocalDate.of(2026, 11, 5), 3))
+                .as("catchUp+1 itself, weekday index 4").isEqualTo(SavingsCalendar.Phase.MISSED);
+        assertThat(SavingsCalendar.phase(LocalDate.of(2026, 11, 6), 3))
+                .as("weekday index 5 — no pass ran on index 4").isEqualTo(SavingsCalendar.Phase.MISSED);
+        assertThat(SavingsCalendar.phase(LocalDate.of(2026, 11, 9), 3))
+                .as("weekday index 6 — still missed, still not a holiday calendar").isEqualTo(SavingsCalendar.Phase.MISSED);
     }
 
     @Test
