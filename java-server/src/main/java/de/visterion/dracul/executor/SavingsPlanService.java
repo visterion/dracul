@@ -127,7 +127,8 @@ public class SavingsPlanService {
 
     // ---- add stage (spec §4) -----------------------------------------------------------------
 
-    public AddResult addStage(String connection, String runId, String pass, Instant now) {
+    public AddResult addStage(String connection, String runId, String pass, Instant now,
+            Map<Long, String> stopNotLive) {
         LocalDate today = now.atZone(ZoneOffset.UTC).toLocalDate();
         String month = SavingsCalendar.month(today);
         if (!settings.enabled()) return nothing(runId, pass, month, "disabled");
@@ -149,6 +150,10 @@ public class SavingsPlanService {
             return nothing(runId, pass, month, "not-plan-day");
         }
         if (done) return nothing(runId, pass, month, "month-done");
+        // Final review I1: the stop-live check runs first in the pass; if it failed, no leg-1 stop is
+        // known to be live, and an add would put an unprotected position in flight — fail closed,
+        // the month stays open for the next pass.
+        if (stopNotLive == null) return nothing(runId, pass, month, "stop-live-unknown");
 
         int carryDropped = savingsRepo.deleteStaleCarry();
 
@@ -178,7 +183,7 @@ public class SavingsPlanService {
             BigDecimal close = closeBySymbol.get(p.symbol());
             BigDecimal priced = close != null ? close : p.entryPrice();   // §4.2: missing close → at cost
             basketValue = basketValue.add(p.qty().multiply(priced).multiply(fxToAccount));
-            Skip skip = ineligible(p, close, fxToAccount, inFlight);
+            Skip skip = ineligible(p, close, fxToAccount, inFlight, stopNotLive);
             reasons.put(p.id(), skip);
             if (skip == null) eligible++;
         }
@@ -411,8 +416,10 @@ public class SavingsPlanService {
         return true;
     }
 
-    /** §4.3 — the first failing reason, with the compared values. */
-    Skip ineligible(ExecutorPosition p, BigDecimal close, BigDecimal fxToAccount, Map<Long, String> inFlight) {
+    /** §4.3 — the first failing reason, with the compared values. {@code stopNotLive}: position id →
+     *  raw status of its leg-1 stop, from this pass's STOP_NOT_LIVE check (final review I1). */
+    Skip ineligible(ExecutorPosition p, BigDecimal close, BigDecimal fxToAccount, Map<Long, String> inFlight,
+            Map<Long, String> stopNotLive) {
         if (p.entryFilledAt() == null) return new Skip("UNFILLED", "entry_filled_at=null");
         if (p.pendingExitReason() != null) return new Skip("PENDING_EXIT", "pending_exit_reason=" + p.pendingExitReason());
         if (p.trimCount() > 0 || p.pendingTrimOrderId() != null) {
@@ -425,6 +432,12 @@ public class SavingsPlanService {
             return new Skip("LEGS", "open_legs=" + legs.size() + " leg_stop="
                     + (first == null ? null : first.stopOrderId()) + " leg_tranche="
                     + (first == null ? null : first.tranche()) + " position_tranche=" + p.tranche());
+        }
+        if (stopNotLive.containsKey(p.id())) {
+            // the add's in-flight exclusion rests on a live leg-1 stop; same reason LEGS, so the
+            // skip-reason contract does not grow
+            return new Skip("LEGS", "stop_not_live raw_status=" + stopNotLive.get(p.id())
+                    + " leg_stop=" + first.stopOrderId());
         }
         if (inFlight.containsKey(p.id())) return new Skip("IN_FLIGHT", "in_flight_status=" + inFlight.get(p.id()));
         if (close == null) return new Skip("DATA", "close=null");
@@ -512,8 +525,10 @@ public class SavingsPlanService {
     /** §6.3 STOP_NOT_LIVE: in each closed pass every OPEN, filled CONVICTION position without an
      *  in-flight add, pending trim or pending exit must have its single leg's stop LIVE
      *  (AdoptionCandidates.isLive — a "notworking" child maps to WORKING and is NOT live). CRITICAL
-     *  every pass while it is not. */
-    public int checkStopsLive(String connection, String runId, String pass) {
+     *  every pass while it is not. Runs before the add stage, which gets the result.
+     *  @return position id → raw status of the stop that is not live ("absent" when not among the
+     *  open orders, "null" when the position has no stop id) */
+    public Map<Long, String> checkStopsLive(String connection, String runId, String pass) {
         Map<Long, String> inFlight = savingsRepo.inFlightStatusByPosition();
         List<ExecutorPosition> book = positionRepo.findOpen().stream()
                 .filter(p -> connection.equals(p.connection()))
@@ -524,11 +539,11 @@ public class SavingsPlanService {
                 .toList();
         if (book.isEmpty()) {
             audit.stage("stop-live", runId, pass, "did-nothing", "no-positions-to-check", fields("checked", 0));
-            return 0;
+            return Map.of();
         }
         List<BrokerOrder> open = audit.broker("stop-live", runId, pass, "orders", "connection=" + connection,
                 () -> gateway.orders(connection), l -> "count=" + l.size());
-        int notLive = 0;
+        Map<Long, String> notLive = new LinkedHashMap<>();
         for (ExecutorPosition p : book) {
             List<ExecutorPositionLeg> legs = legRepo.findOpenByPosition(p.id());
             String stopId = legs.size() == 1 && legs.getFirst().stopOrderId() != null
@@ -536,15 +551,15 @@ public class SavingsPlanService {
             boolean live = stopId != null && open.stream()
                     .anyMatch(o -> stopId.equals(o.orderId()) && AdoptionCandidates.isLive(o));
             if (live) continue;
-            notLive++;
             String raw = stopId == null ? null : open.stream().filter(o -> stopId.equals(o.orderId()))
                     .map(BrokerOrder::rawStatus).findFirst().orElse("absent");
+            notLive.put(p.id(), String.valueOf(raw));
             audit.escalate(runId, pass, null, p.symbol(), "STOP_NOT_LIVE", "CRITICAL",
                     fields("position", p.id(), "stop_order_id", stopId, "raw_status", raw, "open_legs", legs.size()),
                     "the single stop of CONVICTION position " + p.symbol() + " (" + stopId + ") is not live at the broker");
         }
-        audit.stage("stop-live", runId, pass, notLive > 0 ? "acted" : "did-nothing",
-                notLive > 0 ? "-" : "all-stops-live", fields("checked", book.size(), "not_live", notLive));
+        audit.stage("stop-live", runId, pass, notLive.isEmpty() ? "did-nothing" : "acted",
+                notLive.isEmpty() ? "all-stops-live" : "-", fields("checked", book.size(), "not_live", notLive.size()));
         return notLive;
     }
 

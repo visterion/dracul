@@ -1007,7 +1007,7 @@ class MaintenancePipelineTest {
         verify(ratchet).ratchet(eq(List.of(other)), any(), any(), any(), any(), eq("r1"));
     }
 
-    /** §3.2: reconcile → … → CONSOLIDATE → triggers → ratchet → SAVINGS_ADD → STOP_NOT_LIVE → release. */
+    /** §3.2: reconcile → … → CONSOLIDATE → triggers → ratchet → STOP_NOT_LIVE → SAVINGS_ADD → release (final review I1). */
     @Test
     void consolidationRunsBeforeTheTriggersAndTheAddAfterThem() {
         anyLevels();
@@ -1030,9 +1030,46 @@ class MaintenancePipelineTest {
         order.verify(hardTrigger).apply(any(), any(), eq("r1"));
         order.verify(ratchet).ratchet(any(), any(), any(), any(), any(), eq("r1"));
         order.verify(savingsPlan).renewLease(any());
-        order.verify(savingsPlan).addStage(eq("c"), eq("r1"), any(), any());
         order.verify(savingsPlan).checkStopsLive(eq("c"), eq("r1"), any());
+        order.verify(savingsPlan).addStage(eq("c"), eq("r1"), any(), any(), any());
         order.verify(savingsPlan).releaseLease(any());
+    }
+
+    /** Final review I1: STOP_NOT_LIVE runs BEFORE the add and its not-live positions reach the add
+     *  stage — an add must never put a position with a dead leg-1 stop in flight. */
+    @Test
+    void theStopLiveResultIsHandedToTheAdd() {
+        anyLevels();
+        ExecutorPosition p = openPosition(2L, "BBB", new BigDecimal("95"), new BigDecimal("110"), null, 0);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(List.of(p), Set.of()));
+        when(savingsPlan.inWindow(any())).thenReturn(true);
+        when(savingsPlan.tryLease(any())).thenReturn(true);
+        when(savingsPlan.renewLease(any())).thenReturn(true);
+        when(savingsPlan.checkStopsLive(any(), any(), any())).thenReturn(Map.of(2L, "notworking"));
+        when(hardTrigger.apply(eq(List.of(p)), any(), eq("r1"))).thenReturn(List.of(p));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        pipeline.run("c", "r1");
+
+        verify(savingsPlan).addStage(eq("c"), eq("r1"), any(), any(), eq(Map.of(2L, "notworking")));
+    }
+
+    /** Final review I1: a failed stop-live check hands "unknown" (null) to the add — fail closed. */
+    @Test
+    void aFailedStopLiveCheckHandsUnknownToTheAdd() {
+        anyLevels();
+        ExecutorPosition p = openPosition(2L, "BBB", new BigDecimal("95"), new BigDecimal("110"), null, 0);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(List.of(p), Set.of()));
+        when(savingsPlan.inWindow(any())).thenReturn(true);
+        when(savingsPlan.tryLease(any())).thenReturn(true);
+        when(savingsPlan.renewLease(any())).thenReturn(true);
+        when(savingsPlan.checkStopsLive(any(), any(), any())).thenThrow(new IllegalStateException("synthetic"));
+        when(hardTrigger.apply(eq(List.of(p)), any(), eq("r1"))).thenReturn(List.of(p));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        pipeline.run("c", "r1");
+
+        verify(savingsPlan).addStage(eq("c"), eq("r1"), any(), any(), org.mockito.ArgumentMatchers.isNull());
     }
 
     @Test
@@ -1044,7 +1081,7 @@ class MaintenancePipelineTest {
         when(savingsPlan.inWindow(any())).thenReturn(true);
         when(savingsPlan.tryLease(any())).thenReturn(true);
         when(consolidator.consolidateStage(any(), any(), any(), any())).thenThrow(new IllegalStateException("synthetic"));
-        when(savingsPlan.addStage(any(), any(), any(), any())).thenThrow(new IllegalStateException("synthetic add"));
+        when(savingsPlan.addStage(any(), any(), any(), any(), any())).thenThrow(new IllegalStateException("synthetic add"));
         when(hardTrigger.apply(eq(List.of(p)), any(), eq("r1"))).thenReturn(List.of(p));
         when(positionRepo.findOpen()).thenReturn(List.of(p));
 
@@ -1073,7 +1110,7 @@ class MaintenancePipelineTest {
 
         verify(savingsPlan, org.mockito.Mockito.never()).tryLease(any());
         verify(consolidator, org.mockito.Mockito.never()).consolidateStage(any(), any(), any(), any());
-        verify(savingsPlan, org.mockito.Mockito.never()).addStage(any(), any(), any(), any());
+        verify(savingsPlan, org.mockito.Mockito.never()).addStage(any(), any(), any(), any(), any());
         verify(savingsPlan).staleCheck(eq("c"), eq("r1"), any(), any());
         assertThat(lines(log, "savings-plan stage")).hasSize(3).allSatisfy(l -> assertThat(l)
                 .contains("outcome=did-nothing").contains("why=outside-window"));
@@ -1094,7 +1131,7 @@ class MaintenancePipelineTest {
         pipeline.run("c", "r1");
 
         verify(consolidator, org.mockito.Mockito.never()).consolidateStage(any(), any(), any(), any());
-        verify(savingsPlan, org.mockito.Mockito.never()).addStage(any(), any(), any(), any());
+        verify(savingsPlan, org.mockito.Mockito.never()).addStage(any(), any(), any(), any(), any());
         verify(savingsPlan, org.mockito.Mockito.never()).releaseLease(any());
         verify(savingsPlan).staleCheck(eq("c"), eq("r1"), any(), any());
         verify(savingsPlan).positionsTouchedSince(any());
@@ -1169,7 +1206,7 @@ class MaintenancePipelineTest {
 
         assertThat(result).hasSize(1);
         verify(consolidator).consolidateStage(eq("c"), org.mockito.ArgumentMatchers.isNull(), any(), any());
-        verify(savingsPlan).addStage(eq("c"), org.mockito.ArgumentMatchers.isNull(), any(), any());
+        verify(savingsPlan).addStage(eq("c"), org.mockito.ArgumentMatchers.isNull(), any(), any(), any());
         verify(savingsPlan).releaseLease(any());
     }
 
@@ -1317,7 +1354,7 @@ class MaintenancePipelineTest {
         pipeline.run("c", "r1");
 
         verify(consolidator).consolidateStage(eq("c"), eq("r1"), any(), any());
-        verify(savingsPlan, org.mockito.Mockito.never()).addStage(any(), any(), any(), any());
+        verify(savingsPlan, org.mockito.Mockito.never()).addStage(any(), any(), any(), any(), any());
         verify(savingsPlan, org.mockito.Mockito.never()).checkStopsLive(any(), any(), any());
         assertThat(lines(log, "savings-plan stage stage=")).hasSize(2)
                 .allSatisfy(l -> assertThat(l).contains("why=lease-lost"));

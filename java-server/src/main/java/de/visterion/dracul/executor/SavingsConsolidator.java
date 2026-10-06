@@ -240,8 +240,9 @@ public class SavingsConsolidator {
         // §5.2 step 3a (moved here from reconcile, R4 M3): a shortfall against leg 1 + the filled add.
         BigDecimal parentFilled = parentRows(b, row).map(BrokerOrder::filledQty).filter(Objects::nonNull)
                 .max(java.util.Comparator.naturalOrder()).orElse(BigDecimal.ZERO);
-        BigDecimal addFilled = parentFilled.signum() > 0 ? parentFilled
-                : bpQty.subtract(row.qtyBefore()).max(BigDecimal.ZERO);
+        // without a visible parent, the gross fill: a marker from an earlier pass (window_stop_qty) is
+        // added back, so the window stop is recognised again instead of booking the net fill
+        BigDecimal addFilled = parentFilled.signum() > 0 ? parentFilled : row.grossFillQty(bpQty);
         BigDecimal missing = row.qtyBefore().add(addFilled).subtract(bpQty);
         if (missing.signum() > 0) return windowStop(row, p, b, c, bpQty, addFilled, missing);
         BigDecimal fillQty = bpQty.subtract(row.qtyBefore());
@@ -252,7 +253,7 @@ public class SavingsConsolidator {
     String consolidateFilled(SavingsBuy row, ExecutorPosition p, Broker b, Ctx c, BigDecimal bpQty,
             BigDecimal fillQty, BigDecimal fillPriceOverride) {
         BigDecimal avg = b.avg();
-        BigDecimal fillPrice = fillPriceOverride != null ? fillPriceOverride : derivedFillPrice(avg, bpQty, row);
+        BigDecimal fillPrice = fillPriceOverride != null ? fillPriceOverride : derivedFillPrice(avg, fillQty, row);
         BigDecimal target = target(avg, p);
         if (!savingsRepo.markConsolidating(row.id(), row.status(), bpQty, target, avg)) return "unchanged";
         String expected = UNPROTECTED.equals(row.status()) ? UNPROTECTED : CONSOLIDATING;
@@ -281,8 +282,16 @@ public class SavingsConsolidator {
         BigDecimal bpQty = b.qty();
         BigDecimal avg = b.avg();
         BigDecimal target = target(avg, p);
-        BigDecimal fillQty = bpQty.subtract(row.qtyBefore()).max(BigDecimal.ZERO);
-        BigDecimal fillPrice = fillQty.signum() > 0 ? derivedFillPrice(avg, bpQty, row) : null;
+        // Final review I2: the GROSS add fill. The parent's own filled qty when the broker still shows
+        // it (also right when the position shrank below qty_before since — never a clamped 0 that
+        // refunds the whole carry); else bp.qty − qty_before plus what a window stop already sold
+        // (window_stop_qty, TRIMmed in step 3a) — never the net fill, which over-refunds carry.
+        BrokerOrder parentFill = parentRows(b, row)
+                .filter(o -> o.filledQty() != null && o.filledQty().signum() > 0)
+                .max(java.util.Comparator.comparing(BrokerOrder::filledQty)).orElse(null);
+        BigDecimal fillQty = parentFill != null ? parentFill.filledQty() : row.grossFillQty(bpQty);
+        BigDecimal fillPrice = parentFill != null && parentFill.avgFillPrice() != null ? parentFill.avgFillPrice()
+                : derivedFillPrice(avg, fillQty, row);
         String status = row.status();
         if (!savingsRepo.markConsolidating(row.id(), status, bpQty, target, avg)) return "unchanged";
         List<BrokerOrder> live = liveSellStops(b, p.symbol());
@@ -296,6 +305,8 @@ public class SavingsConsolidator {
                         .findFirst().orElse(null));
         audit.transition(c.runId(), c.pass(), RowRef.of(row), status, status, "SAVINGS_CONSOLIDATE", "RESUME",
                 fields("bp_qty", bpQty, "bp_avg", avg, "qty_before", row.qtyBefore(), "fill_qty", fillQty,
+                        "fill_source", parentFill != null ? "parent" : "bp_qty",
+                        "window_stop_qty", row.windowStopQty(),
                         "fill_price", fillPrice, "target_qty", bpQty, "target_stop", target,
                         "new_stop_order_id", row.newStopOrderId(), "live_stops", ids(live),
                         "keep", keep == null ? null : keep.orderId()),
@@ -522,8 +533,8 @@ public class SavingsConsolidator {
         boolean bookShares = !EMERGENCY_EXIT.equals(row.status()) && "OPEN".equals(p.status())
                 && b.avg() != null && bpQty.compareTo(row.qtyBefore()) > 0;
         BigDecimal avg = bookShares ? b.avg() : null;
-        BigDecimal fillQty = bookShares ? bpQty.subtract(row.qtyBefore()) : row.fillQty();
-        BigDecimal fillPrice = bookShares ? derivedFillPrice(avg, bpQty, row) : row.fillPrice();
+        BigDecimal fillQty = bookShares ? row.grossFillQty(bpQty) : row.fillQty();
+        BigDecimal fillPrice = bookShares ? derivedFillPrice(avg, fillQty, row) : row.fillPrice();
         String why = !"OPEN".equals(p.status()) ? "position_status=" + p.status()
                 : p.pendingExitReason() != null ? "pending_exit_reason=" + p.pendingExitReason()
                 : "catastrophe_reason=" + p.catastropheReason();
@@ -934,11 +945,12 @@ public class SavingsConsolidator {
         return p.trimCount() > 0 && p.activeStop() != null ? t.max(p.activeStop()) : t;
     }
 
-    /** Fill price from the broker position, never from FILLED-only history (R3 M4). */
-    static BigDecimal derivedFillPrice(BigDecimal avg, BigDecimal bpQty, SavingsBuy row) {
-        BigDecimal fillQty = bpQty.subtract(row.qtyBefore());
-        if (avg == null || fillQty.signum() <= 0) return null;
-        return avg.multiply(bpQty).subtract(row.avgBefore().multiply(row.qtyBefore()))
+    /** Fill price from the broker position, never from FILLED-only history (R3 M4). {@code fillQty} is
+     *  the GROSS add fill: a sale (the window stop) leaves an average-cost basis unchanged, so the
+     *  average covers qty_before + fillQty shares — without a window stop that is bp.qty. */
+    static BigDecimal derivedFillPrice(BigDecimal avg, BigDecimal fillQty, SavingsBuy row) {
+        if (avg == null || fillQty == null || fillQty.signum() <= 0) return null;
+        return avg.multiply(row.qtyBefore().add(fillQty)).subtract(row.avgBefore().multiply(row.qtyBefore()))
                 .divide(fillQty, 6, RoundingMode.HALF_UP);
     }
 

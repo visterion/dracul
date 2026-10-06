@@ -383,4 +383,65 @@ class ReconcileServiceSavingsTest {
         verify(positionRepo).close(eq(1L), any(), any(), eq("RECONCILE_GONE"), eq("RECONCILE_GONE"), any());
         assertThat(savingsRepo.findById(r.id).status()).isEqualTo(SavingsBuy.CLOSED_WITH_POSITION);
     }
+
+    /** Final review I2: a row left CONSOLIDATING after a window stop (window_stop_qty = 3, its TRIM
+     *  already written by the consolidator), then a full stop-out — matrix row 1 TRIMs only the add
+     *  shares the window stop did not already cover (9 − 3), never the full parent fill again. */
+    @Test
+    void row1AfterAWindowStopTrimsOnlyTheAddSharesNotYetTrimmed() {
+        var r = row(SavingsBuy.CONSOLIDATING);
+        r.windowStopQty = new BigDecimal("3");
+        gateway.seedOrder(filledStop("stop-1", "TECHA", "10", "64.50"));
+        gateway.seedOrder(filledParent("brk-9", "sp-1-202611", "TECHA", "9", "112.20"));
+        gateway.seedOrder(filledStop("child-9", "TECHA", "9", "89.70"));
+
+        service.reconcile("c", "run-2");
+
+        assertThat(trims()).singleElement().satisfies(t -> {
+            assertThat(t.reasonCode()).isEqualTo("SAVINGS_WINDOW_STOP");
+            assertThat(t.orderJson().path("qty_closed").decimalValue()).isEqualByComparingTo("6");
+        });
+        assertThat(savingsRepo.findById(r.id).status()).isEqualTo(SavingsBuy.CLOSED_WITH_POSITION);
+        assertThat(savingsRepo.findById(r.id).fillQty()).as("gross add fill").isEqualByComparingTo("9");
+    }
+
+    /** Final review I2: when window_stop_qty already covers every add share, row 1 writes no TRIM. */
+    @Test
+    void row1WritesNoTrimWhenTheWindowStopCoveredEveryAddShare() {
+        var r = row(SavingsBuy.CONSOLIDATING);
+        r.windowStopQty = new BigDecimal("9");
+        gateway.seedOrder(filledStop("stop-1", "TECHA", "10", "64.50"));
+        gateway.seedOrder(filledParent("brk-9", "sp-1-202611", "TECHA", "9", "112.20"));
+        gateway.seedOrder(filledStop("child-9", "TECHA", "9", "89.70"));
+
+        service.reconcile("c", "run-2");
+
+        assertThat(trims()).isEmpty();
+        assertThat(savingsRepo.findById(r.id).status()).isEqualTo(SavingsBuy.CLOSED_WITH_POSITION);
+        verify(positionRepo).close(eq(1L), any(), any(), eq("HARD_STOP"), eq("FILL"), any());
+    }
+
+    /** Final review I2: the new stop fills before step 7 after a window stop — target_qty (16) is net of
+     *  the 3 window-stopped shares; the row's fill_qty is the gross add fill (16 − 10 + 3 = 9) and the
+     *  fill price is derived over the gross fill. */
+    @Test
+    void theNewStopFillingAfterAWindowStopBooksTheGrossAddFill() {
+        var r = row(SavingsBuy.CONSOLIDATING);
+        r.windowStopQty = new BigDecimal("3");
+        r.newStopOrderId = "pstop-9";
+        r.targetQty = new BigDecimal("16");
+        r.targetStop = new BigDecimal("68.76");
+        r.avgAfter = new BigDecimal("105.778947");
+        ExecutorPosition booked = SavingsFixtures.pos(1, "TECHA").qty("16").entry("105.778947").stop("pstop-9").build();
+        when(positionRepo.findById(1L)).thenReturn(booked);
+        gateway.seedOrder(filledStop("pstop-9", "TECHA", "16", "68.70"));
+
+        service.reconcile("c", "run-2");
+
+        SavingsBuy after = savingsRepo.findById(r.id);
+        assertThat(after.status()).isEqualTo(SavingsBuy.CLOSED_WITH_POSITION);
+        assertThat(after.fillQty()).isEqualByComparingTo("9");
+        assertThat(after.fillPrice()).isEqualByComparingTo("112.199999");
+        assertThat(trims()).isEmpty();
+    }
 }

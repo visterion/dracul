@@ -41,8 +41,9 @@ import java.util.UUID;
  * maintenance on whatever survived). Then, inside the closed-market window and only for the pass
  * holding the savings lease, {@link SavingsConsolidator} runs before the hard triggers (spec
  * 2026-10-06), {@link HardTriggerService} and {@link StopRatchetService} run with in-flight savings
- * positions excluded (UNPROTECTED ones stop-only), then {@link SavingsPlanService#addStage} and the
- * STOP_NOT_LIVE invariant; the savings stale check runs on every pass. Positions whose GTD entry has
+ * positions excluded (UNPROTECTED ones stop-only), then the STOP_NOT_LIVE invariant and
+ * {@link SavingsPlanService#addStage} (in that order: a position whose leg-1 stop is not live gets
+ * no add); the savings stale check runs on every pass. Positions whose GTD entry has
  * no confirmed fill yet
  * ({@link ReconcileService.ReconcileResult#unfilledIds()}) are excluded from both the
  * hard-trigger and ratchet steps — they hold nothing at the broker to flatten or ratchet — but
@@ -301,20 +302,26 @@ public class MaintenancePipeline {
             // The gap since the consolidate stage (indicators, triggers, ratchet broker writes) can be
             // long: renew before the add, and if the lease is gone a parallel pass may own it now.
             if (leased && !renewSavingsLease(pass, now, runId)) {
-                for (String stage : List.of("add", "stop-live")) {
+                for (String stage : List.of("stop-live", "add")) {
                     log.info("savings-plan stage stage={} run={} pass={} outcome=did-nothing why=lease-lost now={}",
                             stage, runId, pass, now);
                 }
             } else if (leased) {
+                // STOP_NOT_LIVE runs BEFORE the add (final review I1): an add makes its position in
+                // flight — out of the hard triggers and out of this very check — on the premise that
+                // the leg-1 stop protects the shares. A position whose leg-1 stop is not live must
+                // therefore never get an add; null = the check failed, so no stop is known live.
+                Map<Long, String> stopNotLive;
                 try {
-                    savingsPlan.addStage(connection, runId, pass, now);
-                } catch (RuntimeException e) {
-                    log.warn("savings-plan stage failed stage=add run={} pass={} error={}", runId, pass, e.toString(), e);
-                }
-                try {
-                    savingsPlan.checkStopsLive(connection, runId, pass);
+                    stopNotLive = savingsPlan.checkStopsLive(connection, runId, pass);
                 } catch (RuntimeException e) {
                     log.warn("savings-plan stage failed stage=stop-live run={} pass={} error={}", runId, pass, e.toString(), e);
+                    stopNotLive = null;
+                }
+                try {
+                    savingsPlan.addStage(connection, runId, pass, now, stopNotLive);
+                } catch (RuntimeException e) {
+                    log.warn("savings-plan stage failed stage=add run={} pass={} error={}", runId, pass, e.toString(), e);
                 }
             }
 
@@ -324,7 +331,6 @@ public class MaintenancePipeline {
                 if (unfilledIds.contains(p.id()) || p.pendingExitReason() != null
                         || excludedInFlight.contains(p.id())) keepIds.add(p.id());
             }
-
 
             List<ExecutorPosition> finalOpen = positionRepo.findOpen().stream()
                     .filter(p -> connection.equals(p.connection()))

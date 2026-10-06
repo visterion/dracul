@@ -110,7 +110,7 @@ class SavingsPlanServiceTest {
         close("TECHA", "110");
         close("TECHB", "45");
 
-        SavingsPlanService.AddResult r = service.addStage("c", "run-1", "pass-1", PLAN_DAY);
+        SavingsPlanService.AddResult r = service.addStage("c", "run-1", "pass-1", PLAN_DAY, java.util.Map.of());
 
         assertThat(r.placed()).isEqualTo(2);
         BracketRequest a = gateway.placed.get(0);
@@ -170,7 +170,7 @@ class SavingsPlanServiceTest {
         book(SavingsFixtures.pos(1, "TECHA").build());
         close("TECHA", "110");
 
-        service.addStage("c", "run-1", "pass-1", PLAN_DAY);
+        service.addStage("c", "run-1", "pass-1", PLAN_DAY, java.util.Map.of());
 
         assertThat(gateway.placed).singleElement().satisfies(b -> assertThat(b.timeInForce()).isEqualTo("day"));
         assertThat(row(1, "2026-11").tif()).isEqualTo("day");
@@ -185,7 +185,7 @@ class SavingsPlanServiceTest {
         close("TECHC", null);
         close("TECHD", "110");
 
-        service.addStage("c", "run-1", "pass-1", PLAN_DAY);
+        service.addStage("c", "run-1", "pass-1", PLAN_DAY, java.util.Map.of());
 
         assertThat(savingsRepo.findMonth("2026-11").monthAmountEur()).isEqualByComparingTo("1130");   // 50 000 − 48 870
         assertThat(savingsRepo.findMonth("2026-11").candidateCount()).isEqualTo(1);
@@ -209,7 +209,7 @@ class SavingsPlanServiceTest {
         book(SavingsFixtures.pos(5, "TECHE").qty("80").entry("100").build());   // 80 × 105 × 0.9 = 7 560
         close("TECHE", "105");
 
-        service.addStage("c", "run-1", "pass-1", PLAN_DAY);
+        service.addStage("c", "run-1", "pass-1", PLAN_DAY, java.util.Map.of());
 
         // share min(2 000, 8 000 − 7 560 = 440); limit 107.10 → 96.39 EUR; floor(440 / 96.39) = 4
         assertThat(gateway.placed).singleElement().satisfies(b -> assertThat(b.qty()).isEqualByComparingTo("4"));
@@ -221,7 +221,7 @@ class SavingsPlanServiceTest {
         book(SavingsFixtures.pos(6, "TECHF").qty("500").entry("100").build());  // 50 400 ≥ 50 000
         close("TECHF", "112");
 
-        SavingsPlanService.AddResult r = service.addStage("c", "run-1", "pass-1", PLAN_DAY);
+        SavingsPlanService.AddResult r = service.addStage("c", "run-1", "pass-1", PLAN_DAY, java.util.Map.of());
 
         assertThat(r.why()).isEqualTo("cap-full");
         assertThat(savingsRepo.rows).isEmpty();
@@ -238,7 +238,7 @@ class SavingsPlanServiceTest {
         book(SavingsFixtures.pos(1, "TECHA").build());
         close("TECHA", "110");
 
-        SavingsPlanService.AddResult r = service.addStage("c", "run-1", "pass-1", PLAN_DAY);
+        SavingsPlanService.AddResult r = service.addStage("c", "run-1", "pass-1", PLAN_DAY, java.util.Map.of());
 
         assertThat(r.why()).isEqualTo("fx-missing");
         assertThat(savingsRepo.rows).isEmpty();
@@ -252,7 +252,7 @@ class SavingsPlanServiceTest {
         book(SavingsFixtures.pos(1, "TECHA").build());
         close("TECHA", "110");
 
-        SavingsPlanService.AddResult r = service.addStage("c", "run-1", "pass-1", PLAN_DAY);
+        SavingsPlanService.AddResult r = service.addStage("c", "run-1", "pass-1", PLAN_DAY, java.util.Map.of());
 
         assertThat(r.why()).isEqualTo("no-account");
         assertThat(savingsRepo.rows).isEmpty();
@@ -264,7 +264,7 @@ class SavingsPlanServiceTest {
         book(SavingsFixtures.pos(7, "TECHG").qty("2").entry("1500").build());   // 2 × 2 500 × 0.9 = 4 500
         close("TECHG", "2500");                                                // limit 2 550 → 2 295 EUR
 
-        service.addStage("c", "run-1", "pass-1", PLAN_DAY);
+        service.addStage("c", "run-1", "pass-1", PLAN_DAY, java.util.Map.of());
 
         assertThat(row(7, "2026-11").status()).isEqualTo(SavingsBuy.SKIPPED);
         assertThat(row(7, "2026-11").skipReason()).isEqualTo("CARRY");
@@ -273,7 +273,7 @@ class SavingsPlanServiceTest {
 
         Instant december = Instant.parse("2026-12-01T23:00:00Z");              // Tue, weekday 1
         savingsRepo.now = december;
-        service.addStage("c", "run-2", "pass-2", december);
+        service.addStage("c", "run-2", "pass-2", december, java.util.Map.of());
 
         assertThat(gateway.placed).singleElement().satisfies(b -> assertThat(b.qty()).isEqualByComparingTo("1"));
         assertThat(savingsRepo.carryOf(7)).isEqualByComparingTo("1705");      // 4 000 − 2 295
@@ -286,7 +286,7 @@ class SavingsPlanServiceTest {
         book(SavingsFixtures.pos(1, "TECHA").build());
         close("TECHA", "110");
 
-        service.addStage("c", "run-1", "pass-1", PLAN_DAY);
+        service.addStage("c", "run-1", "pass-1", PLAN_DAY, java.util.Map.of());
 
         assertThat(savingsRepo.carry).doesNotContainKey(77L);
     }
@@ -308,7 +308,7 @@ class SavingsPlanServiceTest {
                 Instant.parse("2026-10-30T23:00:00Z"));
         for (String s : List.of("TECHA", "TECHB", "TECHC", "TECHD", "TECHE", "TECHF", "SYNTH")) close(s, "110");
 
-        service.addStage("c", "run-1", "pass-1", PLAN_DAY);
+        service.addStage("c", "run-1", "pass-1", PLAN_DAY, java.util.Map.of());
 
         assertThat(row(10, "2026-11").skipReason()).isEqualTo("UNFILLED");
         assertThat(row(11, "2026-11").skipReason()).isEqualTo("PENDING_EXIT");
@@ -333,7 +333,7 @@ class SavingsPlanServiceTest {
         close("TECHA", "131");
         close("TECHB", "110");
 
-        service.addStage("c", "run-1", "pass-1", PLAN_DAY);
+        service.addStage("c", "run-1", "pass-1", PLAN_DAY, java.util.Map.of());
 
         assertThat(gateway.placed).isEmpty();
         assertThat(row(20, "2026-11").skipReason()).isEqualTo("TRIMMED");
@@ -345,7 +345,7 @@ class SavingsPlanServiceTest {
         book(SavingsFixtures.pos(22, "TECHA").qty("40").entry("200").build());   // 40 × 60 × 0.9 = 2 160
         close("TECHA", "60");
 
-        service.addStage("c", "run-1", "pass-1", PLAN_DAY);
+        service.addStage("c", "run-1", "pass-1", PLAN_DAY, java.util.Map.of());
 
         assertThat(row(22, "2026-11").skipReason()).isEqualTo("STOP_ABOVE_CLOSE");
         assertThat(lines("savings-plan skip")).anySatisfy(l -> assertThat(l)
@@ -361,7 +361,7 @@ class SavingsPlanServiceTest {
         close("TECHA", "110");
         close("TECHB", "45");
 
-        service.addStage("c", "run-1", "pass-1", PLAN_DAY);
+        service.addStage("c", "run-1", "pass-1", PLAN_DAY, java.util.Map.of());
 
         assertThat(gateway.placed).singleElement().satisfies(b -> assertThat(b.symbol()).isEqualTo("TECHA"));
         assertThat(row(2, "2026-11").skipReason()).isEqualTo("NO_CASH");
@@ -376,7 +376,7 @@ class SavingsPlanServiceTest {
         book(SavingsFixtures.pos(1, "TECHA").build());
         close("TECHA", "110");
 
-        SavingsPlanService.AddResult r = service.addStage("c", "run-1", "pass-1", PLAN_DAY);
+        SavingsPlanService.AddResult r = service.addStage("c", "run-1", "pass-1", PLAN_DAY, java.util.Map.of());
 
         assertThat(row(1, "2026-11").status()).isEqualTo(SavingsBuy.REJECTED);
         assertThat(savingsRepo.carryOf(1)).isEqualByComparingTo("2000");
@@ -401,7 +401,7 @@ class SavingsPlanServiceTest {
         book(SavingsFixtures.pos(1, "TECHA").build());
         close("TECHA", "110");
 
-        SavingsPlanService.AddResult r = service.addStage("c", "run-1", "pass-1", PLAN_DAY);
+        SavingsPlanService.AddResult r = service.addStage("c", "run-1", "pass-1", PLAN_DAY, java.util.Map.of());
 
         assertThat(row(1, "2026-11").status()).isEqualTo(SavingsBuy.PLACING);
         // one candidate: share 2 000, qty floor(2 000 / 100.98) = 19, carry 2 000 − 1 918.62 stays decremented
@@ -421,8 +421,8 @@ class SavingsPlanServiceTest {
         close("TECHA", "110");
         Instant thursday = Instant.parse("2026-11-05T23:00:00Z");
 
-        service.addStage("c", "run-1", "pass-1", thursday);
-        service.addStage("c", "run-2", "pass-2", thursday);
+        service.addStage("c", "run-1", "pass-1", thursday, java.util.Map.of());
+        service.addStage("c", "run-2", "pass-2", thursday, java.util.Map.of());
 
         assertThat(decisions()).filteredOn(d -> "SAVINGS_PLAN_MISSED".equals(d.reasonCode())).hasSize(1);
         assertThat(savingsRepo.findMonth("2026-11").missedAlertedAt()).isNotNull();
@@ -435,14 +435,14 @@ class SavingsPlanServiceTest {
         book(SavingsFixtures.pos(1, "TECHA").build());
         close("TECHA", "110");
 
-        service.addStage("c", "run-1", "pass-1", Instant.parse("2026-11-02T15:00:00Z"));   // before the window
+        service.addStage("c", "run-1", "pass-1", Instant.parse("2026-11-02T15:00:00Z"), java.util.Map.of());   // before the window
         // Fix round 1 Minor 6: MISSED now covers every weekday >= catchUp+1 (never just the exact
         // day), so a weekday that used to demo "not-plan-day" (NONE) no longer exists for a normal
         // catch-up config — demo "month-done" instead, the other did-nothing reason with no WARN.
         savingsRepo.months.put("2026-11", new SavingsMonth("2026-11", new BigDecimal("2000"), 1,
                 savingsRepo.now, null));
-        service.addStage("c", "run-2", "pass-2", PLAN_DAY);
-        service(SavingsPlanSettings.defaults()).addStage("c", "run-3", "pass-3", PLAN_DAY);
+        service.addStage("c", "run-2", "pass-2", PLAN_DAY, java.util.Map.of());
+        service(SavingsPlanSettings.defaults()).addStage("c", "run-3", "pass-3", PLAN_DAY, java.util.Map.of());
 
         assertThat(lines("savings-plan stage")).satisfiesExactly(
                 l -> assertThat(l).contains("stage=add").contains("outcome=did-nothing").contains("why=outside-window"),
@@ -461,14 +461,14 @@ class SavingsPlanServiceTest {
         close("TECHA", "110");
         Instant friday = Instant.parse("2026-11-06T23:00:00Z");   // weekday index 5 — no pass ran on index 4
 
-        SavingsPlanService.AddResult r = service.addStage("c", "run-1", "pass-1", friday);
+        SavingsPlanService.AddResult r = service.addStage("c", "run-1", "pass-1", friday, java.util.Map.of());
 
         assertThat(r.why()).isEqualTo("missed");
         assertThat(decisions()).filteredOn(d -> "SAVINGS_PLAN_MISSED".equals(d.reasonCode())).hasSize(1);
         assertThat(savingsRepo.findMonth("2026-11").missedAlertedAt()).isNotNull();
         assertThat(gateway.placed).isEmpty();
 
-        service.addStage("c", "run-2", "pass-2", friday);
+        service.addStage("c", "run-2", "pass-2", friday, java.util.Map.of());
         assertThat(decisions()).filteredOn(d -> "SAVINGS_PLAN_MISSED".equals(d.reasonCode())).hasSize(1);
     }
 
@@ -477,7 +477,7 @@ class SavingsPlanServiceTest {
         ExecutorPosition a = SavingsFixtures.pos(1, "TECHA").build();
         book(a);
         close("TECHA", "110");
-        service.addStage("c", "run-1", "pass-1", PLAN_DAY);
+        service.addStage("c", "run-1", "pass-1", PLAN_DAY, java.util.Map.of());
         assertThat(savingsRepo.carryOf(1)).isEqualByComparingTo("81.38");          // share 2 000, 19 shares
 
         // weekday 2: a second, newly eligible position joins; the month amount (2 000, 1 candidate) is reused
@@ -486,7 +486,7 @@ class SavingsPlanServiceTest {
         savingsRepo.months.put("2026-11", new SavingsMonth("2026-11", new BigDecimal("2000"), 1, null, null));
         Instant tuesday = Instant.parse("2026-11-03T23:00:00Z");
         savingsRepo.now = tuesday;
-        service.addStage("c", "run-2", "pass-2", tuesday);
+        service.addStage("c", "run-2", "pass-2", tuesday, java.util.Map.of());
 
         assertThat(savingsRepo.carryOf(1)).as("TECHA has its row — no second accrual").isEqualByComparingTo("81.38");
         assertThat(savingsRepo.findMonth("2026-11").monthAmountEur()).isEqualByComparingTo("2000");
@@ -553,7 +553,7 @@ class SavingsPlanServiceTest {
                 de.visterion.dracul.executor.broker.OrderStatus.WORKING, BigDecimal.TEN, null, null, null,
                 "sell", "stopiftraded", "notworking", "open", null, new BigDecimal("32.50"), null));
 
-        int missing = service.checkStopsLive("c", "run-1", "pass-1");
+        int missing = service.checkStopsLive("c", "run-1", "pass-1").size();
 
         assertThat(missing).isEqualTo(1);
         assertThat(decisions()).filteredOn(d -> "STOP_NOT_LIVE".equals(d.reasonCode()))
@@ -564,5 +564,52 @@ class SavingsPlanServiceTest {
         });
         assertThat(lines("savings-plan stage")).anySatisfy(l -> assertThat(l)
                 .contains("stage=stop-live").contains("checked=2").contains("not_live=1"));
+    }
+
+    /** Final review I1: a leg-1 stop that is not live makes the position ineligible (LEGS,
+     *  stop_not_live) — an add would put it in flight, out of the hard triggers and out of
+     *  STOP_NOT_LIVE, with no broker stop. STOP_NOT_LIVE fires in the same pass. */
+    @Test
+    void aLegStopThatIsNotLiveBlocksTheAdd() {
+        ExecutorPosition a = SavingsFixtures.pos(1, "TECHA").build();
+        ExecutorPosition b = SavingsFixtures.pos(2, "TECHB").build();
+        book(a, b);
+        close("TECHA", "110");
+        close("TECHB", "110");
+        gateway.seedOrder(SavingsFixtures.liveStop("stop-1", "TECHA", "10", "65.00"));
+        gateway.seedOrder(new de.visterion.dracul.executor.broker.BrokerOrder("stop-2", null, "TECHB",
+                de.visterion.dracul.executor.broker.OrderRole.STOP_LOSS,
+                de.visterion.dracul.executor.broker.OrderStatus.WORKING, BigDecimal.TEN, null, null, null,
+                "sell", "stopiftraded", "notworking", "open", null, new BigDecimal("65.00"), null));
+
+        java.util.Map<Long, String> notLive = service.checkStopsLive("c", "run-1", "pass-1");
+        SavingsPlanService.AddResult r = service.addStage("c", "run-1", "pass-1", PLAN_DAY, notLive);
+
+        assertThat(notLive).containsOnlyKeys(2L);
+        assertThat(r.placed()).isEqualTo(1);
+        assertThat(gateway.placed).singleElement().satisfies(x -> assertThat(x.symbol()).isEqualTo("TECHA"));
+        assertThat(row(2, "2026-11").status()).isEqualTo(SavingsBuy.SKIPPED);
+        assertThat(row(2, "2026-11").skipReason()).isEqualTo("LEGS");
+        assertThat(lines("savings-plan skip")).anySatisfy(l -> assertThat(l).contains("reason=LEGS")
+                .contains("stop_not_live").contains("raw_status=notworking").contains("leg_stop=stop-2"));
+        assertThat(decisions()).filteredOn(d -> "STOP_NOT_LIVE".equals(d.reasonCode()))
+                .singleElement().satisfies(d -> assertThat(d.symbol()).isEqualTo("TECHB"));
+    }
+
+    /** Final review I1: when the stop-live check failed, no stop is known to be live — the add stage
+     *  places nothing and leaves the month open (fail closed, like NO_ACCOUNT). */
+    @Test
+    void anUnknownStopLiveResultPlacesNothing() {
+        book(SavingsFixtures.pos(1, "TECHA").build());
+        close("TECHA", "110");
+
+        SavingsPlanService.AddResult r = service.addStage("c", "run-1", "pass-1", PLAN_DAY, null);
+
+        assertThat(r.outcome()).isEqualTo("did-nothing");
+        assertThat(r.why()).isEqualTo("stop-live-unknown");
+        assertThat(gateway.placed).isEmpty();
+        assertThat(savingsRepo.findByMonth("2026-11")).isEmpty();
+        assertThat(lines("savings-plan stage")).singleElement().satisfies(l -> assertThat(l)
+                .contains("stage=add").contains("outcome=did-nothing").contains("why=stop-live-unknown"));
     }
 }

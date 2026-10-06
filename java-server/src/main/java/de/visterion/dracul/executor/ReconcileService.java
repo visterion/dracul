@@ -550,16 +550,20 @@ public class ReconcileService {
         BigDecimal fillQty;
         BigDecimal fillPrice;
         if (newStopFilled && row.targetQty() != null) {
-            // Step 7 never ran: the add's fill is what the step-4 audit (target_qty, avg_after) implies.
-            fillQty = row.targetQty().subtract(row.qtyBefore());
-            fillPrice = (row.avgAfter() == null || fillQty.signum() <= 0) ? null
-                    : row.avgAfter().multiply(row.targetQty()).subtract(row.avgBefore().multiply(row.qtyBefore()))
-                            .divide(fillQty, 6, RoundingMode.HALF_UP);
+            // Step 7 never ran: the add's fill is what the step-4 audit (target_qty, avg_after) implies —
+            // GROSS (final review I2): target_qty is net of shares a window stop already sold, so
+            // window_stop_qty is added back, and the average covers qty_before + the gross fill.
+            fillQty = row.grossFillQty(row.targetQty());
+            fillPrice = SavingsConsolidator.derivedFillPrice(row.avgAfter(), fillQty, row);
         } else {
             // null keeps what the row already carries (an EMERGENCY_EXIT row booked its fill in D8)
             fillQty = parentFill == null ? null : parentFill.filledQty();
             fillPrice = parentFill == null ? null : parentFill.avgFillPrice();
         }
+        // Final review I2: a window stop already TRIMmed window_stop_qty shares (§5.2 step 3a) — only
+        // the add shares it did not cover are TRIMmed here, and none when it covered them all.
+        BigDecimal addSharesNotYetTrimmed = parentFill == null ? BigDecimal.ZERO
+                : parentFill.filledQty().subtract(row.windowStopQty() == null ? BigDecimal.ZERO : row.windowStopQty());
         // resolveExit may read closedPositions (a broker call) — never inside the transaction
         ResolvedExit goneExit = leg1Fill == null ? resolveExit(p, null, null, connection) : null;
         RowRef ref = RowRef.of(row);
@@ -569,6 +573,7 @@ public class ReconcileService {
                                 : leg1Fill.orderId() + "@" + SavingsPlanAudit.plain(leg1Fill.avgFillPrice()),
                         "bp_qty", BigDecimal.ZERO, "qty_before", row.qtyBefore(), "add_fill_qty", fillQty,
                         "add_fill_price", fillPrice, "child_fill", childFill == null ? "none" : childFill.orderId(),
+                        "window_stop_qty", row.windowStopQty(),
                         "new_stop_filled", newStopFilled, "emergency", emergency));
         tx.executeWithoutResult(status -> {
             if (!savingsRepo.finish(row.id(), row.status(), SavingsBuy.CLOSED_WITH_POSITION, fillQty, fillPrice,
@@ -601,8 +606,8 @@ public class ReconcileService {
                             + ") on the position but no leg");
                 }
                 booked = reread(p);
-            } else if (parentFill != null) {
-                recordSavingsTrim(p, row, "SAVINGS_WINDOW_STOP", parentFill.filledQty(), p.qty(),
+            } else if (parentFill != null && addSharesNotYetTrimmed.signum() > 0) {
+                recordSavingsTrim(p, row, "SAVINGS_WINDOW_STOP", addSharesNotYetTrimmed, p.qty(),
                         childFill == null ? null : childFill.avgFillPrice(), parentFill.avgFillPrice(), runId);
             }
             savingsRepo.deleteCarry(p.id());

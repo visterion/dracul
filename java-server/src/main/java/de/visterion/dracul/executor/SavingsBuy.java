@@ -36,6 +36,18 @@ public record SavingsBuy(Long id, String month, long positionId, String symbol, 
         return IN_FLIGHT.contains(status);
     }
 
+    /**
+     * The add's GROSS fill implied by a held quantity (the broker qty, or the step-4 {@code target_qty}):
+     * the shares above {@code qty_before} plus those a window stop already sold
+     * ({@code window_stop_qty}, booked as its own TRIM in §5.2 step 3a). Holds whether the window stop
+     * took only add shares or leg-1 shares too: {@code window_stop_qty = qty_before + fill − held}.
+     * Never negative (final review I2: a net fill over-refunds carry and understates the buy flow).
+     */
+    public BigDecimal grossFillQty(BigDecimal heldQty) {
+        BigDecimal windowStopped = windowStopQty == null ? BigDecimal.ZERO : windowStopQty;
+        return heldQty.subtract(qtyBefore).add(windowStopped).max(BigDecimal.ZERO);
+    }
+
     /** {@code sp-<positionId>-<yyyyMM>}; {@code month} is {@code YYYY-MM}. */
     public static String clientRef(long positionId, String month) {
         return "sp-" + positionId + "-" + month.replace("-", "");

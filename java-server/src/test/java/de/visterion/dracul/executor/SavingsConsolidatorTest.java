@@ -1111,4 +1111,64 @@ class SavingsConsolidatorTest {
         verify(legRepo).syncLegQty(10L, new BigDecimal("7"));
         verify(hardTrigger).hardExit(eq(resynced), any(), any(), any());
     }
+
+    /** Final review I2: a resume after a window stop (window_stop_qty = 3, the parent no longer in the
+     *  by-ref view) books the GROSS add fill — bp 16 − qty_before 10 + 3 = 9 — so the carry gets no
+     *  refund for the window-stopped shares and the buy flow (fill_qty × fill_price) is complete. */
+    @Test
+    void aResumeAfterAWindowStopBooksTheGrossFillAndRefundsNothing() {
+        var r = consolidatingRow(null);
+        r.windowStopQty = new BigDecimal("3");
+        r.targetQty = new BigDecimal("16");
+        gateway.seedOrder(liveStop("x-5", "TECHA", "16", "68.76"));
+        broker("16", "105.77894736842105");
+
+        consolidator.consolidateStage("c", "run-3", "pass-3", NEXT_DAY);
+
+        SavingsBuy done = row(r.id);
+        assertThat(done.status()).isEqualTo(SavingsBuy.CONSOLIDATED);
+        assertThat(done.fillQty()).isEqualByComparingTo("9");
+        assertThat(done.fillPrice()).isEqualByComparingTo("112.199999");
+        assertThat(savingsRepo.carryOf(1)).isEqualByComparingTo("0");
+        assertThat(lines("savings-plan transition")).anySatisfy(l -> assertThat(l)
+                .contains("to=CONSOLIDATED").contains("fill_qty=9").contains("carry_refund_eur=0"));
+    }
+
+    /** Final review I2 / Task 8 minor: the position shrank below qty_before between the add's fill and
+     *  the resume — the parent's own filled qty (9) is the fill, never a clamped 0 that refunds the
+     *  whole carry although the add filled. */
+    @Test
+    void aResumeBelowQtyBeforeUsesTheParentFillInsteadOfRefundingTheWholeCarry() {
+        var r = consolidatingRow(null);
+        r.targetQty = new BigDecimal("8");
+        gateway.seedOrder(filledParent("brk-9", "sp-1-202611", "TECHA", "9", "112.20"));
+        broker("8", "100");
+
+        consolidator.consolidateStage("c", "run-3", "pass-3", NEXT_DAY);
+
+        SavingsBuy done = row(r.id);
+        assertThat(done.status()).isEqualTo(SavingsBuy.CONSOLIDATED);
+        assertThat(done.fillQty()).isEqualByComparingTo("9");
+        assertThat(done.fillPrice()).isEqualByComparingTo("112.20");
+        assertThat(savingsRepo.carryOf(1)).as("no refund: the add filled completely").isEqualByComparingTo("0");
+    }
+
+    /** Final review I2, global rule: a row left CONSOLIDATING after a window stop (window_stop_qty = 3)
+     *  meets a pending exit — the row's fill_qty is the gross add fill (16 − 10 + 3), not the net 6. */
+    @Test
+    void theGlobalRuleAfterAWindowStopBooksTheGrossFill() {
+        position = SavingsFixtures.pos(1, "TECHA").pendingExit("HARD_STOP").build();
+        book(position);
+        var r = consolidatingRow(null);
+        r.windowStopQty = new BigDecimal("3");
+        r.targetQty = new BigDecimal("16");
+        broker("16", "105.77894736842105");
+
+        consolidator.consolidateStage("c", "run-op", "pass-op", NEXT_DAY);
+
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.CLOSED_WITH_POSITION);
+        assertThat(row(r.id).fillQty()).isEqualByComparingTo("9");
+        assertThat(row(r.id).fillPrice()).isEqualByComparingTo("112.199999");
+        verify(positionRepo).bookSavingsQtyAndAvg(1L, new BigDecimal("16"), new BigDecimal("105.778947"));
+    }
 }
