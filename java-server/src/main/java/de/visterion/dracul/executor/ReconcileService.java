@@ -578,20 +578,28 @@ public class ReconcileService {
                 status.setRollbackOnly();
                 return;
             }
+            List<ExecutorPositionLeg> openLegs = legRepo.findOpenByPosition(p.id());
+            ExecutorPositionLeg singleLeg = openLegs.size() == 1 ? openLegs.getFirst() : null;
             savingsAudit.transition(runId, SAVINGS_PASS, ref, row.status(), SavingsBuy.CLOSED_WITH_POSITION,
                     "SAVINGS_CONSOLIDATE", "CLOSED_WITH_POSITION",
                     fields("matrix_row", 1, "leg1_fill", leg1Fill == null ? null : leg1Fill.orderId(),
                             "leg1_fill_price", leg1Fill == null ? null : leg1Fill.avgFillPrice(), "bp_qty", 0,
                             "qty_before", row.qtyBefore(), "fill_qty", fillQty, "fill_price", fillPrice,
-                            "new_stop_filled", newStopFilled),
+                            "new_stop_filled", newStopFilled, "open_legs", openLegs.size(),
+                            "leg_id", singleLeg == null ? null : singleLeg.id()),
                     "the position left the broker while the add was in flight; no carry refund");
             ExecutorPosition booked = p;
             if (newStopFilled && row.targetQty() != null && row.avgAfter() != null) {
                 // §6.1 R3/R4 Minor 7: book the step-7 state first, then close at the new stop's fill.
                 positionRepo.bookSavingsQtyAndAvg(p.id(), row.targetQty(), row.avgAfter());
                 positionRepo.setStopOrderId(p.id(), row.newStopOrderId());
-                ExecutorPositionLeg leg = savingsSingleOpenLeg(p.id());
-                if (leg != null) legRepo.setStopAndQty(leg.id(), row.newStopOrderId(), row.targetQty());
+                if (singleLeg != null) {
+                    legRepo.setStopAndQty(singleLeg.id(), row.newStopOrderId(), row.targetQty());
+                } else {
+                    savingsLegsNotSingle(runId, ref, p, openLegs.size(), "matrix row 1 booked the step-7 state ("
+                            + SavingsPlanAudit.plain(row.targetQty()) + " shares, stop " + row.newStopOrderId()
+                            + ") on the position but no leg");
+                }
                 booked = reread(p);
             } else if (parentFill != null) {
                 recordSavingsTrim(p, row, "SAVINGS_WINDOW_STOP", parentFill.filledQty(), p.qty(),
@@ -643,16 +651,23 @@ public class ReconcileService {
                 status.setRollbackOnly();
                 return false;
             }
+            List<ExecutorPositionLeg> openLegs = legRepo.findOpenByPosition(p.id());
+            ExecutorPositionLeg singleLeg = openLegs.size() == 1 ? openLegs.getFirst() : null;
             savingsAudit.transition(runId, SAVINGS_PASS, ref, row.status(), SavingsBuy.EMERGENCY_EXIT,
                     "SAVINGS_CONSOLIDATE", "EMERGENCY_EXIT",
                     fields("matrix_row", 2, "leg1_fill", leg1Fill.orderId(), "leg1_fill_price", leg1Fill.avgFillPrice(),
                             "bp_qty", bpQty, "qty_before", row.qtyBefore(), "avg_before", row.avgBefore(),
-                            "fill_qty", bpQty, "fill_price", addPrice, "child_stop_order_id", row.childStopOrderId()),
+                            "fill_qty", bpQty, "fill_price", addPrice, "child_stop_order_id", row.childStopOrderId(),
+                            "open_legs", openLegs.size(), "leg_id", singleLeg == null ? null : singleLeg.id()),
                     "D8: the pre-add emergency stop filled while the add was in flight — the add shares are sold next closed pass");
             recordSavingsTrim(p, row, "SAVINGS_LEG1_STOP", row.qtyBefore(), bpQty, leg1Fill.avgFillPrice(),
                     row.avgBefore(), runId);
-            ExecutorPositionLeg leg = savingsSingleOpenLeg(p.id());
-            if (leg != null) legRepo.setStopAndQty(leg.id(), row.childStopOrderId(), bpQty);
+            if (singleLeg != null) {
+                legRepo.setStopAndQty(singleLeg.id(), row.childStopOrderId(), bpQty);
+            } else {
+                savingsLegsNotSingle(runId, ref, p, openLegs.size(), "D8 shrank the position to "
+                        + SavingsPlanAudit.plain(bpQty) + " shares (stop " + row.childStopOrderId() + ") but no leg");
+            }
             positionRepo.bookSavingsQtyAndAvg(p.id(), bpQty, addPrice != null ? addPrice : p.entryPrice());
             positionRepo.setStopOrderId(p.id(), row.childStopOrderId());
             return true;
@@ -680,9 +695,12 @@ public class ReconcileService {
                         + SavingsPlanAudit.plain(price) + " (entry " + SavingsPlanAudit.plain(entryPrice) + ")");
     }
 
-    private ExecutorPositionLeg savingsSingleOpenLeg(long positionId) {
-        List<ExecutorPositionLeg> legs = legRepo.findOpenByPosition(positionId);
-        return legs.size() == 1 ? legs.getFirst() : null;
+    /** §8a never-silent: a leg update the matrix had to skip because the position does not have exactly
+     *  one OPEN leg. Same code/detail convention as {@code SavingsConsolidator.legsNotSingle}. */
+    private void savingsLegsNotSingle(String runId, RowRef ref, ExecutorPosition p, int openLegs, String what) {
+        savingsAudit.escalate(runId, SAVINGS_PASS, ref, p.symbol(), "SAVINGS_QTY_UNEXPLAINED", "WARN",
+                fields("detail", "open_legs:" + openLegs, "open_legs", openLegs),
+                what + " — expected exactly one OPEN leg, found " + openLegs + "; leg state is stale until fixed");
     }
 
     /**

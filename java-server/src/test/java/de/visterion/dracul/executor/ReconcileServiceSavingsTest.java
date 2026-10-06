@@ -283,6 +283,84 @@ class ReconcileServiceSavingsTest {
                 .contains("emergency=true"));
     }
 
+    /** A second OPEN leg (synthetic id 11) next to leg 1. */
+    void twoOpenLegs() {
+        ExecutorPositionLeg second = new ExecutorPositionLeg(11L, position.id(), 2, "brk-x", "stop-x",
+                new BigDecimal("1"), ExecutorPositionLeg.OPEN, null, null, null);
+        when(legRepo.findOpenByPosition(position.id())).thenReturn(List.of(leg, second));
+    }
+
+    List<DecisionLog> transitionsTo(String reason) {
+        return decisions().stream().filter(d -> reason.equals(d.reasonCode())).toList();
+    }
+
+    /** §8a never-silent: D8 with two OPEN legs cannot shrink "leg 1" — WARN SAVINGS_QTY_UNEXPLAINED,
+     *  the transition carries open_legs, no leg is touched; the position is still booked to the add. */
+    @Test
+    void row2WithTwoOpenLegsEscalatesInsteadOfSilentlySkippingTheLegShrink() {
+        twoOpenLegs();
+        row(SavingsBuy.PLACED);
+        gateway.seedOrder(filledStop("stop-1", "TECHA", "10", "64.50"));
+        gateway.seedOrder(filledParent("brk-9", "sp-1-202611", "TECHA", "9", "112.20"));
+        gateway.seedPosition(new BrokerPosition("TECHA", "BUY", new BigDecimal("9"), new BigDecimal("112.2"),
+                new BigDecimal("70"), null));
+
+        service.reconcile("c", "run-2");
+
+        verify(legRepo, never()).setStopAndQty(anyLong(), any(), any());
+        verify(positionRepo).bookSavingsQtyAndAvg(1L, new BigDecimal("9"), new BigDecimal("112.20"));
+        assertThat(transitionsTo("SAVINGS_QTY_UNEXPLAINED")).singleElement().satisfies(d -> {
+            assertThat(d.action()).isEqualTo("ESCALATE");
+            assertThat(d.orderJson().path("detail").asText()).isEqualTo("open_legs:2");
+        });
+        assertThat(transitionsTo("EMERGENCY_EXIT")).singleElement().satisfies(d -> {
+            assertThat(d.orderJson().path("open_legs").asInt()).isEqualTo(2);
+            assertThat(d.orderJson().path("leg_id").isNull()).isTrue();
+        });
+        assertThat(appender.list).anySatisfy(e -> assertThat(e.getFormattedMessage())
+                .startsWith("savings-plan escalation code=SAVINGS_QTY_UNEXPLAINED").contains("detail=open_legs:2"));
+    }
+
+    /** The D8 transition names the one leg it shrank. */
+    @Test
+    void row2TransitionNamesTheShrunkLeg() {
+        row(SavingsBuy.PLACED);
+        gateway.seedOrder(filledStop("stop-1", "TECHA", "10", "64.50"));
+        gateway.seedOrder(filledParent("brk-9", "sp-1-202611", "TECHA", "9", "112.20"));
+        gateway.seedPosition(new BrokerPosition("TECHA", "BUY", new BigDecimal("9"), new BigDecimal("112.2"),
+                new BigDecimal("70"), null));
+
+        service.reconcile("c", "run-2");
+
+        assertThat(transitionsTo("EMERGENCY_EXIT")).singleElement().satisfies(d -> {
+            assertThat(d.orderJson().path("open_legs").asInt()).isEqualTo(1);
+            assertThat(d.orderJson().path("leg_id").asLong()).isEqualTo(10L);
+        });
+        assertThat(transitionsTo("SAVINGS_QTY_UNEXPLAINED")).isEmpty();
+    }
+
+    /** §8a never-silent: the new stop filled before step 7 with two OPEN legs — the step-7 leg update
+     *  is skipped loudly (WARN open_legs:2); the close still runs. */
+    @Test
+    void newStopFilledWithTwoOpenLegsEscalatesTheSkippedLegBooking() {
+        twoOpenLegs();
+        var r = row(SavingsBuy.CONSOLIDATING);
+        r.newStopOrderId = "pstop-9";
+        r.targetQty = new BigDecimal("19");
+        r.targetStop = new BigDecimal("68.76");
+        r.avgAfter = new BigDecimal("105.778947");
+        gateway.seedOrder(filledStop("pstop-9", "TECHA", "19", "68.70"));
+
+        service.reconcile("c", "run-2");
+
+        verify(legRepo, never()).setStopAndQty(anyLong(), any(), any());
+        assertThat(transitionsTo("SAVINGS_QTY_UNEXPLAINED")).singleElement().satisfies(d ->
+                assertThat(d.orderJson().path("detail").asText()).isEqualTo("open_legs:2"));
+        assertThat(transitionsTo("CLOSED_WITH_POSITION")).singleElement().satisfies(d ->
+                assertThat(d.orderJson().path("open_legs").asInt()).isEqualTo(2));
+        verify(positionRepo).close(eq(1L), any(), any(), eq("HARD_STOP"), eq("FILL"), any());
+    }
+
     @Test
     void withoutFillHistoryNoMatrixActionIsTakenThisPass() {
         var r = row(SavingsBuy.PLACED);
