@@ -876,6 +876,23 @@ adoption path (see `documentation/architecture.md` and
 `documentation/api.md`'s adoption decision table). Each is a `decision_log`
 row (`action='ESCALATE'`) plus a Telegram CRITICAL alert.
 
+### Tech-Sparplan (exec-v1.3, 2026-10) — rollout and what to watch
+
+- Flyway V54 adds `savings_plan_month`, `savings_plan_lock` (seeded), `savings_plan_carry`,
+  `savings_plan_buy`; additive. The rule version `exec-v1.3` seeds itself on the first boot.
+- Deploy with `DRACUL_EXECUTOR_SAVINGS_PLAN_ENABLED` unset (false). Run the SIM probes for the two
+  switches first: `DRACUL_EXECUTOR_SAVINGS_PLAN_TIF` (`day` only if a DayOrder bracket placed after the
+  close is still working the next morning) and `DRACUL_EXECUTOR_SAVINGS_PLAN_PLACE_FIRST` (`true` only
+  if a full-quantity protective stop is accepted while both leg stops are live).
+- Enable by setting `DRACUL_EXECUTOR_SAVINGS_PLAN_ENABLED=true` in the host compose env list (not only
+  `.env`) and recreating the container. `enabled=false` is a safe rollback: in-flight adds are still
+  consolidated.
+- After the first plan day: one `savings_plan_month` row, one `savings_plan_buy` row per OPEN
+  CONVICTION position (PLACED or SKIPPED with a reason); the next evening's pass turns PLACED rows into
+  CONSOLIDATED / EXPIRED. Grep the app log for `savings-plan stage` (one line per stage and pass, with
+  the reason when nothing happened) and alarm on `savings-plan escalation`, `savings-plan stage failed`
+  and `savings-plan row failed`.
+
 ### `UNBOOKED_ROUND_TRIP`
 
 A signal's clientRef carries both an entry fill and an exit fill, the broker holds

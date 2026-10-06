@@ -993,6 +993,15 @@ by `CloudflareAccessFilter`), so the transient toast respects the same per-owner
 boundary as the persisted rows. The broadcaster retains a generic `broadcast`
 (all streams) seam for future global event types.
 
+**Tech-Sparplan (exec-v1.3).** `MaintenancePipeline` (started by the executor's
+`fetch_open_positions`) adds two guarded stages inside the closed-market window, under a lease row
+(`savings_plan_lock`, holder = a fresh UUID per pass): `SavingsConsolidator` before the hard
+triggers (turns last session's add into one position / one leg / one stop) and
+`SavingsPlanService.addStage` after the ratchet (places the month's adds, reading `findOpen()`
+itself). `ReconcileService` routes positions with an in-flight add (`savings_plan_buy`) through a
+savings branch. Broker calls never run inside a transaction; the step-7 booking and the reconcile
+matrix rows are the only transactions (`savingsPlanTransactions`).
+
 ## Authentication & multi-user
 
 **Identity**: Cloudflare Access sits in front of all user-facing endpoints.

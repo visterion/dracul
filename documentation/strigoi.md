@@ -707,6 +707,52 @@ entry placed at 23:00 UTC — an intraday fall of 20 % fills the narrow leg befo
 or the close-based −35 % stop can act. If the broker refuses the widening, the position keeps
 the −20 % leg as its effective emergency stop (`BROKER_STOP_WIDEN_REJECTED`, see below).
 
+### Tech-Sparplan (monthly savings adds, exec-v1.3)
+
+On top of the basket, code runs a monthly savings plan for exit profile CONVICTION
+(`dracul.executor.savings-plan.*`, off by default). The LLM decides nothing on this path; the
+executor's `fetch_open_positions` call starts the maintenance pass that runs it.
+
+- **When:** the first Mon–Fri of the month (UTC calendar), catch-up on weekdays 2–3, only inside the
+  closed-market window (UTC time in [21:15, 24:00)); weekday 4 without a completed month raises
+  `SAVINGS_PLAN_MISSED` once. No holiday calendar.
+- **How much:** `total-budget × monthly-pct` (2 000), capped by the basket headroom
+  (`total-budget × 0.50` − the CONVICTION market value; a position without a close counts at cost),
+  split equally across eligible positions and capped per position at `total-budget × 0.08` − its
+  market value. A per-position carry keeps fractional money until one share is affordable.
+- **Eligible:** OPEN, filled, no pending exit, never half-sold (no trim, no pending trim), no
+  catastrophe flag, exactly one OPEN leg with a stop, no add in flight, a close, below the 8 % cap, and
+  the logical stop after the add below the close. Every skip is a `savings_plan_buy` row with a reason.
+- **The add:** a bracket BUY at `roundEntry(close × 1.02)` (marketable at a normal open, also below
+  the entry) with the child stop in the broker band; `client_ref = sp-<positionId>-<yyyyMM>`;
+  `tif` `gtc` (default) or `day`. The intent row is written before the broker call; an indeterminate
+  answer is adopted on the next closed pass.
+- **Consolidation (first closed pass after one session):** the broker position decides the fill;
+  every live stop on the symbol is replaced by ONE stop for the whole broker quantity at
+  `roundStop(average × 0.65)` (cancel-first by default, place-first configurable); band fallback +
+  named-leg modify; step 7 books position, leg and row in one transaction. The stop may move DOWN when
+  the add was below the old average (audited bypass of the monotonic ratchet guard); `initial_stop`
+  never changes. One position, one OPEN leg, one stop — the add is never a tranche.
+- **Safety:** positions with an add in flight are skipped by reconcile's leg logic (a stop-fill matrix
+  replaces it), excluded from hard triggers and the ratchet (UNPROTECTED: stop and catastrophe only);
+  if the pre-add emergency stop fills while an add is in flight, the add shares are sold too (D8).
+  Alarms: `SAVINGS_ADD_STALE`, `CONSOLIDATE_STUCK`, `CONSOLIDATE_UNPROTECTED`, `STOP_NOT_LIVE`
+  (CRITICAL); `CONSOLIDATE_CANCEL_FAILED`, `CONSOLIDATE_PLACE_FAILED`, `CONSOLIDATE_NARROW`,
+  `NEW_STOP_NOT_PERSISTED`, `SAVINGS_QTY_UNEXPLAINED`, `SAVINGS_ADD_REJECTED`,
+  `SAVINGS_ADD_INDETERMINATE`, `SAVINGS_PLAN_MISSED` (WARN).
+- **R:** for CONVICTION the risk per share is `entry_price × emergency-stop-pct` (the current
+  average), so falling adds can never flip the sign of R. A savings-plan TRIM (window-stop or the D8
+  leg-1 exit) carries this same risk-per-share as its denominator; a STANDARD position's
+  `RECONCILE_GONE` matched-fill close carries the *planned* risk-per-share (planned entry vs. initial
+  stop, never the synced real fill) to keep a gapped fill from flipping a loss into a positive R.
+  Outcome and pattern scoring read the persisted `r_value` column rather than recomputing it.
+- **Trace:** every status change is a `savings-plan transition` log line and a `decision_log` row
+  (trigger `SAVINGS_PLAN`) with the deciding values; broker calls, stage summaries (also when a stage
+  did nothing, with the reason) and skips have their own stable prefixes; WARN/ERROR only as
+  `savings-plan escalation`, `savings-plan stage failed`, `savings-plan row failed` (a re-read failure
+  of a survivor's own row also logs under `savings-plan row failed`, with `stage=reread`).
+- **Rollback:** `enabled=false` stops new adds only; in-flight adds are still consolidated.
+
 ## Strigoi-Momentum: textbook 12-1 momentum
 
 `strigoi-momentum` (disabled by default, `dracul.strigoi.momentum.enabled`) runs a textbook
@@ -1615,7 +1661,10 @@ the LLM, which owns only the soft judgment call. Every call to
 `fetch-open-positions` first runs, server-side, in order:
 
 1. **`ReconcileService`** — syncs broker fills against `executor_position`,
-   retires positions the broker reports closed, applies `cooldown`.
+   retires positions the broker reports closed, applies `cooldown`. Positions with a Tech-Sparplan
+   add in flight take a savings branch (skip list + stop-fill matrix; see "Tech-Sparplan"). Inside
+   the closed-market window the pass holding the savings lease then consolidates adds before the
+   hard triggers and places the month's adds after the ratchet.
 2. **`HardTriggerService`** — force-closes a position on stop-breach,
    a breached structured kill level, or giveback (fraction of peak MFE-in-R
    given back, active once MFE clears `dracul.executor.giveback-active-from-r`)
