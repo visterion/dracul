@@ -721,8 +721,10 @@ executor's `fetch_open_positions` call starts the maintenance pass that runs it.
   split equally across eligible positions and capped per position at `total-budget × 0.08` − its
   market value. A per-position carry keeps fractional money until one share is affordable.
 - **Eligible:** OPEN, filled, no pending exit, never half-sold (no trim, no pending trim), no
-  catastrophe flag, exactly one OPEN leg with a stop, no add in flight, a close, below the 8 % cap, and
-  the logical stop after the add below the close. Every skip is a `savings_plan_buy` row with a reason.
+  catastrophe flag, exactly one OPEN leg with a stop that is live at the broker (this pass's
+  `STOP_NOT_LIVE` check runs first; if that check fails, the stage places nothing and the month stays
+  open), no add in flight, a close, below the 8 % cap, and the logical stop after the add below the
+  close. Every skip is a `savings_plan_buy` row with a reason.
 - **The add:** a bracket BUY at `roundEntry(close × 1.02)` (marketable at a normal open, also below
   the entry) with the child stop in the broker band; `client_ref = sp-<positionId>-<yyyyMM>`;
   `tif` `gtc` (default) or `day`. The intent row is written before the broker call; an indeterminate
@@ -1662,8 +1664,9 @@ the LLM, which owns only the soft judgment call. Every call to
    retires positions the broker reports closed, applies `cooldown`. Positions with a Tech-Sparplan
    add in flight take a savings branch (skip list + stop-fill matrix; see "Tech-Sparplan"). Inside
    the closed-market window the pass holding the savings lease then consolidates adds before the
-   hard triggers and places the month's adds after the ratchet, which runs a stale check (every
-   pass, with or without the lease) and then `STOP_NOT_LIVE` (also lease-gated, after the add).
+   hard triggers and, after the ratchet, runs `STOP_NOT_LIVE` and then places the month's adds
+   (both lease-gated; a position whose stop is not live gets no add). A stale check runs on every
+   pass, with or without the lease.
 2. **`HardTriggerService`** — force-closes a position on stop-breach,
    a breached structured kill level, or giveback (fraction of peak MFE-in-R
    given back, active once MFE clears `dracul.executor.giveback-active-from-r`)
