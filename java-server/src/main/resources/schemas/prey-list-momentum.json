@@ -4,7 +4,7 @@
   "properties": {
     "prey": {
       "type": "array",
-      "items": {"type": "object"}
+      "items": {"type": "object", "properties": {}}
     },
     "vetoes": {
       "type": "array",
@@ -17,6 +17,6 @@
         }
       }
     },
-    "data_source_health": {"type": "object"}
+    "data_source_health": {"type": "object", "properties": {}}
   }
 }

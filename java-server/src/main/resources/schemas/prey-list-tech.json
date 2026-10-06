@@ -32,6 +32,6 @@
         }
       }
     },
-    "data_source_health": {"type": "object"}
+    "data_source_health": {"type": "object", "properties": {}}
   }
 }
