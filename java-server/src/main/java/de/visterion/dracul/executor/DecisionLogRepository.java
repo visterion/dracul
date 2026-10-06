@@ -13,6 +13,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
@@ -147,6 +148,22 @@ public class DecisionLogRepository {
                 .param("actions", actions)
                 .param("from", Timestamp.from(from))
                 .param("to", Timestamp.from(to))
+                .query(this::mapRow)
+                .list();
+    }
+
+    /** Every decision row on any of {@code symbols} whose action is one of {@code actions},
+     *  oldest first — one query for the strigoi P&L leg rows (TRIM/TRIM_FILL) of a whole book;
+     *  the caller assigns rows to positions (position_id, else the OutcomeBatchJob window). */
+    public List<DecisionLog> findBySymbolsAndActions(Collection<String> symbols, List<String> actions) {
+        if (symbols == null || symbols.isEmpty() || actions == null || actions.isEmpty()) return List.of();
+        return jdbc.sql("""
+                SELECT * FROM decision_log
+                WHERE symbol IN (:symbols) AND action IN (:actions)
+                ORDER BY created_at ASC, log_id ASC
+                """)
+                .param("symbols", List.copyOf(symbols))
+                .param("actions", actions)
                 .query(this::mapRow)
                 .list();
     }

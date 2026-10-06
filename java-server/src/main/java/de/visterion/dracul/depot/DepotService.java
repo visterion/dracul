@@ -92,6 +92,14 @@ public class DepotService {
         return cachedOrFresh(match, forceRefresh);
     }
 
+    /** Whether {@code connection} exists and passes the live-visibility gate for
+     *  {@code userEmail} — the gate {@link #depot} applies, without fetching account, positions
+     *  or quotes (one {@code listConnections} call).
+     *  @throws DepotUnavailableException when the connections cannot be listed */
+    public boolean isVisible(String connection, String userEmail) {
+        return visibleConnections(userEmail).stream().anyMatch(c -> connection.equals(c.id()));
+    }
+
     private List<DepotConnection> visibleConnections(String userEmail) {
         List<DepotConnection> connections;
         try {

@@ -46,7 +46,7 @@ mirroring the watchlist path's `WatchlistCurrencyMapper`.
 ## Executor
 
 Operator seam for the guarded paper-trading executor agent (slice 1). These
-three endpoints sit behind Cloudflare Access like the rest of `/api/**` (no
+endpoints sit behind Cloudflare Access like the rest of `/api/**` (no
 bearer token) and are only registered when `dracul.executor.enabled=true`.
 The tool + completion webhooks the agent itself calls are documented
 separately under "Executor Webhooks" below.
@@ -59,6 +59,8 @@ separately under "Executor Webhooks" below.
 | GET | `/api/executor/calibration` | Brier calibration — executor overall + per-hunter |
 | GET | `/api/executor/behavior` | Veto precision, hard-exit latency, whipsaw, stop-basis comparison, slippage |
 | GET | `/api/executor/metrics/versions` | Outcome metrics grouped by `(source_agent, agent_version, rule_version)`, with an insufficient-sample gate |
+| GET | `/api/executor/pnl/strigoi` | Realized + open P&L in EUR per strigoi (`source_agent`), with trade count, hit rate and Σ R |
+| GET | `/api/executor/pnl/strigoi/{name}` | The same summary for one strigoi plus its trades |
 
 ### `POST /api/executor/signals`
 
@@ -396,6 +398,71 @@ Response (200):
     {"agent": "gropar", "agent_version": "2", "rule_version": "v4", "decisions": 6,
      "first_at": "2026-07-05T00:00:00Z", "last_at": "2026-07-10T00:00:00Z",
      "avg_return": -0.1, "hit_rate": 0.33, "insufficient_sample": true}
+  ]
+}
+```
+
+### `GET /api/executor/pnl/strigoi` and `GET /api/executor/pnl/strigoi/{name}`
+
+These endpoints are read-only and need no new table. They return the money result of the executor's book per hunter.
+
+**Query and access**
+- `connection` is optional. The default is `dracul.executor.connection`.
+- The same live-visibility gate as `/api/depots` applies: an invisible or unknown connection returns `404`, and Agora being unable to list connections returns `503`.
+
+**Which positions count**
+- Positions are grouped by `executor_position.source_agent`. A null `source_agent` goes into the group `unknown`.
+- A trade is a `CLOSED` row, or an `OPEN` row whose entry has filled.
+- `CANCELLED` rows (entries that never filled) and unfilled `OPEN` rows are excluded.
+
+**Realized (`realizedEur`)**
+- It is the sum over the TRIM legs of `(price − leg entry) × qty_closed`. These are `decision_log` rows with `action = 'TRIM'`.
+  - The leg entry is the TRIM's `entry_price`, else the position's `entry_price`.
+  - When a TRIM has no `price`, the `TRIM_FILL` row with the same `order_id` supplies `price` and `qty`.
+- CLOSED rows add the final leg `(exit_price − entry_price) × qty`.
+- This is the same leg model as the outcome batch job's quantity-weighted R. Trims of an open position count as realized.
+
+**Open (`unrealizedEur`, OPEN rows only)**
+- It is `(current price − entry_price) × qty`.
+- The current price is the broker's per-unit `marketPrice` (Agora `get_positions`), else the last close (`get_indicators`), else `null`.
+
+**Amounts and flags**
+- Amounts are computed in the instrument currency (`dracul.executor.instrument-currency`) and converted to EUR at the **current** rate (`fxBasis: "current"`). Historical rates are not stored.
+- A missing figure is `null` with a reason in `flags`, never `0`:
+  - `INCOMPLETE_LEGS`: a leg without a price or quantity
+  - `NO_PRICE`: no current price
+  - `NO_FX`: no EUR rate
+- Summary sums skip `null` amounts. `flaggedTrades` counts the trades that carry a flag.
+
+**Summary figures**
+- `wins` and `losses` follow the sign of the realized amount. `0` counts as neither.
+- `hitRate = wins / closedTrades`, and it is `null` without a closed trade.
+- `sumR` is the sum of `executor_position.realized_r` of closed trades (the final-leg R).
+- An unknown `{name}` returns an empty detail (zero summary, `trades: []`), not `404`.
+- The detail sorts trades OPEN first, then CLOSED by close date descending.
+
+```json
+{
+  "connection": "depot-1", "currency": "EUR", "fxBasis": "current",
+  "strigoi": [
+    {"strigoi": "strigoi-example", "closedTrades": 4, "wins": 3, "losses": 1, "hitRate": 0.75,
+     "realizedEur": 120.50, "unrealizedEur": -30.00, "totalEur": 90.50, "sumR": 2.4,
+     "openPositions": 1, "openCostEur": 500.00, "flaggedTrades": 0}
+  ]
+}
+```
+
+Detail (`/strigoi/{name}`):
+
+```json
+{
+  "connection": "depot-1", "currency": "EUR", "fxBasis": "current",
+  "summary": {"strigoi": "strigoi-example", "closedTrades": 1, "...": "as above"},
+  "trades": [
+    {"positionId": 101, "symbol": "ACME", "status": "OPEN", "entryDate": "2026-09-14",
+     "exitDate": null, "qty": 12, "entryPrice": 41.20, "exitPrice": null, "currency": "USD",
+     "realizedEur": 0.00, "unrealizedEur": null, "r": null, "exitReason": null,
+     "flags": ["NO_PRICE"]}
   ]
 }
 ```

@@ -702,6 +702,21 @@ public class ExecutorPositionRepository {
                 .list();
     }
 
+    /** OPEN and CLOSED rows of {@code connection}, newest entry first — the strigoi P&L book
+     *  (spec 2026-10-06). CANCELLED rows are entries that never filled and are not trades;
+     *  {@code StrigoiPnlCalculator.isTrade} additionally drops OPEN rows whose entry has not
+     *  filled. */
+    public List<ExecutorPosition> findBookForPnl(String connection) {
+        return jdbc.sql("""
+                SELECT * FROM executor_position
+                WHERE connection = :conn AND status IN ('OPEN', 'CLOSED')
+                ORDER BY entry_date DESC, id DESC
+                """)
+                .param("conn", connection)
+                .query(this::mapRow)
+                .list();
+    }
+
     public int countOpen() {
         return jdbc.sql("SELECT count(*) FROM executor_position WHERE status = 'OPEN'")
                 .query(Integer.class)

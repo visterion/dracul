@@ -499,4 +499,20 @@ class DepotServiceTest {
         DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS, 60);
         assertThat(service.depot("depot-nope", "owner@example.com", false)).isNull();
     }
+
+    @Test void isVisibleAppliesTheLiveGateWithoutFetchingTheDepot() {
+        AgoraDepotClient depotClient = Mockito.mock(AgoraDepotClient.class);
+        when(depotClient.listConnections()).thenReturn(List.of(
+                new DepotConnection("depot-1", "saxo", "sim", "connected", "2026-07-11T10:00:00Z"),
+                new DepotConnection("depot-live", "saxo", "live", "connected", "2026-07-11T10:00:00Z")));
+        DepotService service = new DepotService(depotClient, Mockito.mock(AgoraClient.class), noopFx(),
+                LIVE_EMAILS, 60);
+
+        assertThat(service.isVisible("depot-1", "someone@example.com")).isTrue();
+        assertThat(service.isVisible("depot-live", "someone@example.com")).isFalse();
+        assertThat(service.isVisible("depot-live", "owner@example.com")).isTrue();
+        assertThat(service.isVisible("depot-unknown", "owner@example.com")).isFalse();
+        Mockito.verify(depotClient, Mockito.never()).positions(any());
+        Mockito.verify(depotClient, Mockito.never()).account(any());
+    }
 }
