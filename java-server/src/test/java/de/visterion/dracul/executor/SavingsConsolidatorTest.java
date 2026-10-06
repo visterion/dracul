@@ -852,4 +852,171 @@ class SavingsConsolidatorTest {
                 .startsWith("savings-plan escalation").contains("code=CONSOLIDATE_UNPROTECTED")
                 .contains("cover_only_10_of_bp_qty_19"));
     }
+
+    /** §5.2 step 3a: the child stop filled inside the add's session and took every add share —
+     *  one TRIM (SAVINGS_WINDOW_STOP, entry_price = add fill), row WINDOW_STOPPED, no stop work. */
+    @Test
+    void aChildStopThatTookEveryAddShareIsAWindowStopWithOneTrim() {
+        var r = placedRow();
+        gateway.seedOrder(liveStop("stop-1", "TECHA", "10", "65.00"));
+        gateway.seedOrder(filledParent("brk-9", "sp-1-202611", "TECHA", "9", "112.20"));
+        gateway.seedOrder(SavingsFixtures.filledStop("child-9", "TECHA", "9", "90.00"));
+        broker("10", "100");
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(gateway.ops).isEmpty();
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.WINDOW_STOPPED);
+        assertThat(row(r.id).windowStopQty()).isEqualByComparingTo("9");
+        assertThat(row(r.id).fillQty()).isEqualByComparingTo("9");
+        ArgumentCaptor<DecisionLog> c = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo, atLeast(1)).insert(c.capture());
+        List<DecisionLog> trims = c.getAllValues().stream().filter(d -> "TRIM".equals(d.action())).toList();
+        assertThat(trims).singleElement().satisfies(t -> {
+            assertThat(t.reasonCode()).isEqualTo("SAVINGS_WINDOW_STOP");
+            assertThat(t.orderJson().path("qty_closed").decimalValue()).isEqualByComparingTo("9");
+            assertThat(t.orderJson().path("price").decimalValue()).isEqualByComparingTo("90.00");
+            assertThat(t.orderJson().path("entry_price").decimalValue()).isEqualByComparingTo("112.20");
+            assertThat(t.orderJson().path("position_id").asLong()).isEqualTo(1L);
+        });
+        assertThat(savingsRepo.carryOf(1)).as("no refund on a window stop").isEqualByComparingTo("0");
+    }
+
+    @Test
+    void anUnexplainedShortfallEscalatesThenConsolidatesOnTheBrokerQty() {
+        var r = placedRow();
+        legStops();
+        gateway.seedOrder(filledParent("brk-9", "sp-1-202611", "TECHA", "9", "112.20"));
+        broker("16", "104");
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(reasonCodes()).contains("SAVINGS_QTY_UNEXPLAINED");
+        assertThat(gateway.ops).containsExactly("cancel:stop-1", "cancel:child-9", "place:16@67.6");
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.CONSOLIDATED);
+        assertThat(row(r.id).fillQty()).isEqualByComparingTo("9");
+        assertThat(row(r.id).fillPrice()).isEqualByComparingTo("112.20");
+    }
+
+    @Test
+    void theWindowStopMarkerPreventsASecondTrim() {
+        var r = placedRow();
+        r.windowStopQty = new BigDecimal("3");
+        legStops();
+        gateway.seedOrder(filledParent("brk-9", "sp-1-202611", "TECHA", "9", "112.20"));
+        gateway.seedOrder(SavingsFixtures.filledStop("x-3", "TECHA", "3", "95.00"));
+        broker("16", "104");
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        ArgumentCaptor<DecisionLog> c = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo, atLeast(1)).insert(c.capture());
+        assertThat(c.getAllValues()).noneMatch(d -> "TRIM".equals(d.action()));
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.CONSOLIDATED);
+    }
+
+    /** §5.1 global rule (R3 M5, R4 Minor 1): pending exit — cancel the parent, book the filled add
+     *  shares so the flatten sells what the book holds, terminal, no refund; ignores the session gate. */
+    @Test
+    void theGlobalRuleOnAPendingExitBooksFilledSharesAndEndsTheRow() {
+        position = SavingsFixtures.pos(1, "TECHA").pendingExit("HARD_STOP").build();
+        book(position);
+        var r = placedRow();
+        legStops();
+        gateway.seedOrder(filledParent("brk-9", "sp-1-202611", "TECHA", "9", "112.20"));
+        broker("19", "105.77894736842105");
+        savingsRepo.carry.put(1L, new BigDecimal("91.18"));
+
+        consolidator.consolidateStage("c", "run-op", "pass-op", Instant.parse("2026-11-02T23:05:00Z"));
+
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.CLOSED_WITH_POSITION);
+        assertThat(row(r.id).fillQty()).isEqualByComparingTo("9");
+        verify(positionRepo).bookSavingsQtyAndAvg(1L, new BigDecimal("19"), new BigDecimal("105.778947"));
+        verify(legRepo).syncLegQty(10L, new BigDecimal("19"));
+        assertThat(savingsRepo.carryOf(1)).isEqualByComparingTo("91.18");
+        assertThat(gateway.protectiveStops).isEmpty();
+    }
+
+    /** §6.2: a catastrophe-flagged position with an add in flight — the parent is cancelled and the row
+     *  ends BEFORE the trigger filter, so the catastrophe flatten runs in the same pass. */
+    @Test
+    void aCatastropheFlaggedPositionEndsItsRowAndCancelsTheParent() {
+        position = SavingsFixtures.pos(1, "TECHA").catastrophe("synthetic fraud").build();
+        book(position);
+        var r = placedRow();
+        legStops();
+        gateway.seedOrder(liveParent("brk-9", "sp-1-202611", "TECHA", "9", "112.20"));
+        broker("10", "100");
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        assertThat(gateway.ops).containsExactly("cancel:brk-9");
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.CLOSED_WITH_POSITION);
+        verify(positionRepo, never()).bookSavingsQtyAndAvg(anyLong(), any(), any());
+    }
+
+    InMemorySavingsPlanRepository.Row emergencyRow() {
+        InMemorySavingsPlanRepository.Row r = placedRow();
+        r.status = SavingsBuy.EMERGENCY_EXIT;
+        r.fillQty = new BigDecimal("9");
+        r.fillPrice = new BigDecimal("112.20");
+        return r;
+    }
+
+    /** §6.1 row 2 (D8) next closed pass: cancel ONLY the BUY parent, then the hard-exit path; terminal in
+     *  the same step; never re-flattened afterwards. */
+    @Test
+    void theEmergencyStepCancelsOnlyTheBuyParentFlattensAndNeverRepeats() {
+        position = SavingsFixtures.pos(1, "TECHA").qty("9").entry("112.20").stop("child-9").build();
+        book(position);
+        var r = emergencyRow();
+        gateway.seedOrder(liveStop("child-9", "TECHA", "9", "89.76"));
+        gateway.seedOrder(liveParent("brk-9", "sp-1-202611", "TECHA", "9", "112.20"));
+        broker("9", "112.20");
+        when(hardTrigger.hardExit(any(), any(), any(), any())).thenReturn(HardTriggerService.HardExitOutcome.SUBMITTED);
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+        consolidator.consolidateStage("c", "run-3", "pass-3", NEXT_DAY.plusSeconds(600));
+
+        assertThat(gateway.ops).containsExactly("cancel:brk-9");
+        verify(hardTrigger, org.mockito.Mockito.times(1)).hardExit(eq(position), eq(new BigDecimal("110")),
+                org.mockito.ArgumentMatchers.startsWith("SAVINGS_EMERGENCY"), eq("run-2"));
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.CLOSED_WITH_POSITION);
+        assertThat(lines("savings-plan broker")).anySatisfy(l -> assertThat(l).contains("op=flatten").contains("outcome=SUBMITTED"));
+    }
+
+    @Test
+    void aRejectedEmergencyFlattenStaysAndAGonePositionWaitsForReconcile() {
+        position = SavingsFixtures.pos(1, "TECHA").qty("9").entry("112.20").stop("child-9").build();
+        book(position);
+        var r = emergencyRow();
+        gateway.seedOrder(liveStop("child-9", "TECHA", "9", "89.76"));
+        broker("9", "112.20");
+        when(hardTrigger.hardExit(any(), any(), any(), any()))
+                .thenReturn(HardTriggerService.HardExitOutcome.FAILED, HardTriggerService.HardExitOutcome.POSITION_GONE);
+
+        assertThat(consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY)).containsEntry("escalated", 1);
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.EMERGENCY_EXIT);
+        assertThat(gateway.ops).isEmpty();
+
+        assertThat(consolidator.consolidateStage("c", "run-3", "pass-3", NEXT_DAY)).containsEntry("waiting-reconcile", 1);
+        assertThat(row(r.id).status()).isEqualTo(SavingsBuy.EMERGENCY_EXIT);
+    }
+
+    @Test
+    void theEmergencyStepResyncsTheBookWhenTheBrokerQtyChanged() {
+        position = SavingsFixtures.pos(1, "TECHA").qty("9").entry("112.20").stop("child-9").build();
+        ExecutorPosition resynced = SavingsFixtures.pos(1, "TECHA").qty("7").entry("112.20").stop("child-9").build();
+        when(positionRepo.findById(1L)).thenReturn(position, resynced);
+        when(legRepo.findOpenByPosition(1L)).thenReturn(List.of(SavingsFixtures.leg(position)));
+        emergencyRow();
+        broker("7", "112.20");
+        when(hardTrigger.hardExit(any(), any(), any(), any())).thenReturn(HardTriggerService.HardExitOutcome.SUBMITTED);
+
+        consolidator.consolidateStage("c", "run-2", "pass-2", NEXT_DAY);
+
+        verify(positionRepo).syncQty(1L, new BigDecimal("7"));
+        verify(legRepo).syncLegQty(10L, new BigDecimal("7"));
+        verify(hardTrigger).hardExit(eq(resynced), any(), any(), any());
+    }
 }

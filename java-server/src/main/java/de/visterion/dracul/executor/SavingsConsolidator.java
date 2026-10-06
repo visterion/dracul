@@ -6,6 +6,7 @@ import de.visterion.dracul.executor.broker.BrokerPosition;
 import de.visterion.dracul.executor.broker.BrokerRejectedException;
 import de.visterion.dracul.executor.broker.BrokerUnavailableException;
 import de.visterion.dracul.executor.broker.ExecutionGateway;
+import de.visterion.dracul.executor.broker.OrderStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -26,6 +27,7 @@ import java.util.TreeMap;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import static de.visterion.dracul.executor.SavingsBuy.CLOSED_WITH_POSITION;
 import static de.visterion.dracul.executor.SavingsBuy.CONSOLIDATED;
 import static de.visterion.dracul.executor.SavingsBuy.CONSOLIDATING;
 import static de.visterion.dracul.executor.SavingsBuy.EMERGENCY_EXIT;
@@ -34,6 +36,7 @@ import static de.visterion.dracul.executor.SavingsBuy.PLACED;
 import static de.visterion.dracul.executor.SavingsBuy.PLACING;
 import static de.visterion.dracul.executor.SavingsBuy.REJECTED;
 import static de.visterion.dracul.executor.SavingsBuy.UNPROTECTED;
+import static de.visterion.dracul.executor.SavingsBuy.WINDOW_STOPPED;
 import static de.visterion.dracul.executor.SavingsPlanAudit.fields;
 import static de.visterion.dracul.executor.SavingsPlanAudit.plain;
 
@@ -159,7 +162,12 @@ public class SavingsConsolidator {
     }
 
     String handleRow(SavingsBuy row, ExecutorPosition p, Ctx c) {
-        if (EMERGENCY_EXIT.equals(row.status())) return "unchanged";        // Task 9: the D8 flatten step
+        // §5.1 global rule, FIRST (R3 M5), and the §6.2 catastrophe ordering — it only ends things,
+        // so it ignores the session gate.
+        if (!"OPEN".equals(p.status()) || p.pendingExitReason() != null || p.catastropheReason() != null) {
+            return globalRule(row, p, c);
+        }
+        if (EMERGENCY_EXIT.equals(row.status())) return emergencyExit(row, p, c);
         if (PLACING.equals(row.status())) return adopt(row, p, c);
         if (!SavingsCalendar.sessionPassed(row.createdAt(), c.now())) return "waiting-session-gate";
         return consolidate(row, p, c);
@@ -229,6 +237,13 @@ public class SavingsConsolidator {
             return "broker-position-missing";
         }
         BigDecimal bpQty = b.qty();
+        // §5.2 step 3a (moved here from reconcile, R4 M3): a shortfall against leg 1 + the filled add.
+        BigDecimal parentFilled = parentRows(b, row).map(BrokerOrder::filledQty).filter(Objects::nonNull)
+                .max(java.util.Comparator.naturalOrder()).orElse(BigDecimal.ZERO);
+        BigDecimal addFilled = parentFilled.signum() > 0 ? parentFilled
+                : bpQty.subtract(row.qtyBefore()).max(BigDecimal.ZERO);
+        BigDecimal missing = row.qtyBefore().add(addFilled).subtract(bpQty);
+        if (missing.signum() > 0) return windowStop(row, p, b, c, bpQty, addFilled, missing);
         BigDecimal fillQty = bpQty.subtract(row.qtyBefore());
         if (fillQty.signum() <= 0) return expire(row, p, b, c);
         return consolidateFilled(row, p, b, c, bpQty, fillQty, null);
@@ -373,6 +388,204 @@ public class SavingsConsolidator {
                     + " and stop " + placed.orderId() + " but no leg was updated");
         }
         return Boolean.TRUE.equals(done) ? "consolidated" : "unchanged";
+    }
+
+    // ---- §5.2 step 3a, §5.1 global rule, §6.1 row 2 (D8) ------------------------------------------
+
+    /** §5.2 step 3a: write the window-stop TRIM exactly once (CAS on window_stop_qty, same transaction),
+     *  then WINDOW_STOPPED if no add share remains, else consolidate on the broker qty. */
+    String windowStop(SavingsBuy row, ExecutorPosition p, Broker b, Ctx c, BigDecimal bpQty,
+            BigDecimal addFilled, BigDecimal missing) {
+        RowRef ref = RowRef.of(row);
+        BigDecimal addPrice = parentRows(b, row).map(BrokerOrder::avgFillPrice).filter(Objects::nonNull)
+                .findFirst().orElse(null);
+        if (row.windowStopQty() == null) {
+            BrokerOrder stopFill = windowStopFill(row, p, c);
+            if (stopFill != null) {
+                boolean shrinkLeg1 = bpQty.compareTo(row.qtyBefore()) < 0;
+                List<ExecutorPositionLeg> legs = shrinkLeg1 ? legRepo.findOpenByPosition(p.id()) : List.of();
+                ExecutorPositionLeg leg = legs.size() == 1 ? legs.getFirst() : null;
+                Boolean marked = tx.execute(status -> {
+                    if (!savingsRepo.markWindowStop(row.id(), missing)) {
+                        status.setRollbackOnly();
+                        return false;
+                    }
+                    audit.record(c.runId(), p.symbol(), "TRIM", "SAVINGS_WINDOW_STOP",
+                            fields("qty_closed", missing, "qty_remaining", bpQty, "price", stopFill.avgFillPrice(),
+                                    "position_id", p.id(), "entry_price", addPrice, "savings_buy_id", row.id(),
+                                    "order_id_filled", stopFill.orderId()),
+                            "a stop filled inside the add's session: " + plain(missing) + " shares at "
+                                    + plain(stopFill.avgFillPrice()));
+                    if (shrinkLeg1) {
+                        positionRepo.syncQty(p.id(), bpQty);
+                        if (leg != null) legRepo.syncLegQty(leg.id(), bpQty);
+                    }
+                    audit.transition(c.runId(), c.pass(), ref, row.status(), row.status(), "SAVINGS_CONSOLIDATE",
+                            "WINDOW_STOP_MARKED", fields("window_stop_qty", missing, "bp_qty", bpQty,
+                                    "qty_before", row.qtyBefore(), "add_filled", addFilled,
+                                    "stop_fill_price", stopFill.avgFillPrice(), "stop_order_id", stopFill.orderId(),
+                                    "leg1_shrunk", shrinkLeg1),
+                            "window-stop TRIM written once; trim_count unchanged");
+                    return true;
+                });
+                if (!Boolean.TRUE.equals(marked)) return "unchanged";
+                if (shrinkLeg1 && leg == null) {
+                    legsNotSingle(row, p, c, legs.size(), "the window stop shrank the position to "
+                            + plain(bpQty) + " but no leg was");
+                }
+            } else if (!audit.escalatedFor("SAVINGS_QTY_UNEXPLAINED", row.id())) {
+                audit.escalate(c.runId(), c.pass(), ref, p.symbol(), "SAVINGS_QTY_UNEXPLAINED", "WARN",
+                        fields("bp_qty", bpQty, "qty_before", row.qtyBefore(), "add_filled", addFilled, "missing", missing),
+                        "the broker holds fewer shares than leg 1 plus the filled add and no stop fill explains it"
+                                + " — consolidating on the broker quantity");
+            }
+        }
+        BigDecimal remainingAdd = bpQty.subtract(row.qtyBefore().min(bpQty));
+        if (remainingAdd.signum() <= 0) {
+            Boolean done = tx.execute(status -> {
+                if (!savingsRepo.finish(row.id(), row.status(), WINDOW_STOPPED, addFilled, addPrice, null, null)) {
+                    status.setRollbackOnly();
+                    return false;
+                }
+                audit.transition(c.runId(), c.pass(), ref, row.status(), WINDOW_STOPPED, "SAVINGS_CONSOLIDATE",
+                        "WINDOW_STOPPED", fields("bp_qty", bpQty, "qty_before", row.qtyBefore(),
+                                "fill_qty", addFilled, "fill_price", addPrice, "window_stop_qty", missing),
+                        "every add share left through a stop inside the session; no carry refund");
+                return true;
+            });
+            return Boolean.TRUE.equals(done) ? "window-stopped" : "unchanged";
+        }
+        return consolidateFilled(row, p, b, c, bpQty, addFilled, addPrice);
+    }
+
+    /** The child's fill by id, else a SELL-stop fill on the symbol since the add (not leg 1's stop). */
+    BrokerOrder windowStopFill(SavingsBuy row, ExecutorPosition p, Ctx c) {
+        List<BrokerOrder> fills = audit.broker(STAGE, c.runId(), c.pass(), "filledOrdersSince",
+                "row=" + row.id() + " since=" + row.createdAt(),
+                () -> gateway.filledOrdersSince(c.connection(), row.createdAt()), l -> "count=" + l.size());
+        if (row.childStopOrderId() != null) {
+            BrokerOrder child = fills.stream().filter(o -> row.childStopOrderId().equals(o.orderId()))
+                    .findFirst().orElse(null);
+            if (child != null) return child;
+        }
+        return fills.stream()
+                .filter(o -> o.status() == OrderStatus.FILLED && p.symbol().equalsIgnoreCase(o.symbol()))
+                .filter(o -> AdoptionCandidates.isStop(o) && AdoptionCandidates.looseSide(o, "sell"))
+                .filter(o -> !Objects.equals(o.orderId(), p.stopOrderId()))
+                .findFirst().orElse(null);
+    }
+
+    /** §5.1 global rule: the position is CLOSED, has a pending exit, or is catastrophe-flagged. */
+    String globalRule(SavingsBuy row, ExecutorPosition p, Ctx c) {
+        Broker b = read(row, p, c);
+        BrokerOrder parent = liveParent(b, row);
+        if (parent != null) {
+            if (!cancel(row, p, c, parent.orderId(), "parent")) {
+                cancelFailed(row, p, c, "global rule: cancel of parent " + parent.orderId() + " failed");
+                return "escalated";
+            }
+            b = read(row, p, c);
+            if (liveParent(b, row) != null) {
+                cancelFailed(row, p, c, "global rule: parent " + parent.orderId() + " still working after its cancel");
+                return "escalated";
+            }
+        }
+        BigDecimal bpQty = b.qty();
+        boolean bookShares = !EMERGENCY_EXIT.equals(row.status()) && "OPEN".equals(p.status())
+                && b.avg() != null && bpQty.compareTo(row.qtyBefore()) > 0;
+        BigDecimal avg = bookShares ? b.avg() : null;
+        BigDecimal fillQty = bookShares ? bpQty.subtract(row.qtyBefore()) : row.fillQty();
+        BigDecimal fillPrice = bookShares ? derivedFillPrice(avg, bpQty, row) : row.fillPrice();
+        String why = !"OPEN".equals(p.status()) ? "position_status=" + p.status()
+                : p.pendingExitReason() != null ? "pending_exit_reason=" + p.pendingExitReason()
+                : "catastrophe_reason=" + p.catastropheReason();
+        boolean parentCancelled = parent != null;
+        List<ExecutorPositionLeg> legs = bookShares ? legRepo.findOpenByPosition(p.id()) : List.of();
+        ExecutorPositionLeg leg = legs.size() == 1 ? legs.getFirst() : null;
+        Boolean done = tx.execute(status -> {
+            if (!savingsRepo.finish(row.id(), row.status(), CLOSED_WITH_POSITION, fillQty, fillPrice, avg, null)) {
+                status.setRollbackOnly();
+                return false;
+            }
+            if (bookShares) {
+                positionRepo.bookSavingsQtyAndAvg(p.id(), bpQty, avg);
+                if (leg != null) legRepo.syncLegQty(leg.id(), bpQty);
+            }
+            audit.transition(c.runId(), c.pass(), RowRef.of(row), row.status(), CLOSED_WITH_POSITION,
+                    "SAVINGS_CONSOLIDATE", "CLOSED_WITH_POSITION",
+                    fields("why", why, "bp_qty", bpQty, "qty_before", row.qtyBefore(), "fill_qty", fillQty,
+                            "fill_price", fillPrice, "booked_add_shares", bookShares,
+                            "parent_cancelled", parentCancelled, "open_legs", bookShares ? legs.size() : null,
+                            "leg_id", leg == null ? null : leg.id()),
+                    "the position is leaving the book — add terminal, no carry refund"
+                            + (bookShares ? "; the filled add shares were booked so the exit sells what the book holds" : ""));
+            return true;
+        });
+        if (Boolean.TRUE.equals(done) && bookShares && leg == null) {
+            legsNotSingle(row, p, c, legs.size(), "the global rule booked the position at qty " + plain(bpQty)
+                    + " but no leg was updated");
+        }
+        return Boolean.TRUE.equals(done) ? "closed-with-position" : "unchanged";
+    }
+
+    /** §6.1 row 2, next closed pass: cancel ONLY the BUY parent (Agora's flatten handles the stops),
+     *  re-sync qty if it changed, then the hard-exit path; terminal in the same step. */
+    String emergencyExit(SavingsBuy row, ExecutorPosition p, Ctx c) {
+        Broker b = read(row, p, c);
+        if (b.bp() == null || b.qty().signum() == 0) return "waiting-reconcile";
+        BrokerOrder parent = liveParent(b, row);
+        if (parent != null) {
+            if (!cancel(row, p, c, parent.orderId(), "parent")) {
+                cancelFailed(row, p, c, "emergency step: cancel of parent " + parent.orderId() + " failed");
+                return "escalated";
+            }
+            b = read(row, p, c);
+            if (liveParent(b, row) != null) {
+                // never flatten while a BUY rests: it could fill into the closed book (R1 M2)
+                cancelFailed(row, p, c, "emergency step: parent " + parent.orderId() + " still working after its cancel");
+                return "escalated";
+            }
+            if (b.bp() == null || b.qty().signum() == 0) return "waiting-reconcile";
+        }
+        BigDecimal bpQty = b.qty();
+        ExecutorPosition current = p;
+        if (p.qty() == null || p.qty().compareTo(bpQty) != 0) {
+            List<ExecutorPositionLeg> legs = legRepo.findOpenByPosition(p.id());
+            ExecutorPositionLeg leg = legs.size() == 1 ? legs.getFirst() : null;
+            positionRepo.syncQty(p.id(), bpQty);
+            if (leg != null) legRepo.syncLegQty(leg.id(), bpQty);
+            ExecutorPosition fresh = positionRepo.findById(p.id());
+            if (fresh != null) current = fresh;
+            audit.transition(c.runId(), c.pass(), RowRef.of(row), EMERGENCY_EXIT, EMERGENCY_EXIT,
+                    "SAVINGS_CONSOLIDATE", "EMERGENCY_QTY_RESYNC", fields("book_qty", p.qty(), "bp_qty", bpQty,
+                            "open_legs", legs.size(), "leg_id", leg == null ? null : leg.id()),
+                    "broker qty changed after the parent cancel; book re-synced before the flatten");
+            if (leg == null) {
+                legsNotSingle(row, p, c, legs.size(), "the emergency step re-synced the position to "
+                        + plain(bpQty) + " but no leg was");
+            }
+        }
+        ExecutorPosition flattenTarget = current;
+        BigDecimal close = close(p.symbol());
+        String measured = "SAVINGS_EMERGENCY: the pre-add emergency stop filled while add " + row.clientRef()
+                + " was in flight — the add shares are sold too (D8)";
+        HardTriggerService.HardExitOutcome out = audit.broker(STAGE, c.runId(), c.pass(), "flatten",
+                "row=" + row.id() + " symbol=" + p.symbol() + " qty=" + plain(bpQty) + " reason=HARD_STOP",
+                () -> hardTrigger.hardExit(flattenTarget, close, measured, c.runId()), o -> "outcome=" + o);
+        if (out == HardTriggerService.HardExitOutcome.SUBMITTED) {
+            if (savingsRepo.finish(row.id(), EMERGENCY_EXIT, CLOSED_WITH_POSITION, null, null, null, null)) {
+                audit.transition(c.runId(), c.pass(), RowRef.of(row), EMERGENCY_EXIT, CLOSED_WITH_POSITION,
+                        "SAVINGS_CONSOLIDATE", "CLOSED_WITH_POSITION",
+                        fields("bp_qty", bpQty, "fill_qty", row.fillQty(), "fill_price", row.fillPrice(),
+                                "exit_reason", "HARD_STOP"),
+                        "D8: the add shares are flattened with the position");
+            }
+            return "emergency-flattened";
+        }
+        if (out == HardTriggerService.HardExitOutcome.POSITION_GONE) {
+            return "waiting-reconcile";   // matrix row 1 in the next reconcile; never a retry here
+        }
+        return "escalated";               // HardTriggerService escalated; stops untouched, retried next pass
     }
 
     // ---- step 6: the two legal orders ---------------------------------------------------------

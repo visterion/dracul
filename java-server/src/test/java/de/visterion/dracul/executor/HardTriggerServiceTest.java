@@ -1,6 +1,7 @@
 package de.visterion.dracul.executor;
 
 import de.visterion.dracul.executor.broker.BrokerRejectedException;
+import de.visterion.dracul.executor.broker.BrokerUnavailableException;
 import de.visterion.dracul.executor.broker.FakeExecutionGateway;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -1033,4 +1034,37 @@ class HardTriggerServiceTest {
         assertThat(row.inputsSnapshot().path("current_r").decimalValue()).isEqualByComparingTo("-0.476190");
     }
 
+    /** Spec 2026-10-06 §6.1 row 2 (D8): the savings consolidator's emergency flatten reuses the hard-exit path. */
+    @Test
+    void hardExitSubmitsAFullFlattenAsHardStop() {
+        ExecutorPosition p = conviction(50L, "TECHA", 0, null, null, null);
+
+        HardTriggerService.HardExitOutcome out = service.hardExit(p, new BigDecimal("60"),
+                "SAVINGS_EMERGENCY: synthetic", "run1");
+
+        assertThat(out).isEqualTo(HardTriggerService.HardExitOutcome.SUBMITTED);
+        assertThat(gateway.flattenFractions).containsExactly(BigDecimal.ONE);
+        verify(positionRepo).markPendingExit(org.mockito.ArgumentMatchers.eq(50L),
+                org.mockito.ArgumentMatchers.eq("HARD_STOP"), any(), any(), org.mockito.ArgumentMatchers.eq(NOW));
+        DecisionLog row = onlyRow();
+        assertThat(row.action()).isEqualTo("LOG_HARD_EXIT");
+        assertThat(row.vetoResults().get(0).path("measured").asString()).startsWith("SAVINGS_EMERGENCY");
+    }
+
+    @Test
+    void hardExitReportsAGonePositionAndAFailure() {
+        ExecutorPosition p = conviction(51L, "TECHB", 0, null, null, null);
+        gateway.rejectFlattenWith = new BrokerRejectedException("gone", "NO_POSITION", List.of());
+        assertThat(service.hardExit(p, null, "SAVINGS_EMERGENCY: synthetic", "run1"))
+                .isEqualTo(HardTriggerService.HardExitOutcome.POSITION_GONE);
+
+        gateway.rejectFlattenWith = new BrokerRejectedException("no", "MARKET_CLOSED", List.of());
+        assertThat(service.hardExit(p, null, "SAVINGS_EMERGENCY: synthetic", "run1"))
+                .isEqualTo(HardTriggerService.HardExitOutcome.FAILED);
+
+        gateway.rejectFlattenWith = new BrokerUnavailableException("down");
+        assertThat(service.hardExit(p, null, "SAVINGS_EMERGENCY: synthetic", "run1"))
+                .isEqualTo(HardTriggerService.HardExitOutcome.FAILED);
+        verify(positionRepo, never()).markPendingExit(org.mockito.ArgumentMatchers.anyLong(), any(), any(), any(), any());
+    }
 }

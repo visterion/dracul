@@ -321,6 +321,33 @@ public class HardTriggerService {
         telegram.notifyAlert(p.symbol(), "TARGET_HALF_UNCONFIRMED", "CRITICAL", text);
     }
 
+    /** Outcome of a code-initiated full exit outside {@link #apply} (spec 2026-10-06 §6.1 row 2, D8). */
+    public enum HardExitOutcome { SUBMITTED, POSITION_GONE, FAILED }
+
+    /**
+     * Full flatten through the SAME hard-exit path {@link #apply} uses — flatten, escalation names,
+     * {@code markPendingExit} and the {@code LOG_HARD_EXIT} row — with reason {@code HARD_STOP}. The
+     * Tech-Sparplan consolidator calls it for D8 (the pre-add emergency stop filled while an add was in
+     * flight: the add shares are sold too). Never throws on a broker failure.
+     */
+    public HardExitOutcome hardExit(ExecutorPosition p, BigDecimal close, String measured, String runId) {
+        Trigger trigger = new Trigger("HARD_STOP", "STOP_BREACH", measured);
+        Instant detectedAt = clock.instant();
+        FlattenAttempt attempt = attemptFlatten(p, trigger, runId);
+        if (attempt.result() == null) {
+            return attempt.positionGone() ? HardExitOutcome.POSITION_GONE : HardExitOutcome.FAILED;
+        }
+        recordHardExit(p, close, close == null ? null : computeR(p, close), trigger, runId, detectedAt,
+                attempt.result());
+        return HardExitOutcome.SUBMITTED;
+    }
+
+    private record FlattenAttempt(CloseResult result, boolean positionGone) {}
+
+    private CloseResult flattenOrEscalate(ExecutorPosition p, Trigger trigger, String runId) {
+        return attemptFlatten(p, trigger, runId).result();
+    }
+
     /**
      * Attempts to flatten the position; on any failure, escalates via the decision log and
      * returns null so the book is left untouched — the broker is never replaced by a guess.
@@ -340,9 +367,9 @@ public class HardTriggerService {
      * broker event, and while the two paths named it differently, a query for
      * {@code BROKER_REJECTED} found one of them and silently missed the other.
      */
-    private CloseResult flattenOrEscalate(ExecutorPosition p, Trigger trigger, String runId) {
+    private FlattenAttempt attemptFlatten(ExecutorPosition p, Trigger trigger, String runId) {
         try {
-            return gateway.flatten(p.connection(), p.symbol(), BigDecimal.ONE);
+            return new FlattenAttempt(gateway.flatten(p.connection(), p.symbol(), BigDecimal.ONE), false);
         } catch (BrokerRejectedException e) {
             // The wire code also goes into inputs_snapshot, not only into the prose: one
             // reason_code covering every rejection is only queryable if the code that
@@ -354,18 +381,18 @@ public class HardTriggerService {
                 escalate(p, runId, "POSITION_ALREADY_GONE",
                         "position already gone during hard-trigger flatten: " + e.getMessage(),
                         inputs);
-            } else {
-                escalate(p, runId, "BROKER_REJECTED",
-                        "broker rejected hard-trigger flatten ["
-                                + (e.rejectCode() == null ? "no reject code" : e.rejectCode())
-                                + "]: " + e.getMessage(),
-                        inputs);
+                return new FlattenAttempt(null, true);
             }
-            return null;
+            escalate(p, runId, "BROKER_REJECTED",
+                    "broker rejected hard-trigger flatten ["
+                            + (e.rejectCode() == null ? "no reject code" : e.rejectCode())
+                            + "]: " + e.getMessage(),
+                    inputs);
+            return new FlattenAttempt(null, false);
         } catch (BrokerUnavailableException e) {
             escalate(p, runId, "BROKER_UNAVAILABLE",
                     "broker unavailable during hard-trigger flatten: " + e.getMessage());
-            return null;
+            return new FlattenAttempt(null, false);
         }
     }
 
