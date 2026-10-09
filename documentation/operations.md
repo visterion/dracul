@@ -895,6 +895,27 @@ row (`action='ESCALATE'`) plus a Telegram CRITICAL alert.
   line per stage and pass, with the reason when nothing happened) and alarm on `savings-plan
   escalation`, `savings-plan stage failed` and `savings-plan row failed`.
 
+### Tech-Conviction v2 (exec-v1.4, strigoi-tech prompt 2.0.0, executor prompt 1.8.0, 2026-10) — rollout and what to watch
+
+- Before deploying: check that no environment pins `DRACUL_EXECUTOR_RULE_VERSION` to an older tag
+  (`exec-v1.3` or earlier) and that `DRACUL_EXECUTOR_CONVICTION_TAKE_PROFIT_ENABLED` is either
+  absent or explicitly `false` — the new default is "hold the winners" (no take-profit), and a
+  pinned old rule-version tag would mask the bump.
+- After the restart, expect a log line of the shape `CONVICTION exit profile bound: emergency stop
+  0.35, take-profit disabled (hold)` (`ConvictionProfileConfig`, logged once at startup) confirming
+  the switch bound to its default-off state.
+- Because `prompts/archive/strigoi-tech/1.0.0.md` and `prompts/archive/executor/1.7.0.md` ship with
+  this release, `AgentDefinitionBootstrap` should reconcile both agents' stored prompts to the new
+  bundled bodies automatically (see "Prompt changes propagate automatically" above) — expect the
+  `reconciled to the bundled default` INFO line for `strigoi-tech` and `executor`, and **no**
+  `diverges from bundled` WARN for either. If the WARN appears anyway (a stored prompt was edited
+  through the UI, or an older archive entry is missing), fall back to the manual
+  `/api/settings/agents/<name>/definition/reset` endpoint for that agent (see "Post-deploy: agent
+  definition resets" above).
+- `rule_versions` gains a new row for `exec-v1.4` on first boot (insert-if-absent, same mechanism as
+  every prior `exec-v1.x` bump) — verify it alongside the existing history rows rather than expecting
+  an in-place edit.
+
 ### `UNBOOKED_ROUND_TRIP`
 
 A signal's clientRef carries both an entry fill and an exit fill, the broker holds

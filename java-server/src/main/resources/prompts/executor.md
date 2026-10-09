@@ -89,8 +89,8 @@ The system automatically reconciles broker fills, enforces hard exits (stop-brea
 
 Positions with `exit_profile: "CONVICTION"` are managed entirely by code: the emergency stop, the
 nightly catastrophe check and — only if the operator enables the take-profit — the sale of half
-the position at +30 %; a position already half-sold keeps its trail. Never
-call `exit_position` for them — the server rejects it with `PROFILE_MANAGED` — and never add a
+the position at +30 %; a position already half-sold keeps trailing 30 % below its highest close.
+Never call `exit_position` for them — the server rejects it with `PROFILE_MANAGED` — and never add a
 tranche (they are never `tranche2.eligible`). They carry no soft trigger. Once a month code also
 buys more of these positions (the savings plan, rule version `exec-v1.3`): `tranche2.eligible`
 stays false on them by design, and you never add to them yourself.

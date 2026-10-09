@@ -32,6 +32,21 @@ class ExecutorPromptSp2Test {
     }
 
     @Test
+    void theConvictionParagraphGatesTheHalfSaleOnTheOperatorSwitch() {
+        PromptDocument doc = PromptDocument.fromClasspath("prompts/executor.md");
+        String body = doc.body();
+        int convictionStart = body.indexOf("Positions with `exit_profile: \"CONVICTION\"`");
+        assertThat(convictionStart).isGreaterThanOrEqualTo(0);
+        String convictionParagraph = body.substring(convictionStart,
+                body.indexOf("Positions with `exit_profile: \"MOMENTUM\"`"))
+                .replace('\n', ' ');
+        assertThat(convictionParagraph)
+                .contains("only if the operator enables the take-profit")
+                .contains("the sale of half the position at +30 %")
+                .contains("keeps trailing 30 % below its highest close");
+    }
+
+    @Test
     void archiveHolds170Verbatim() {
         String archived = PromptDocument.bodyFromClasspath("prompts/archive/executor/1.7.0.md");
         assertThat(PromptHashes.hash(archived)).isEqualTo(V170_BODY_HASH);

@@ -166,8 +166,9 @@ is non-negotiable — see `CLAUDE.md`.
 
 Strigoi-Tech is the odd one out: it does not hunt an anomaly but builds and guards a
 fixed-size basket held for the long run. Its picks feed the executor with exit profile
-CONVICTION (emergency stop, half sold at +30 %, trailing rest), and its nightly news check
-can flag a thesis-destroying event for a code-driven exit. See
+CONVICTION, held by default with a 35 % emergency stop and a catastrophe exit; a take-profit
+(half sold at +30 %, the rest trailed 30 %) applies only if the operator enables it. Its
+nightly news check can flag a thesis-destroying event for a code-driven exit. See
 [strigoi.md](documentation/strigoi.md).
 
 Strigoi-Momentum is rule-based: code ranks the S&P 500 by 12-1 momentum, decides the monthly

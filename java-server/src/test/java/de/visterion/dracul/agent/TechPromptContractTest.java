@@ -45,6 +45,11 @@ class TechPromptContractTest {
     }
 
     @Test
+    void promptInstructsTwelveMonthHorizonAndNoLongerQuotesTheHalfSaleFigure() {
+        assertThat(prompt).contains("`12m`").doesNotContain("+30 %");
+    }
+
+    @Test
     void onlyPreyIsRequiredAndKillCriteriaStaysMandatory() {
         List<String> required = new ArrayList<>();
         schema.path("required").forEach(r -> required.add(r.asString()));
