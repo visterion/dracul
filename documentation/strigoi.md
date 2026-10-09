@@ -581,12 +581,32 @@ cite them as such.
 
 ## Strigoi-Tech: conviction basket
 
-`strigoi-tech` (disabled by default, `dracul.strigoi.tech.enabled`) builds and guards a basket
-of large technology and "future" companies held for the long run. Its edge is breadth and
-staying invested, not entry timing: every name is bought once at a fixed size and exited only
-by code (exit profile CONVICTION, see "Executor" below). The agent runs on the reasoning tier,
-22:30 UTC Mon–Fri (after the US close, before the executor), with up to 40 turns / 1800 s, and
-has three tools: `fetch_tech_book`, `check_tech_candidate` and the shared `search`.
+`strigoi-tech` (disabled by default, `dracul.strigoi.tech.enabled`, prompt version **2.0.0**)
+builds and guards a basket of large technology and "future" companies held for the long run.
+It is the owner's active satellite next to a private, non-Dracul core (an MSCI World savings
+plan plus a semiconductor ETF and a US-infrastructure ETF) — the basket only earns its place by
+holding companies that plausibly beat the MSCI World over a decade, which is the benchmark the
+prompt names. Its edge is breadth and staying invested, not entry timing: every name is bought
+once at a fixed size and exited only by code (exit profile CONVICTION, see "Executor" below).
+The agent runs on the reasoning tier, 22:30 UTC Mon–Fri (after the US close, before the
+executor), with up to 40 turns / 1800 s, and has three tools: `fetch_tech_book`,
+`check_tech_candidate` and the shared `search`.
+
+The themes are the LLM's judgement, not the data provider's industry label: AI and compute
+beneficiaries beyond the chip makers (platforms, cloud, cybersecurity, data/AI software that
+sells outcomes), pharma and biotech (including AI-driven drug discovery), medical technology,
+robotics and automation, power generation including nuclear and grid-adjacent electrification,
+space and satellite communication, electrification and batteries. Because the owner's core
+already holds a semiconductor ETF and a US-infrastructure ETF, the prompt asks the LLM to keep
+at most 2 basket names (open + pending + new picks) that are semiconductor/semiconductor-
+equipment makers or US construction/engineering-infrastructure companies — this overlap cap is
+**prompt-level only**, not enforced by `TechEligibility` or the completion cap in this slice.
+For every candidate the prompt also asks: is this business an AI beneficiary or an AI victim
+(a company whose product AI agents now replace, e.g. per-seat software for work AI now does, is
+a victim)? And it asks the LLM to read the `fundamentals` fields `check_tech_candidate` returns
+(`peTtm`, `fcfPerShare`, `priceToBook`, `revenueGrowthYoy`, `epsGrowthYoy`, `grossMargin`,
+`netMargin` — the serialised `BasicFinancials` record fields, verbatim) against the price: a
+great business priced for perfection gets a lower `confidence` or is skipped.
 
 ### Tools
 

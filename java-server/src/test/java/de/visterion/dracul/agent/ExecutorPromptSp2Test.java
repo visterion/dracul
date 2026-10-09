@@ -10,11 +10,12 @@ class ExecutorPromptSp2Test {
     private static final String V140_BODY_HASH = "p-b57045e8ccdc";  // executor 1.4.0
     private static final String V150_BODY_HASH = "p-48b0265eb57f";  // executor 1.5.0
     private static final String V160_BODY_HASH = "p-feaf49982b1d";  // executor 1.6.0
+    private static final String V170_BODY_HASH = "p-e8b7afa87b66";  // executor 1.7.0
 
     @Test
-    void executorPromptIs170WithTheSavingsPlanNote() {
+    void executorPromptIs180WithTheConditionalConvictionTakeProfit() {
         PromptDocument doc = PromptDocument.fromClasspath("prompts/executor.md");
-        assertThat(doc.version()).isEqualTo("1.7.0");
+        assertThat(doc.version()).isEqualTo("1.8.0");
         String body = doc.body();
         assertThat(body).contains("MECHANISM_BUDGET").contains("withheld on purpose")
                 .contains("<!-- rule_version: exec-v1.3 -->")
@@ -26,7 +27,16 @@ class ExecutorPromptSp2Test {
                 .contains("MOMENTUM").contains("MOMENTUM_12_1").contains("Momentum entries")
                 .contains("HARD_REBALANCE")
                 .contains("savings plan").contains("never add to them yourself")
-                .contains("(diversity → freshness)");
+                .contains("(diversity → freshness)")
+                .contains("only if the operator enables the take-profit");
+    }
+
+    @Test
+    void archiveHolds170Verbatim() {
+        String archived = PromptDocument.bodyFromClasspath("prompts/archive/executor/1.7.0.md");
+        assertThat(PromptHashes.hash(archived)).isEqualTo(V170_BODY_HASH);
+        assertThat(new PromptArchive().wasShipped("executor", archived,
+                PromptDocument.bodyFromClasspath("prompts/executor.md"))).isTrue();
     }
 
     @Test
