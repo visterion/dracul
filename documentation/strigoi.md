@@ -1729,8 +1729,8 @@ the LLM, which owns only the soft judgment call. Every call to
    (`dracul.executor.ratchet-retry-attempts`, backoff, pass-wide time
    budget); any other failure escalates immediately. For exit profile
    CONVICTION (`exec-v1.0`) the ratchet does nothing before the half-sale
-   (`trim_count == 0`) — true by construction while the take-profit switch is
-   at its default (`false`), since no half-sale ever happens — this also covers the stale pre-trim row
+   (`trim_count == 0`) — with the switch off no half-sale happens, so the
+   position stays in this state — this also covers the stale pre-trim row
    `MaintenancePipeline` hands in right after a same-pass `HARD_TARGET_HALF`,
    so a second maintenance pass never acts on it either. After the half-sale
    the candidate is `highest close × (1 − dracul.executor.profiles.conviction.trail-pct)`

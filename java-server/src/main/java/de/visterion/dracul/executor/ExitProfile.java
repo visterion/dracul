@@ -45,9 +45,12 @@ public enum ExitProfile {
         return this == CONVICTION;
     }
 
-    /** After the half-sale the remainder trails highest close x (1 − trail-pct) — only when
-     *  {@code dracul.executor.profiles.conviction.take-profit-enabled} is true; the trail arms only
-     *  after a half-sale. */
+    /** After the half-sale the remainder trails highest close x (1 − trail-pct). The trail arms
+     *  whenever {@code trim_count > 0} (a half-sale already happened), regardless of
+     *  {@code dracul.executor.profiles.conviction.take-profit-enabled}: a position half-sold
+     *  before the switch was turned off keeps its trail. With the switch off no NEW half-sale
+     *  ever happens, so the trail never arms on a fresh position — but that is a consequence of
+     *  {@link #hasTargetHalf()}'s gate, not a second check here. */
     public boolean hasTrail() {
         return this == CONVICTION;
     }
