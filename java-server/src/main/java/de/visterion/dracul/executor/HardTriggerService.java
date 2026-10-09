@@ -38,8 +38,11 @@ import java.util.Set;
  * dated, multi-day and negated criteria (spec 2026-10-02 §1). They stay LLM context.
  *
  * <p>For exit profile CONVICTION (spec 2026-10-03 §5.4) the order is: a flagged catastrophe
- * (evaluated before the close-null skip), the stop, then the target-half (a 0.5 partial exit
- * through {@link PartialExitService}); kill level and giveback are STANDARD only.
+ * (evaluated before the close-null skip), the stop, then — only when
+ * {@code dracul.executor.profiles.conviction.take-profit-enabled} is true (spec 2026-10-09) —
+ * the target-half (a 0.5 partial exit through {@link PartialExitService}); with it false a
+ * CONVICTION position exits only on the catastrophe flag or the emergency stop. Kill level and
+ * giveback are STANDARD only.
  *
  * <p>For exit profile MOMENTUM (spec 2026-10-04 §4) a row with {@code rebalance_exit_at} set is
  * flattened fully ({@code HARD_REBALANCE}): without a close it is evaluated before the close-null
@@ -235,10 +238,12 @@ public class HardTriggerService {
             }
             if (trigger == null && wideStop) {
                 // Wide-stop profiles (CONVICTION, MOMENTUM): kill level and giveback never apply.
-                // 2. TARGET_HALF (CONVICTION only) — exactly once: never after the half-sale,
-                // never while a trim is still pending (a second maintenance pass in the same run
-                // re-reads the trimmed row and stops here).
-                if (profile.hasTargetHalf() && !stopOnlyIds.contains(p.id()) && targetHalfDue(p, close)) {
+                // 2. TARGET_HALF (CONVICTION only, and only with take-profit-enabled — spec
+                // 2026-10-09) — exactly once: never after the half-sale, never while a trim is
+                // still pending (a second maintenance pass in the same run re-reads the trimmed
+                // row and stops here).
+                if (profile.hasTargetHalf() && convictionProfile.takeProfitEnabled()
+                        && !stopOnlyIds.contains(p.id()) && targetHalfDue(p, close)) {
                     targetsHit++;
                     sellHalf(p, close, runId);
                 }

@@ -1,5 +1,7 @@
 package de.visterion.dracul.executor;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -12,6 +14,8 @@ import java.math.BigDecimal;
 @ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
 class ConvictionProfileConfig {
 
+    private static final Logger log = LoggerFactory.getLogger(ConvictionProfileConfig.class);
+
     @Bean
     ConvictionProfile convictionProfile(
             @Value("${dracul.executor.profiles.conviction.emergency-stop-pct:0.35}") BigDecimal emergencyStopPct,
@@ -22,8 +26,14 @@ class ConvictionProfileConfig {
             @Value("${dracul.executor.profiles.conviction.entry-broker-stop-pct:0.20}") BigDecimal entryBrokerStopPct,
             @Value("${dracul.strigoi.tech.position-pct:0.03}") BigDecimal positionPct,
             @Value("${dracul.strigoi.momentum.position-pct:0.025}") BigDecimal momentumPositionPct,
-            @Value("${dracul.strigoi.momentum.min-entry-qty:1}") int momentumMinEntryQty) {
-        return new ConvictionProfile(emergencyStopPct, targetPct, targetFraction, trailPct,
-                minEntryQty, entryBrokerStopPct, positionPct, momentumPositionPct, momentumMinEntryQty);
+            @Value("${dracul.strigoi.momentum.min-entry-qty:1}") int momentumMinEntryQty,
+            @Value("${dracul.executor.profiles.conviction.take-profit-enabled:false}") boolean takeProfitEnabled) {
+        ConvictionProfile profile = new ConvictionProfile(emergencyStopPct, targetPct, targetFraction, trailPct,
+                minEntryQty, entryBrokerStopPct, positionPct, momentumPositionPct, momentumMinEntryQty,
+                takeProfitEnabled);
+        log.info("CONVICTION exit profile bound: emergency stop {}, take-profit {}",
+                profile.emergencyStopPct().toPlainString(),
+                takeProfitEnabled ? "ENABLED (target-half + trail)" : "disabled (hold)");
+        return profile;
     }
 }

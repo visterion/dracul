@@ -43,7 +43,7 @@ public class RuleVersionProvider {
     private final SavingsPlanSettings savingsPlanSettings;
 
     public RuleVersionProvider(
-            @Value("${dracul.executor.rule-version:exec-v1.3}") String active,
+            @Value("${dracul.executor.rule-version:exec-v1.4}") String active,
             RuleVersionRepository repo,
             ObjectMapper mapper,
             @Value("${dracul.executor.broker-stop-buffer-atr:1.0}") BigDecimal brokerStopBufferAtr,
@@ -117,6 +117,7 @@ public class RuleVersionProvider {
                     .put("conviction_position_pct", convictionProfile.positionPct())
                     .put("momentum_position_pct", convictionProfile.momentumPositionPct())
                     .put("momentum_min_entry_qty", convictionProfile.momentumMinEntryQty())
+                    .put("conviction_take_profit_enabled", convictionProfile.takeProfitEnabled())
                     .put("savings_plan_monthly_pct", savingsPlanSettings.monthlyPct())
                     .put("savings_plan_max_position_pct", savingsPlanSettings.maxPositionPct())
                     .put("savings_plan_basket_cap_pct", savingsPlanSettings.basketCapPct())
@@ -196,22 +197,29 @@ public class RuleVersionProvider {
             // from the LLM queue and dropped from ranking (freshness first); MECHANISM_BUDGET
             // entry cap (MERGER_ARB 20%, QUALITY_52W_LOW 15% of budget), transient like
             // MAX_POSITIONS; max_positions 8"
+            // exec-v1.3 history (no longer seeded; prod seeded it on the Tech-Sparplan deploy,
+            // insert-if-absent keeps that row as first written): "on top of exec-v1.2: Tech-Sparplan
+            // for exit profile CONVICTION -- on the first weekday of the month (catch-up weekdays
+            // 2-3, UTC calendar) inside the closed-market window from 21:15 UTC, code splits
+            // monthly-pct 0.02 of total-budget equally across eligible CONVICTION positions
+            // (per-position cap 0.08 and basket cap 0.50 of total-budget at market value, fractional
+            // carry per position, at any price incl. below entry) and buys them as a bracket add
+            // (limit = close x 1.02, child stop at the entry band, tif gtc|day); after one US session
+            // consolidation books one position, one leg, one stop at the new average x 0.65 (the
+            // stop may move down, initial_stop unchanged; order cancel-first|place-first); the add is
+            // never a tranche; if the pre-add emergency stop fills while an add is in flight the add
+            // shares are sold too (D8); in-flight positions are excluded from hard triggers and the
+            // ratchet (UNPROTECTED ones keep the stop breach and catastrophe checks); R per share for
+            // CONVICTION = entry_price x emergency-stop-pct, outcome and pattern scoring use the
+            // persisted r_value; MECHANISM_BUDGET TECH_CONVICTION 0.33 -> 0.50 (cost-based, new names
+            // only); ENTRY_PRICE_SYNC compares at scale 6; all other exec-v1.2 gates unchanged"
             repo.upsert(new RuleVersion(active, LocalDate.now().toString(),
-                    "on top of exec-v1.2: Tech-Sparplan for exit profile CONVICTION -- "
-                            + "on the first weekday of the month (catch-up weekdays 2-3, UTC calendar) inside the "
-                            + "closed-market window from 21:15 UTC, code splits monthly-pct 0.02 of total-budget "
-                            + "equally across eligible CONVICTION positions (per-position cap 0.08 and basket cap 0.50 "
-                            + "of total-budget at market value, fractional carry per position, at any price incl. "
-                            + "below entry) and buys them as a bracket add (limit = close x 1.02, child stop at the "
-                            + "entry band, tif gtc|day); after one US session consolidation books one position, one "
-                            + "leg, one stop at the new average x 0.65 (the stop may move down, initial_stop "
-                            + "unchanged; order cancel-first|place-first); the add is never a tranche; if the pre-add "
-                            + "emergency stop fills while an add is in flight the add shares are sold too (D8); "
-                            + "in-flight positions are excluded from hard triggers and the ratchet (UNPROTECTED ones "
-                            + "keep the stop breach and catastrophe checks); R per share for CONVICTION = entry_price "
-                            + "x emergency-stop-pct, outcome and pattern scoring use the persisted r_value; "
-                            + "MECHANISM_BUDGET TECH_CONVICTION 0.33 -> 0.50 (cost-based, new names only); "
-                            + "ENTRY_PRICE_SYNC compares at scale 6; all other exec-v1.2 gates unchanged",
+                    "on top of exec-v1.3: CONVICTION take-profit switch "
+                            + "(dracul.executor.profiles.conviction.take-profit-enabled, default false) -- with it off a "
+                            + "CONVICTION position exits only by a flagged catastrophe (HARD_CATASTROPHE) or the 35 % "
+                            + "emergency stop: no HARD_TARGET_HALF, so the 30 % trail, which arms only after a half-sale, "
+                            + "never arms; a position half-sold before the switch-off keeps its trail; with it on the "
+                            + "exec-v1.3 lifecycle is unchanged; all other exec-v1.3 gates unchanged",
                     null, params));
         }
     }

@@ -24,21 +24,12 @@ class RuleVersionProviderTest {
     static final String DEFAULTS_VERSION = "exec-test-sp2-" + UUID.randomUUID();
     static final String OVERRIDES_VERSION = "exec-test-sp2-ovr-" + UUID.randomUUID();
 
-    static final String CHANGES = "on top of exec-v1.2: Tech-Sparplan for exit profile CONVICTION -- "
-            + "on the first weekday of the month (catch-up weekdays 2-3, UTC calendar) inside the "
-            + "closed-market window from 21:15 UTC, code splits monthly-pct 0.02 of total-budget "
-            + "equally across eligible CONVICTION positions (per-position cap 0.08 and basket cap 0.50 "
-            + "of total-budget at market value, fractional carry per position, at any price incl. "
-            + "below entry) and buys them as a bracket add (limit = close x 1.02, child stop at the "
-            + "entry band, tif gtc|day); after one US session consolidation books one position, one "
-            + "leg, one stop at the new average x 0.65 (the stop may move down, initial_stop "
-            + "unchanged; order cancel-first|place-first); the add is never a tranche; if the pre-add "
-            + "emergency stop fills while an add is in flight the add shares are sold too (D8); "
-            + "in-flight positions are excluded from hard triggers and the ratchet (UNPROTECTED ones "
-            + "keep the stop breach and catastrophe checks); R per share for CONVICTION = entry_price "
-            + "x emergency-stop-pct, outcome and pattern scoring use the persisted r_value; "
-            + "MECHANISM_BUDGET TECH_CONVICTION 0.33 -> 0.50 (cost-based, new names only); "
-            + "ENTRY_PRICE_SYNC compares at scale 6; all other exec-v1.2 gates unchanged";
+    static final String CHANGES = "on top of exec-v1.3: CONVICTION take-profit switch "
+            + "(dracul.executor.profiles.conviction.take-profit-enabled, default false) -- with it off a "
+            + "CONVICTION position exits only by a flagged catastrophe (HARD_CATASTROPHE) or the 35 % "
+            + "emergency stop: no HARD_TARGET_HALF, so the 30 % trail, which arms only after a half-sale, "
+            + "never arms; a position half-sold before the switch-off keeps its trail; with it on the "
+            + "exec-v1.3 lifecycle is unchanged; all other exec-v1.3 gates unchanged";
 
     @Nested
     @SpringBootTest
@@ -92,6 +83,8 @@ class RuleVersionProviderTest {
             // Exit profile MOMENTUM (exec-v1.2)
             assertThat(v.params().path("momentum_position_pct").decimalValue()).isEqualByComparingTo("0.025");
             assertThat(v.params().path("momentum_min_entry_qty").asInt()).isEqualTo(1);
+            // CONVICTION take-profit switch (exec-v1.4), default profile = disabled
+            assertThat(v.params().path("conviction_take_profit_enabled").asBoolean()).isFalse();
             // Tech-Sparplan (exec-v1.3)
             assertThat(v.params().path("savings_plan_monthly_pct").decimalValue()).isEqualByComparingTo("0.02");
             assertThat(v.params().path("savings_plan_max_position_pct").decimalValue()).isEqualByComparingTo("0.08");

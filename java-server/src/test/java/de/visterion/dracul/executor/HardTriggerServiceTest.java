@@ -43,8 +43,12 @@ class HardTriggerServiceTest {
     @BeforeEach
     void setUp() {
         when(ruleVersions.active()).thenReturn("exec-v0.2");
+        // Spec 2026-10-09: the half-sale/trail tests in this file predate the take-profit switch
+        // and assert the exec-v1.3 lifecycle, so the shared service is built with it explicitly ON.
+        // The default-OFF path has its own tests below, built with disabledService.
         service = new HardTriggerService(gateway, positionRepo, decisionRepo, cooldownRepo,
-                ruleVersions, mapper, 0.35, 1.5, 10, partialExit, ConvictionProfile.defaults(), telegram, clock);
+                ruleVersions, mapper, 0.35, 1.5, 10, partialExit,
+                ConvictionProfile.defaults().withTakeProfitEnabled(true), telegram, clock);
     }
 
     private ExecutorPosition openPosition(long id, String symbol, String side, BigDecimal entry,
@@ -1087,5 +1091,95 @@ class HardTriggerServiceTest {
         service.apply(List.of(p), Map.of("TECHA", new BigDecimal("60")), "run1", java.util.Set.of(61L));
 
         assertThat(gateway.flattenedSymbols).containsExactly("TECHA");
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // CONVICTION take-profit switch (spec 2026-10-09): default OFF. These use their own
+    // service instance built with ConvictionProfile.defaults() (takeProfitEnabled=false),
+    // never the shared `service` field above, which is explicitly ON for the pre-existing
+    // half-sale/trail tests.
+    // ---------------------------------------------------------------------------------------
+
+    private final HardTriggerService disabledService = new HardTriggerService(gateway, positionRepo,
+            decisionRepo, cooldownRepo, ruleVersions, mapper, 0.35, 1.5, 10, partialExit,
+            ConvictionProfile.defaults(), telegram, clock);
+
+    /** Take-profit disabled: a close at/above the target never half-sells; the position holds. */
+    @Test
+    void takeProfitDisabledNeverSellsHalfOnAGain() {
+        ExecutorPosition p = conviction(80L, "SYOA", 0, null, null, null);
+
+        var infos = linesWhile(HardTriggerService.class, ch.qos.logback.classic.Level.INFO,
+                () -> {
+                    List<ExecutorPosition> survivors = disabledService.apply(List.of(p),
+                            Map.of("SYOA", new BigDecimal("140")), "run1");
+                    assertThat(survivors).containsExactly(p);
+                });
+
+        verify(partialExit, never()).execute(any(), any(), any(), any(), any(), any(), any(), any());
+        assertThat(gateway.flattenedSymbols).isEmpty();
+        assertThat(infos).containsExactly("kill levels evaluated: 0 of 1 filled positions "
+                + "(breached: 0); catastrophe flagged: 0, targets hit: 0, rebalance exits: 0");
+    }
+
+    /** Take-profit disabled: the emergency stop still fires exactly as today. */
+    @Test
+    void takeProfitDisabledEmergencyStopStillFires() {
+        ExecutorPosition p = conviction(81L, "SYOB", 0, null, null, null);
+
+        List<ExecutorPosition> survivors = disabledService.apply(List.of(p),
+                Map.of("SYOB", new BigDecimal("64")), "run1");
+
+        assertThat(survivors).isEmpty();
+        assertThat(gateway.flattenedSymbols).containsExactly("SYOB");
+        assertThat(onlyRow().reasonCode()).isEqualTo("HARD_STOP");
+    }
+
+    /** Take-profit disabled: a flagged catastrophe still flattens exactly as today. */
+    @Test
+    void takeProfitDisabledCatastropheStillFlattens() {
+        ExecutorPosition p = conviction(82L, "SYOC", 0, "synthetic fraud finding", null, null);
+
+        List<ExecutorPosition> survivors = disabledService.apply(List.of(p),
+                Map.of("SYOC", new BigDecimal("90")), "run1");
+
+        assertThat(survivors).isEmpty();
+        assertThat(gateway.flattenedSymbols).containsExactly("SYOC");
+        assertThat(onlyRow().reasonCode()).isEqualTo("HARD_CATASTROPHE");
+    }
+
+    /** Take-profit disabled: a position already half-sold (trim_count 1) before the switch was
+     *  turned off keeps its trail — the trail keys on trim_count, not on the switch. */
+    @Test
+    void takeProfitDisabledHalfSoldPositionKeepsItsTrail() {
+        ExecutorPosition p = convictionWithHighest(83L, "SYOD", 1, new BigDecimal("200"));
+
+        List<ExecutorPosition> survivors = disabledService.apply(List.of(p),
+                Map.of("SYOD", new BigDecimal("139")), "run1");
+
+        assertThat(survivors).isEmpty();
+        assertThat(gateway.flattenFractions).containsExactly(BigDecimal.ONE);
+        assertThat(onlyRow().reasonCode()).isEqualTo("HARD_STOP");
+    }
+
+    /** Take-profit enabled: TARGET_HALF fires exactly as today (regression anchor for the switch
+     *  itself, not just the pre-existing shared-service tests above). */
+    @Test
+    void takeProfitEnabledTargetHalfStillFires() {
+        HardTriggerService enabledService = new HardTriggerService(gateway, positionRepo,
+                decisionRepo, cooldownRepo, ruleVersions, mapper, 0.35, 1.5, 10, partialExit,
+                ConvictionProfile.defaults().withTakeProfitEnabled(true), telegram, clock);
+        ExecutorPosition p = conviction(84L, "SYOE", 0, null, null, null);
+
+        List<ExecutorPosition> survivors = enabledService.apply(List.of(p),
+                Map.of("SYOE", new BigDecimal("140")), "run1");
+
+        assertThat(survivors).containsExactly(p);
+        verify(partialExit).execute(org.mockito.ArgumentMatchers.eq(p),
+                org.mockito.ArgumentMatchers.argThat(f -> f.compareTo(new BigDecimal("0.5")) == 0),
+                org.mockito.ArgumentMatchers.eq("HARD_TRIGGER"),
+                org.mockito.ArgumentMatchers.eq("HARD_TARGET_HALF"),
+                org.mockito.ArgumentMatchers.eq("target-half flatten"), any(), isNull(),
+                org.mockito.ArgumentMatchers.eq("run1"));
     }
 }

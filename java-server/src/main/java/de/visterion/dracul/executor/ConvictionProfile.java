@@ -23,11 +23,15 @@ import java.math.RoundingMode;
  *        {@code dracul.strigoi.momentum.position-pct} (one key, read by executor and hunter)
  * @param momentumMinEntryQty MOMENTUM's fewest shares, bound from
  *        {@code dracul.strigoi.momentum.min-entry-qty}
+ * @param takeProfitEnabled bound from {@code dracul.executor.profiles.conviction.take-profit-enabled};
+ *        when false (default) the half-sale never fires, so the trail, which arms only after a
+ *        half-sale, never arms either: a CONVICTION position exits only on the emergency stop or
+ *        a catastrophe flag; spec 2026-10-09
  */
 public record ConvictionProfile(BigDecimal emergencyStopPct, BigDecimal targetPct,
         BigDecimal targetFraction, BigDecimal trailPct, int minEntryQty,
         BigDecimal entryBrokerStopPct, BigDecimal positionPct,
-        BigDecimal momentumPositionPct, int momentumMinEntryQty) {
+        BigDecimal momentumPositionPct, int momentumMinEntryQty, boolean takeProfitEnabled) {
 
     public ConvictionProfile {
         requireFraction("emergency-stop-pct", emergencyStopPct);
@@ -54,11 +58,18 @@ public record ConvictionProfile(BigDecimal emergencyStopPct, BigDecimal targetPc
         }
     }
 
-    /** The spec defaults: 0.35 / 0.30 / 0.5 / 0.30 / 2 / 0.20 / 0.03, MOMENTUM 0.025 / 1. */
+    /** The spec defaults: 0.35 / 0.30 / 0.5 / 0.30 / 2 / 0.20 / 0.03, MOMENTUM 0.025 / 1,
+     *  take-profit disabled. */
     public static ConvictionProfile defaults() {
         return new ConvictionProfile(new BigDecimal("0.35"), new BigDecimal("0.30"),
                 new BigDecimal("0.5"), new BigDecimal("0.30"), 2, new BigDecimal("0.20"),
-                new BigDecimal("0.03"), new BigDecimal("0.025"), 1);
+                new BigDecimal("0.03"), new BigDecimal("0.025"), 1, false);
+    }
+
+    /** A copy with the take-profit switch set (tests and config binding). */
+    public ConvictionProfile withTakeProfitEnabled(boolean enabled) {
+        return new ConvictionProfile(emergencyStopPct, targetPct, targetFraction, trailPct, minEntryQty,
+                entryBrokerStopPct, positionPct, momentumPositionPct, momentumMinEntryQty, enabled);
     }
 
     /** Fixed size per name as a fraction of total-budget (spec 2026-10-04 §3): MOMENTUM reads

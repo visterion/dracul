@@ -20,6 +20,20 @@ class ConvictionProfileTest {
         assertThat(profile.minEntryQty()).isEqualTo(2);
         assertThat(profile.entryBrokerStopPct()).isEqualByComparingTo("0.20");
         assertThat(profile.positionPct()).isEqualByComparingTo("0.03");
+        assertThat(profile.takeProfitEnabled()).isFalse();
+    }
+
+    @Test
+    void defaultsHoldTheWinners() {
+        assertThat(ConvictionProfile.defaults().takeProfitEnabled()).isFalse();
+    }
+
+    @Test
+    void withTakeProfitEnabledCopiesEverythingElse() {
+        ConvictionProfile on = ConvictionProfile.defaults().withTakeProfitEnabled(true);
+        assertThat(on.takeProfitEnabled()).isTrue();
+        assertThat(on.withTakeProfitEnabled(false)).isEqualTo(ConvictionProfile.defaults());
+        assertThat(on.targetPct()).isEqualByComparingTo("0.30");
     }
 
     @Test
@@ -39,7 +53,7 @@ class ConvictionProfileTest {
         // A band WIDER than the emergency stop must not put the leg below the logical stop.
         ConvictionProfile wideBand = new ConvictionProfile(new BigDecimal("0.10"),
                 new BigDecimal("0.30"), new BigDecimal("0.5"), new BigDecimal("0.30"), 2,
-                new BigDecimal("0.20"), new BigDecimal("0.033"), new BigDecimal("0.025"), 1);
+                new BigDecimal("0.20"), new BigDecimal("0.033"), new BigDecimal("0.025"), 1, false);
         assertThat(wideBand.entryBrokerStop("BUY", new BigDecimal("100.00"), new BigDecimal("90.00")))
                 .isEqualByComparingTo("90.00");
     }
@@ -56,11 +70,11 @@ class ConvictionProfileTest {
     void rejectsNonsenseConfiguration() {
         assertThatThrownBy(() -> new ConvictionProfile(new BigDecimal("1.2"), new BigDecimal("0.30"),
                 new BigDecimal("0.5"), new BigDecimal("0.30"), 2, new BigDecimal("0.20"),
-                new BigDecimal("0.033"), new BigDecimal("0.025"), 1)).isInstanceOf(IllegalArgumentException.class)
+                new BigDecimal("0.033"), new BigDecimal("0.025"), 1, false)).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("emergency-stop-pct");
         assertThatThrownBy(() -> new ConvictionProfile(new BigDecimal("0.35"), new BigDecimal("0.30"),
                 new BigDecimal("0.5"), new BigDecimal("0.30"), 0, new BigDecimal("0.20"),
-                new BigDecimal("0.033"), new BigDecimal("0.025"), 1)).isInstanceOf(IllegalArgumentException.class)
+                new BigDecimal("0.033"), new BigDecimal("0.025"), 1, false)).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("min-entry-qty");
     }
 
@@ -79,12 +93,12 @@ class ConvictionProfileTest {
     void rejectsNonsenseMomentumConfiguration() {
         assertThatThrownBy(() -> new ConvictionProfile(new BigDecimal("0.35"), new BigDecimal("0.30"),
                 new BigDecimal("0.5"), new BigDecimal("0.30"), 2, new BigDecimal("0.20"),
-                new BigDecimal("0.03"), new BigDecimal("1.5"), 1))
+                new BigDecimal("0.03"), new BigDecimal("1.5"), 1, false))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("dracul.strigoi.momentum.position-pct");
         assertThatThrownBy(() -> new ConvictionProfile(new BigDecimal("0.35"), new BigDecimal("0.30"),
                 new BigDecimal("0.5"), new BigDecimal("0.30"), 2, new BigDecimal("0.20"),
-                new BigDecimal("0.03"), new BigDecimal("0.025"), 0))
+                new BigDecimal("0.03"), new BigDecimal("0.025"), 0, false))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("dracul.strigoi.momentum.min-entry-qty");
     }

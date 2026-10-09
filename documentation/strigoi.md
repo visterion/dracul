@@ -693,9 +693,17 @@ catastrophe_rejected=… executor_disabled=…`, only when any count is non-zero
 ### Exit profile
 
 The executor derives exit profile CONVICTION from the mechanism `TECH_CONVICTION`: fixed size
-`position-pct` × `dracul.executor.total-budget`, an emergency stop 35 % below entry, half sold
-once a daily close reaches +30 %, the rest trailed 30 % below the highest close, no LLM soft
-exits and no tranche 2. See "Executor" below and `documentation/configuration.md`
+`position-pct` × `dracul.executor.total-budget`, an emergency stop 35 % below entry, no LLM soft
+exits and no tranche 2. **Take-profit switch (`take-profit-enabled`, default `false`, spec
+2026-10-09):** by default a CONVICTION position exits only on the emergency stop or a flagged
+catastrophe — the basket is held, letting a winner run without limit (the savings plan's 8 %
+per-position / 50 % basket caps only stop further *adds*, they never trim an existing winner).
+Setting `take-profit-enabled=true` restores the exec-v1.3 lifecycle: half sold once a daily close
+reaches +30 %, the rest trailed 30 % below the highest close. A position already half-sold
+(`trim_count > 0`) keeps its trail regardless of the switch — the trail arms on `trim_count`,
+never on the switch itself, so turning it off never undoes an existing half-sale. Turning it back
+on later half-sells, at the next maintenance pass, every basket name already ≥ +30 % over its
+(post-add average) entry. See "Executor" below and `documentation/configuration.md`
 (`dracul.executor.profiles.conviction.*`).
 
 **Broker leg: narrow at entry, widened after the fill.** The broker rejects a bracket leg
@@ -1679,10 +1687,15 @@ the LLM, which owns only the soft judgment call. Every call to
    they stay LLM context. For exit profile CONVICTION (`exec-v1.0`) the order
    is: a flagged catastrophe first — evaluated before the missing-close skip,
    full flatten, `HARD_CATASTROPHE`, `close`/`current_r` null when there is no
-   price — then the stop (emergency stop or trail), then the target-half
-   (`HARD_TARGET_HALF`: no half-sale yet, no trim pending, close ≥ entry × 1.30
-   → a 0.5 partial exit through `PartialExitService`, the position stays
-   open). After the half-sale (`trim_count > 0`) the stop check compares the
+   price — then the stop (emergency stop or trail), then — only when
+   `dracul.executor.profiles.conviction.take-profit-enabled` is `true`
+   (default `false`, spec 2026-10-09) — the target-half (`HARD_TARGET_HALF`:
+   no half-sale yet, no trim pending, close ≥ entry × 1.30 → a 0.5 partial
+   exit through `PartialExitService`, the position stays open). With the
+   switch at its default a CONVICTION position exits only on the emergency
+   stop or the catastrophe flag — no `HARD_TARGET_HALF` ever fires, so the
+   trail (below) never arms either, since it only arms after a half-sale.
+   After the half-sale (`trim_count > 0`) the stop check compares the
    close to the TIGHTER of `active_stop` and the trail
    `highest_price × (1 − trail-pct)` itself — the ratchet skips a trail
    candidate the close is already below, so after a ≥ 30 % drop between two
@@ -1716,7 +1729,8 @@ the LLM, which owns only the soft judgment call. Every call to
    (`dracul.executor.ratchet-retry-attempts`, backoff, pass-wide time
    budget); any other failure escalates immediately. For exit profile
    CONVICTION (`exec-v1.0`) the ratchet does nothing before the half-sale
-   (`trim_count == 0`) — this also covers the stale pre-trim row
+   (`trim_count == 0`) — true by construction while the take-profit switch is
+   at its default (`false`), since no half-sale ever happens — this also covers the stale pre-trim row
    `MaintenancePipeline` hands in right after a same-pass `HARD_TARGET_HALF`,
    so a second maintenance pass never acts on it either. After the half-sale
    the candidate is `highest close × (1 − dracul.executor.profiles.conviction.trail-pct)`

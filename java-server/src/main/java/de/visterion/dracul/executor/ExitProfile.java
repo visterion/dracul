@@ -38,12 +38,16 @@ public enum ExitProfile {
         return this == CONVICTION || this == MOMENTUM;
     }
 
-    /** A close at entry x (1 + target-pct) sells target-fraction (HARD_TARGET_HALF). */
+    /** A close at entry x (1 + target-pct) sells target-fraction (HARD_TARGET_HALF) — only when
+     *  {@code dracul.executor.profiles.conviction.take-profit-enabled} is true; the trail arms only
+     *  after a half-sale. */
     public boolean hasTargetHalf() {
         return this == CONVICTION;
     }
 
-    /** After the half-sale the remainder trails highest close x (1 − trail-pct). */
+    /** After the half-sale the remainder trails highest close x (1 − trail-pct) — only when
+     *  {@code dracul.executor.profiles.conviction.take-profit-enabled} is true; the trail arms only
+     *  after a half-sale. */
     public boolean hasTrail() {
         return this == CONVICTION;
     }

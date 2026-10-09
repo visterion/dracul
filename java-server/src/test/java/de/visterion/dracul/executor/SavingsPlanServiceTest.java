@@ -324,6 +324,21 @@ class SavingsPlanServiceTest {
         assertThat(savingsRepo.findMonth("2026-11").completedAt()).isNotNull();
     }
 
+    /** Spec 2026-10-09: with the default profile (take-profit disabled) a +40 % close never
+     *  half-sells, so trim_count stays 0 and the position keeps receiving the monthly add — the
+     *  skip logic keys on trim_count/pending_trim, never on the switch itself. */
+    @Test
+    void defaultProfileKeepsAPlusFortyPercentPositionEligibleForTheAdd() {
+        book(SavingsFixtures.pos(23, "TECHZ").qty("10").entry("100").trimCount(0).build());
+        close("TECHZ", "140");
+
+        service.addStage("c", "run-1", "pass-1", PLAN_DAY, java.util.Map.of());
+
+        assertThat(row(23, "2026-11").status()).isEqualTo(SavingsBuy.PLACED);
+        assertThat(gateway.placed).singleElement()
+                .satisfies(b -> assertThat(b.symbol()).isEqualTo("TECHZ"));
+    }
+
     /** §4.3 / R2 M7: addStage reads findOpen itself — a TARGET_HALF or a catastrophe flatten earlier
      *  in the same pass is visible there (trim_count / pending_exit_reason) and blocks the add. */
     @Test

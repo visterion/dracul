@@ -32,7 +32,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 @ActiveProfiles("dev")
 @TestPropertySource(properties = {
         "dracul.executor.enabled=true",
-        "dracul.executor.broker-stop-buffer-atr=0"})
+        "dracul.executor.broker-stop-buffer-atr=0",
+        // Spec 2026-10-09: this IT predates the take-profit switch and exercises the exec-v1.3
+        // half-sale/trail lifecycle on purpose, so it turns the switch explicitly ON. The
+        // default-OFF path is covered by ConvictionLifecycleTakeProfitDisabledIT.
+        "dracul.executor.profiles.conviction.take-profit-enabled=true"})
 class ConvictionLifecycleIT {
 
     @TestConfiguration

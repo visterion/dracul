@@ -384,7 +384,7 @@ dracul:
     max-broker-stop-pct: ${DRACUL_EXECUTOR_MAX_BROKER_STOP_PCT:0.20}
     risk-pct: ${DRACUL_EXECUTOR_RISK_PCT:0.005}
     swing-period: ${DRACUL_EXECUTOR_SWING_PERIOD:20}
-    rule-version: ${DRACUL_EXECUTOR_RULE_VERSION:exec-v1.3}
+    rule-version: ${DRACUL_EXECUTOR_RULE_VERSION:exec-v1.4}
     chandelier-mult: ${DRACUL_EXECUTOR_CHANDELIER_MULT:3.0}
     giveback-pct: ${DRACUL_EXECUTOR_GIVEBACK_PCT:0.35}
     giveback-active-from-r: ${DRACUL_EXECUTOR_GIVEBACK_ACTIVE_FROM_R:1.5}
@@ -430,6 +430,9 @@ dracul:
     # dracul.strigoi.tech.position-pct (one key, read by executor and hunter).
     profiles:
       conviction:
+        # Spec 2026-10-09: false (default) = hold — exits only on the emergency stop or a catastrophe
+        # flag; true = the exec-v1.3 lifecycle (half at +target-pct, rest trailed by trail-pct).
+        take-profit-enabled: ${DRACUL_EXECUTOR_CONVICTION_TAKE_PROFIT_ENABLED:false}
         emergency-stop-pct: ${DRACUL_EXECUTOR_CONVICTION_EMERGENCY_STOP_PCT:0.35}
         target-pct: ${DRACUL_EXECUTOR_CONVICTION_TARGET_PCT:0.30}
         target-fraction: ${DRACUL_EXECUTOR_CONVICTION_TARGET_FRACTION:0.5}
