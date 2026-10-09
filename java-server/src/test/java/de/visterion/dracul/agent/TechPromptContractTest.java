@@ -1,20 +1,28 @@
 package de.visterion.dracul.agent;
 
+import de.visterion.dracul.strigoi.lazarus.BasicFinancials;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
+import java.lang.reflect.RecordComponent;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** strigoi-tech prompt <-> schema contract (the recurring prompt/schema drift bug class). */
 class TechPromptContractTest {
 
+    private static final String SHIPPED_1_0_0_HASH = "p-f49dceaabf68";
+
     private final ObjectMapper mapper = new ObjectMapper();
     private final String prompt = AgentResources.classpath("prompts/strigoi-tech.md");
     private final JsonNode schema = AgentResources.readSchema(mapper, "schemas/prey-list-tech.json");
+    private final PromptArchive archive = new PromptArchive();
 
     @Test
     void everyItemPropertyIsNamedInThePrompt() {
@@ -47,5 +55,28 @@ class TechPromptContractTest {
         assertThat(itemRequired).contains("kill_criteria", "symbol", "confidence");
         assertThat(schema.path("properties").path("prey").path("items").path("properties")
                 .path("anomalyType").path("const").asString()).isEqualTo("TECH_CONVICTION");
+    }
+
+    @Test
+    void archivedStrigoiTech100IsRecognisedAsShipped() {
+        String archived = PromptDocument.bodyFromClasspath("prompts/archive/strigoi-tech/1.0.0.md");
+        assertThat(PromptHashes.hash(archived)).isEqualTo(SHIPPED_1_0_0_HASH);
+        String bundled = PromptDocument.bodyFromClasspath("prompts/strigoi-tech.md");
+        assertThat(archive.wasShipped("strigoi-tech", archived, bundled)).isTrue();
+    }
+
+    @Test
+    void everyFundamentalsFieldNamedInThePromptIsARealBasicFinancialsComponent() {
+        Set<String> components = Arrays.stream(BasicFinancials.class.getRecordComponents())
+                .map(RecordComponent::getName)
+                .collect(Collectors.toSet());
+        List<String> namedInPrompt = List.of("peTtm", "fcfPerShare", "priceToBook",
+                "revenueGrowthYoy", "epsGrowthYoy", "grossMargin", "netMargin");
+        List<String> missing = new ArrayList<>();
+        for (String field : namedInPrompt) {
+            if (!prompt.contains("`" + field + "`")) missing.add("not in prompt: " + field);
+            if (!components.contains(field)) missing.add("not a BasicFinancials component: " + field);
+        }
+        assertThat(missing).isEmpty();
     }
 }

@@ -18,7 +18,7 @@ class ExecutorPromptSp2Test {
         assertThat(doc.version()).isEqualTo("1.8.0");
         String body = doc.body();
         assertThat(body).contains("MECHANISM_BUDGET").contains("withheld on purpose")
-                .contains("<!-- rule_version: exec-v1.3 -->")
+                .contains("<!-- rule_version: exec-v1.4 -->")
                 .doesNotContain("exec-v1.2 -->").doesNotContain("exec-v1.0 -->")
                 .contains("KILL_LEVEL_BREACHED").contains("kill_close_below")
                 .contains("kill_close_below_dropped")
