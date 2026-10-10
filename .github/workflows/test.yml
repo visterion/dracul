@@ -13,6 +13,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: chronicle/package-lock.json
+      - name: Chronicle unit tests
+        working-directory: chronicle
+        run: |
+          npm ci
+          npm run test:unit
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
