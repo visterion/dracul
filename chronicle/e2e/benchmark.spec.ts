@@ -6,7 +6,7 @@ test.describe('Benchmark view (/benchmark)', () => {
     await page.waitForLoadState('networkidle')
     await expect(page.locator('.page-eyebrow')).toContainText('Benchmark')
     await expect(page.getByTestId('benchmark-countdown')).toBeVisible()
-    await expect(page.getByTestId('benchmark-row')).toHaveCount(3)
+    await expect(page.getByTestId('benchmark-row')).toHaveCount(4)
     await expect(page.getByTestId('benchmark-depot')).toBeVisible()
   })
 

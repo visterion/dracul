@@ -319,6 +319,7 @@ export default {
     empty: 'No measurement yet.',
     countdown: {
       future: '{days} days until the decision on {date}',
+      futureOne: '1 day until the decision on {date}',
       today: 'Today is decision day ({date})',
       past: 'Decision day was {date}',
     },
@@ -376,7 +377,7 @@ export default {
     },
     notes: {
       costs: 'No costs, taxes or dividends.',
-      coverage: '"Data since" = first stored pre-screen candidate of this strigoi; older prey count as signals but not in the paired comparison.',
+      coverage: '"Data since" = first stored pre-screen candidate of this strigoi; older prey count as signals but not in the paired comparison. Signal-only strigoi (tech, momentum) store no pre-screen candidates, so "data since" stays "—" for them.',
       echoPaused: 'strigoi-echo has been paused since 2026-10-03; its data stays as history.',
       ci: 'Intervals are clustered by calendar week — events of the same week share the market.',
     },

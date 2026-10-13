@@ -106,6 +106,10 @@ describe('BenchmarkView', () => {
     const notes = w.get('[data-testid="benchmark-notes"]').text()
     expect(notes).toContain('Ohne Kosten, Steuern und Dividenden.')
     expect(notes).toContain('seit 2026-10-03 pausiert')
+    // Ruling 3: the coverage footnote must say why signal-only strigoi (tech, momentum)
+    // have no "Daten seit" — they store no pre-screen candidates.
+    expect(notes).toContain('reine Signal-Strigoi (tech, momentum)')
+    expect(notes).toContain('keine Vorfilter-Kandidaten')
   })
 
   it('shows an empty depot hint when the depot is not visible', async () => {

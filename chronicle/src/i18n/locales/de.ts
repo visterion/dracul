@@ -319,6 +319,7 @@ export default {
     empty: 'Noch keine Messung vorhanden.',
     countdown: {
       future: 'Noch {days} Tage bis zur Entscheidung am {date}',
+      futureOne: 'Noch 1 Tag bis zur Entscheidung am {date}',
       today: 'Heute ist Entscheidungstag ({date})',
       past: 'Entscheidungstag war am {date}',
     },
@@ -351,8 +352,8 @@ export default {
       coverage: 'Daten seit',
     },
     cell: {
-      ci: 'KI {low} … {high}',
-      noCi: 'kein KI',
+      ci: '95-%-Intervall {low} … {high}',
+      noCi: 'kein Intervall',
       n: 'N {n}',
       weeks: '{n} Wo.',
       hit: '{n} % Treffer',
@@ -376,7 +377,7 @@ export default {
     },
     notes: {
       costs: 'Ohne Kosten, Steuern und Dividenden.',
-      coverage: '„Daten seit" = erster gespeicherter Vorfilter-Kandidat dieses Strigoi; ältere Prey zählen als Signal, aber nicht im Paarvergleich.',
+      coverage: '„Daten seit" = erster gespeicherter Vorfilter-Kandidat dieses Strigoi; ältere Prey zählen als Signal, aber nicht im Paarvergleich. Für reine Signal-Strigoi (tech, momentum) gibt es keine Vorfilter-Kandidaten — „Daten seit" bleibt dort „—".',
       echoPaused: 'strigoi-echo ist seit 2026-10-03 pausiert; seine Daten bleiben als Historie.',
       ci: 'Intervalle sind nach Kalenderwoche gebündelt — Ereignisse derselben Woche teilen sich den Markt.',
     },

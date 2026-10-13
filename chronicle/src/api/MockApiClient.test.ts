@@ -54,10 +54,19 @@ describe('MockApiClient strigoi P&L', () => {
 })
 
 describe('MockApiClient benchmark', () => {
-  it('serves the synthetic summary with three strigoi and a depot block', async () => {
+  it('serves the synthetic summary with four strigoi and a depot block', async () => {
     const s = await new MockApiClient().getBenchmarkSummary()
     expect(s?.decisionDate).toBe('2027-04-13')
-    expect(s?.agents.map(a => a.agent)).toEqual(['strigoi-echo', 'strigoi-insider', 'strigoi-spin'])
+    expect(s?.agents.map(a => a.agent)).toEqual(
+      ['strigoi-echo', 'strigoi-insider', 'strigoi-spin', 'strigoi-tech'],
+    )
     expect(s?.depot?.byStrigoi).toHaveLength(2)
+  })
+
+  it('leaves coverageStart null only for the signal-only strigoi-tech', async () => {
+    const s = await new MockApiClient().getBenchmarkSummary()
+    const byAgent = new Map(s?.agents.map(a => [a.agent, a.coverageStart]))
+    expect(byAgent.get('strigoi-spin')).not.toBeNull()
+    expect(byAgent.get('strigoi-tech')).toBeNull()
   })
 })

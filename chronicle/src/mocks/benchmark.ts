@@ -31,12 +31,21 @@ export const mockBenchmarkSummary: BenchmarkSummary = {
     },
     {
       agent: 'strigoi-spin',
-      coverageStart: null,
+      coverageStart: '2026-06-25',
       signal20: { n: 33, weeks: 9, mean: 0.021, median: 0.018, hitRate: 0.61, clusteredMean: 0.02, ciLow: 0.004, ciHigh: 0.036 },
       signal60: { n: 31, weeks: 8, mean: 0.044, median: 0.04, hitRate: 0.65, clusteredMean: 0.042, ciLow: 0.012, ciHigh: 0.072 },
       paired20: null,
       paired60: null,
       status: 'GREEN',
+    },
+    {
+      agent: 'strigoi-tech',
+      coverageStart: null,
+      signal20: { n: 38, weeks: 8, mean: 0.003, median: 0.001, hitRate: 0.5, clusteredMean: 0.002, ciLow: -0.013, ciHigh: 0.017 },
+      signal60: { n: 34, weeks: 7, mean: 0.006, median: 0.004, hitRate: 0.52, clusteredMean: 0.005, ciLow: -0.018, ciHigh: 0.028 },
+      paired20: null,
+      paired60: null,
+      status: 'GREY',
     },
   ],
   depot: {

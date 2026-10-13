@@ -190,6 +190,7 @@ const countdownText = computed(() => {
   const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
   const days = Math.round((target - today) / DAY_MS)
   const date = deDate(summary.value.decisionDate)
+  if (days === 1) return t('benchmark.countdown.futureOne', { date })
   if (days > 0) return t('benchmark.countdown.future', { days, date })
   if (days === 0) return t('benchmark.countdown.today', { date })
   return t('benchmark.countdown.past', { date })
