@@ -780,6 +780,73 @@ export interface StrigoiPnlDetail {
   trades: StrigoiPnlTrade[]
 }
 
+/** GET /api/benchmark/summary. Returns, excess and hit rates are FRACTIONS (0.012 = +1.2 %),
+ *  in EUR, against EUNL.DE. Intervals are week-clustered; null below 5 weeks. */
+export type BenchmarkStatus = 'GREEN' | 'RED' | 'GREY' | 'INSUFFICIENT'
+
+export interface BenchmarkSignalStats {
+  n: number
+  weeks: number
+  mean: number | null
+  median: number | null
+  hitRate: number | null
+  clusteredMean: number | null
+  ciLow: number | null
+  ciHigh: number | null
+}
+
+export interface BenchmarkPairedStats {
+  pickedN: number
+  pickedMean: number | null
+  pickedWeeks: number
+  rejectedN: number
+  rejectedMean: number | null
+  rejectedWeeks: number
+  difference: number | null
+  ciLow: number | null
+  ciHigh: number | null
+}
+
+export interface BenchmarkAgent {
+  agent: string
+  coverageStart: string | null
+  signal20: BenchmarkSignalStats
+  signal60: BenchmarkSignalStats
+  paired20: BenchmarkPairedStats | null
+  paired60: BenchmarkPairedStats | null
+  status: BenchmarkStatus
+}
+
+export interface BenchmarkStrigoiDepot {
+  strigoi: string
+  positions: number
+  openPositions: number
+  capitalEur: number
+  returnEur: number | null
+  benchmarkReturn: number | null
+  excess: number | null
+  skipped: number
+}
+
+export interface BenchmarkDepot {
+  connection: string
+  from: string | null
+  to: string | null
+  twr: number | null
+  benchmarkReturn: number | null
+  excess: number | null
+  byStrigoi: BenchmarkStrigoiDepot[]
+}
+
+export interface BenchmarkSummary {
+  benchmark: string
+  decisionDate: string
+  minEvents: number
+  minWeeks: number
+  agents: BenchmarkAgent[]
+  depot: BenchmarkDepot | null
+}
+
 export interface ChartPoint {
   t: string
   value: number

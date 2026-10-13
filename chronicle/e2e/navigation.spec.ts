@@ -49,12 +49,12 @@ test.describe('Top-bar navigation', () => {
     await expect(page.locator('h1.page-title')).toBeVisible()
   })
 
-  test('backtest tab navigates to /backtest', async ({ page }) => {
+  test('benchmark tab navigates to /benchmark', async ({ page }) => {
     await page.goto('/')
-    await page.click('a.top-bar__tab:has-text("backtest")')
+    await page.click('a.top-bar__tab:has-text("benchmark")')
     await page.waitForLoadState('networkidle')
-    await expect(page).toHaveURL('/backtest')
-    await expect(page.locator('.page-eyebrow')).toContainText('Backtest')
+    await expect(page).toHaveURL('/benchmark')
+    await expect(page.locator('.page-eyebrow')).toContainText('Benchmark')
   })
 
   test('settings tab navigates to /settings', async ({ page }) => {

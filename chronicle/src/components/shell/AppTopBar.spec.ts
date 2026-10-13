@@ -23,7 +23,7 @@ const router = createRouter({
     { path: '/report', name: 'morning-report', component: stub },
     { path: '/proposals', name: 'proposals', component: stub },
     { path: '/patterns', name: 'pattern-library', component: stub },
-    { path: '/backtest', name: 'backtest', component: stub },
+    { path: '/benchmark', name: 'benchmark', component: stub },
     { path: '/settings', name: 'settings', component: stub },
     { path: '/inspector', name: 'inspector', component: stub },
   ],

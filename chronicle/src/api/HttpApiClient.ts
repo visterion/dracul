@@ -10,7 +10,7 @@ import type {
   ExecutorCalibration, ExecutorBehavior,
   DepotsResponse, DepotChart, DepotEquityCurve, ChartRange, InstrumentInfo, DepotPositionView, DepotOrderView,
   DepotHistory, RunTranscript, InspectorRunsResponse, DepotMove, InstrumentSearchHit, ProposalRun,
-  StrigoiPnlOverview, StrigoiPnlDetail,
+  StrigoiPnlOverview, StrigoiPnlDetail, BenchmarkSummary,
 } from './types'
 
 /** True when the response's Content-Type is JSON. Guards against the SPA fallback silently
@@ -396,6 +396,14 @@ export class HttpApiClient implements ApiClient {
     if (!res.ok) throw new Error(`getStrigoiPnlDetail failed: HTTP ${res.status}`)
     if (!isJson(res)) return null
     return res.json() as Promise<StrigoiPnlDetail>
+  }
+
+  async getBenchmarkSummary(): Promise<BenchmarkSummary | null> {
+    const res = await fetch(`${this.baseUrl}/api/benchmark/summary`)
+    if (res.status === 404) return null
+    if (!res.ok) throw new Error(`getBenchmarkSummary failed: HTTP ${res.status}`)
+    if (!isJson(res)) return null
+    return res.json() as Promise<BenchmarkSummary>
   }
 
   async getRunTranscript(runId: string): Promise<RunTranscript> {

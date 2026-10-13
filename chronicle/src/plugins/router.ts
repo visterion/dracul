@@ -46,10 +46,12 @@ const router = createRouter({
       component: () => import('../views/PatternLibraryView.vue'),
     },
     {
-      path: '/backtest',
-      name: 'backtest',
-      component: () => import('../views/BacktestView.vue'),
+      path: '/benchmark',
+      name: 'benchmark',
+      component: () => import('../views/BenchmarkView.vue'),
     },
+    // The static mock /backtest view was replaced by the live benchmark measurement.
+    { path: '/backtest', redirect: '/benchmark' },
     {
       path: '/settings',
       name: 'settings',

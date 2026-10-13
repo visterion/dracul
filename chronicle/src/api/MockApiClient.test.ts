@@ -52,3 +52,12 @@ describe('MockApiClient strigoi P&L', () => {
     expect(detail?.summary.hitRate).toBeNull()
   })
 })
+
+describe('MockApiClient benchmark', () => {
+  it('serves the synthetic summary with three strigoi and a depot block', async () => {
+    const s = await new MockApiClient().getBenchmarkSummary()
+    expect(s?.decisionDate).toBe('2027-04-13')
+    expect(s?.agents.map(a => a.agent)).toEqual(['strigoi-echo', 'strigoi-insider', 'strigoi-spin'])
+    expect(s?.depot?.byStrigoi).toHaveLength(2)
+  })
+})

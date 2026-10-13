@@ -16,6 +16,7 @@ import type {
   ProposalRun,
   StrigoiPnlOverview,
   StrigoiPnlDetail,
+  BenchmarkSummary,
 } from './types'
 import { mockPrey, archivedPrey } from '../mocks/prey'
 import { mockVerdicts } from '../mocks/verdicts'
@@ -37,6 +38,7 @@ import {
 } from '../mocks/depots'
 import { mockProposalRuns } from '../mocks/proposals'
 import { mockStrigoiPnlOverview, mockStrigoiPnlDetail, MOCK_PNL_CONNECTION } from '../mocks/strigoiPnl'
+import { mockBenchmarkSummary } from '../mocks/benchmark'
 
 const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 
@@ -421,6 +423,11 @@ export class MockApiClient implements ApiClient {
   async getStrigoiPnlDetail(name: string, connection = MOCK_PNL_CONNECTION): Promise<StrigoiPnlDetail | null> {
     await delay(50)
     return structuredClone(mockStrigoiPnlDetail(name, connection))
+  }
+
+  async getBenchmarkSummary(): Promise<BenchmarkSummary | null> {
+    await delay(50)
+    return structuredClone(mockBenchmarkSummary)
   }
 
   async getDepotChart(connection: string, _range: ChartRange): Promise<DepotEquityCurve> {
