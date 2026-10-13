@@ -40,11 +40,16 @@ import java.util.TreeSet;
  * first night (an instrument with zero bars has no entry bar, and the EUNL calendar already has
  * plenty of trading days after T).
  *
- * <p>Final review I4: request-scoped Agora errors are only booked as "no data" once they are
- * confirmed — by a later successful fetch in the same night or by the night's natural end. A
- * streak of {@value #MAX_CONSECUTIVE_REQUEST_ERRORS} request-scoped errors in a row is treated as
- * source trouble: the night stops, the streak's symbols count as source-failed and NO no-data
- * night is recorded for them. A symbol given up after {@value #MAX_NO_DATA_NIGHTS} no-data nights
+ * <p>Final review I4 (revised): request-scoped Agora errors are only booked as "no data" once they
+ * are confirmed — by a later successful fetch in the same night or by the night's natural end. When
+ * {@value #MAX_CONSECUTIVE_REQUEST_ERRORS} request-scoped errors come in a row, EUNL.DE is probed
+ * once more: if it answers with bars, the streak was real per-symbol no-data (Yahoo-unknown or dead
+ * symbols surface as REQUEST errors) — a no-data night is booked for each and the night continues
+ * with a reset streak; if the probe fails or is empty, the night stops as source trouble (streak
+ * counts as source-failed, no no-data night). Without the probe, ten adjacent dead symbols at the
+ * head of the oldest-first queue would stop every night before anything else is measured and never
+ * be given up. For the same reason symbols that already have a no-data row (retries) are fetched
+ * after symbols without one. A symbol given up after {@value #MAX_NO_DATA_NIGHTS} no-data nights
  * is retried once {@value #NO_DATA_RETRY_DAYS} days after its last no-data night.
  *
  * <p>Final review I1b: an event is done when its event identity OR its unique-key tuple
@@ -60,6 +65,8 @@ public class BenchmarkOutcomeJob {
     static final int MAX_CONSECUTIVE_SOURCE_FAILURES = 3;
     static final int MAX_CONSECUTIVE_REQUEST_ERRORS = 10;
     static final int NO_DATA_RETRY_DAYS = 28;
+    /** Bars requested for the EUNL.DE health probe after a request-error streak. */
+    static final int PROBE_BARS = 5;
     /** EUNL/FX reach back past the oldest event's −60-trading-day picked window. */
     static final int CALENDAR_MARGIN_DAYS = 100;
 
@@ -123,7 +130,10 @@ public class BenchmarkOutcomeJob {
 
         int pending = 0, noData = 0, unknownCurrency = 0, sourceFailed = 0, rowsWritten = 0, noEntry = 0, delisted = 0;
         Map<String, BenchmarkOutcomeRepository.NoDataState> noDataStates = repo.noDataStates();
-        Map<String, List<MeasureEvent>> work = new LinkedHashMap<>();
+        // Oldest-first within each group; symbols with a no-data row (retries) after fresh ones,
+        // so dead symbols cannot pile up at the head of the queue (revised I4).
+        Map<String, List<MeasureEvent>> fresh = new LinkedHashMap<>();
+        Map<String, List<MeasureEvent>> retries = new LinkedHashMap<>();
         Map<String, String> currencyOf = new HashMap<>();
         for (MeasureEvent e : events) {
             if (openHorizons(e, done).isEmpty()) continue;
@@ -131,10 +141,18 @@ public class BenchmarkOutcomeJob {
             Optional<String> currency = CurrencyResolver.currencyOf(e.symbol());
             if (currency.isEmpty()) { unknownCurrency++; continue; }
             if (givenUp(noDataStates.get(e.symbol()), today)) { noData++; continue; }
-            if (!work.containsKey(e.symbol()) && work.size() >= maxSymbolsPerRun) { pending++; continue; }
-            work.computeIfAbsent(e.symbol(), s -> new ArrayList<>()).add(e);
+            (noDataStates.containsKey(e.symbol()) ? retries : fresh)
+                    .computeIfAbsent(e.symbol(), s -> new ArrayList<>()).add(e);
             currencyOf.put(e.symbol(), currency.get());
         }
+        Map<String, List<MeasureEvent>> work = new LinkedHashMap<>();
+        for (Map<String, List<MeasureEvent>> group : List.of(fresh, retries)) {
+            for (Map.Entry<String, List<MeasureEvent>> g : group.entrySet()) {
+                if (work.size() < maxSymbolsPerRun) work.put(g.getKey(), g.getValue());
+                else pending += g.getValue().size();
+            }
+        }
+        currencyOf.keySet().retainAll(work.keySet());
 
         Map<String, PriceSeries> fx = new HashMap<>();
         for (String cur : new TreeSet<>(currencyOf.values())) {
@@ -166,13 +184,21 @@ public class BenchmarkOutcomeJob {
                     consecutiveSourceFailures = 0;
                     requestErrorStreak.put(symbol, symbolEvents);
                     if (requestErrorStreak.size() >= MAX_CONSECUTIVE_REQUEST_ERRORS) {
-                        log.warn("benchmark run: {} request-scoped errors in a row (last {}: {}) — treated as source "
-                                        + "trouble, no no-data night recorded, rest of the night deferred",
-                                requestErrorStreak.size(), symbol, e.getMessage());
-                        sourceFailed += requestErrorStreak.size();
-                        for (List<MeasureEvent> streakEvents : requestErrorStreak.values()) pending += streakEvents.size();
-                        requestErrorStreak.clear();
-                        stopped = true;
+                        if (benchmarkAnswers()) {
+                            log.info("benchmark run: {} request-scoped errors in a row (last {}), {} still answers "
+                                            + "— booked as no-data, night continues",
+                                    requestErrorStreak.size(), symbol, BenchmarkBars.BENCHMARK_SYMBOL);
+                            noData += bookNoData(requestErrorStreak, today);
+                        } else {
+                            log.warn("benchmark run: {} request-scoped errors in a row (last {}: {}) and the {} probe "
+                                            + "failed — treated as source trouble, no no-data night recorded, rest of "
+                                            + "the night deferred",
+                                    requestErrorStreak.size(), symbol, e.getMessage(), BenchmarkBars.BENCHMARK_SYMBOL);
+                            sourceFailed += requestErrorStreak.size();
+                            for (List<MeasureEvent> streakEvents : requestErrorStreak.values()) pending += streakEvents.size();
+                            requestErrorStreak.clear();
+                            stopped = true;
+                        }
                     }
                 } else {
                     consecutiveSourceFailures++;
@@ -232,6 +258,15 @@ public class BenchmarkOutcomeJob {
         }
         return logged(new RunSummary(events.size(), rowsWritten, pending, noEntry, delisted, noData,
                 unknownCurrency, sourceFailed));
+    }
+
+    /** Health probe after a request-error streak: does EUNL.DE still answer with bars? */
+    private boolean benchmarkAnswers() {
+        try {
+            return !bars.fetch(BenchmarkBars.BENCHMARK_SYMBOL, PROBE_BARS).isEmpty();
+        } catch (MarketDataException e) {
+            return false;
+        }
     }
 
     /** Records one no-data night per confirmed request-error symbol; returns their event count. */

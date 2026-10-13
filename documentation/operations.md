@@ -948,10 +948,14 @@ never recomputed, so the deploy-day anchoring would stay in the numbers for good
    All of these count **events**, not symbols or instruments — one slow-moving symbol with several open
    events contributes to the count once per event. The initial backlog drains over several nights
    (150 instruments per night).
-   - A growing `source-failed` means Agora is not answering. Ten request-scoped Agora errors in a row
-     (for example "unknown symbol" for every request) are treated the same way: the night stops with a
-     WARN `… request-scoped errors in a row … rest of the night deferred`, those symbols count as
-     `source-failed`, and no no-data night is recorded for them.
+   - A growing `source-failed` means Agora is not answering. After ten request-scoped Agora errors in a
+     row (for example "unknown symbol" for every request) the job asks for EUNL.DE once more. If EUNL.DE
+     answers, the ten were genuinely dead symbols: each gets a no-data night (INFO `… request-scoped errors
+     in a row …, EUNL.DE still answers — booked as no-data, night continues`) and the run goes on. If the
+     probe fails or returns nothing, the night stops with a WARN `… request-scoped errors in a row … probe
+     failed … rest of the night deferred`, those symbols count as `source-failed`, and no no-data night is
+     recorded. Symbols that already have a no-data row are fetched after all others, so dead symbols
+     cannot block live ones.
    - `no-data` counts events whose symbol has nothing at all from Agora. A request-scoped error only
      counts as no-data once a later fetch in the same night succeeds or the night ends normally. The
      symbol is given up after 3 nights (`benchmark_symbol_no_data`) and retried once 28 days after its

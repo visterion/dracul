@@ -121,11 +121,6 @@ public class BenchmarkOutcomeRepository {
         return out;
     }
 
-    public int noDataNights(String symbol) {
-        return jdbc.sql("SELECT nights FROM benchmark_symbol_no_data WHERE symbol = :s")
-                .param("s", symbol).query(Integer.class).optional().orElse(0);
-    }
-
     /** Counts at most once per UTC night (the WHERE on the conflict branch). */
     public void recordNoData(String symbol, LocalDate night) {
         jdbc.sql("""

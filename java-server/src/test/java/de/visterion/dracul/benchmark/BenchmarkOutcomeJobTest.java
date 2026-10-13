@@ -9,6 +9,7 @@ import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 import org.slf4j.LoggerFactory;
 
 import java.time.Clock;
@@ -27,6 +28,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -267,27 +269,117 @@ class BenchmarkOutcomeJobTest {
         assertThat(s.pending()).isZero();
     }
 
-    /** Final review I4: ten request-scoped errors in a row are source trouble, not ten symbols
-     *  without data — the night stops, they count as source-failed, no no-data night is booked. */
-    @Test
-    void tenRequestScopedErrorsInARowStopTheNightWithoutBookingNoData() {
+    /** Ten dead symbols (REQUEST errors), oldest first, then one live symbol. */
+    private List<PreyRow> tenDeadThenOneLive() {
         List<PreyRow> prey = new ArrayList<>();
-        for (int i = 0; i < 11; i++) {
+        for (int i = 0; i < 10; i++) {
             String sym = "SYNQ" + (char) ('A' + i);
             prey.add(prey(sym, "2026-03-%02dT22:00:00Z".formatted(i + 1)));
-            if (i < 10) when(bars.fetch(eq(sym), anyInt())).thenThrow(requestError(sym));
+            when(bars.fetch(eq(sym), anyInt())).thenThrow(requestError(sym));
         }
+        prey.add(prey("SYNL", "2026-03-20T22:00:00Z"));
+        when(bars.fetch(eq("SYNL"), anyInt())).thenReturn(series(d(2026, 1, 5), d(2026, 6, 26), "10"));
+        return prey;
+    }
+
+    /** Revised I4 test (a): ten dead symbols at the head of the queue, EUNL.DE probe healthy → the
+     *  streak is real per-symbol no-data: booked, and the night continues to the live symbol. */
+    @Test
+    void tenRequestErrorsWithAHealthyProbeAreBookedAndTheNightContinues() {
+        List<PreyRow> prey = tenDeadThenOneLive();
         when(repo.findPrey()).thenReturn(prey);
 
         BenchmarkOutcomeJob.RunSummary s = job(150).runOnce();
 
-        verify(bars, never()).fetch(eq("SYNQK"), anyInt());
+        verify(repo, times(10)).recordNoData(anyString(), eq(TODAY));
+        verify(bars).fetch("EUNL.DE", BenchmarkOutcomeJob.PROBE_BARS);
+        verify(bars).fetch(eq("SYNL"), anyInt());
+        assertThat(s.rowsWritten()).isEqualTo(2);
+        assertThat(s.noData()).isEqualTo(10);
+        assertThat(s.sourceFailed()).isZero();
+    }
+
+    /** Revised I4 test (b): the next night the dead symbols have no-data rows, so they are fetched
+     *  after the live one — they cannot block it — and still progress toward give-up. */
+    @Test
+    void onTheNextNightDeadSymbolsQueueBehindLiveOnesAndKeepProgressing() {
+        List<PreyRow> prey = tenDeadThenOneLive();
+        when(repo.findPrey()).thenReturn(prey);
+        Map<String, BenchmarkOutcomeRepository.NoDataState> states = new java.util.HashMap<>();
+        for (int i = 0; i < 10; i++) {
+            states.put("SYNQ" + (char) ('A' + i), new BenchmarkOutcomeRepository.NoDataState(1, TODAY.minusDays(1)));
+        }
+        when(repo.noDataStates()).thenReturn(states);
+
+        BenchmarkOutcomeJob.RunSummary s = job(150).runOnce();
+
+        InOrder order = inOrder(bars);
+        order.verify(bars).fetch(eq("SYNL"), anyInt());
+        order.verify(bars).fetch(eq("SYNQA"), anyInt());
+        verify(repo, times(10)).recordNoData(anyString(), eq(TODAY));
+        assertThat(s.rowsWritten()).isEqualTo(2);
+        assertThat(s.noData()).isEqualTo(10);
+    }
+
+    /** Revised I4 test (c): ten request-scoped errors in a row and the EUNL.DE probe fails → source
+     *  trouble: the night stops, the streak counts as source-failed, no no-data night is booked. */
+    @Test
+    void tenRequestErrorsWithAFailedProbeStopTheNightWithoutBookingNoData() {
+        List<PreyRow> prey = tenDeadThenOneLive();
+        when(repo.findPrey()).thenReturn(prey);
+        when(bars.fetch(eq("EUNL.DE"), anyInt()))
+                .thenReturn(series(d(2026, 1, 5), d(2026, 6, 29), "100"))
+                .thenThrow(new MarketDataException(MarketDataException.Kind.UNAVAILABLE, "down",
+                        new AgoraUnavailableException("down")));
+
+        BenchmarkOutcomeJob.RunSummary s = job(150).runOnce();
+
+        verify(bars, never()).fetch(eq("SYNL"), anyInt());
         verify(repo, never()).recordNoData(anyString(), any());
         assertThat(s.sourceFailed()).isEqualTo(10);
         assertThat(s.noData()).isZero();
         assertThat(s.pending()).isEqualTo(11);
         assertThat(appender.list).anyMatch(e -> e.getLevel() == Level.WARN
-                && e.getFormattedMessage().contains("10 request-scoped errors in a row"));
+                && e.getFormattedMessage().contains("10 request-scoped errors in a row")
+                && e.getFormattedMessage().contains("probe failed"));
+    }
+
+    /** Revised I4 test (c'): an EMPTY probe answer counts as a failed probe. */
+    @Test
+    void anEmptyProbeAnswerAlsoStopsTheNight() {
+        List<PreyRow> prey = tenDeadThenOneLive();
+        when(repo.findPrey()).thenReturn(prey);
+        when(bars.fetch(eq("EUNL.DE"), anyInt()))
+                .thenReturn(series(d(2026, 1, 5), d(2026, 6, 29), "100"))
+                .thenReturn(PriceSeries.empty());
+
+        BenchmarkOutcomeJob.RunSummary s = job(150).runOnce();
+
+        verify(bars, never()).fetch(eq("SYNL"), anyInt());
+        verify(repo, never()).recordNoData(anyString(), any());
+        assertThat(s.sourceFailed()).isEqualTo(10);
+    }
+
+    /** Revised I4 test (d): a retry-due symbol (older event) is fetched after a fresh one; with a
+     *  cap of one symbol only the fresh one is fetched. */
+    @Test
+    void retryDueSymbolsAreOrderedAfterFreshOnes() {
+        when(repo.findPrey()).thenReturn(List.of(
+                prey("SYNR", "2026-03-01T22:00:00Z"), prey("SYNF", "2026-03-10T22:00:00Z")));
+        when(repo.noDataStates()).thenReturn(Map.of("SYNR",
+                new BenchmarkOutcomeRepository.NoDataState(3, TODAY.minusDays(28))));
+        when(bars.fetch(eq("SYNR"), anyInt())).thenReturn(series(d(2026, 1, 5), d(2026, 6, 26), "10"));
+        when(bars.fetch(eq("SYNF"), anyInt())).thenReturn(series(d(2026, 1, 5), d(2026, 6, 26), "10"));
+
+        job(150).runOnce();
+        InOrder order = inOrder(bars);
+        order.verify(bars).fetch(eq("SYNF"), anyInt());
+        order.verify(bars).fetch(eq("SYNR"), anyInt());
+
+        BenchmarkOutcomeJob.RunSummary capped = job(1).runOnce();
+        verify(bars, times(2)).fetch(eq("SYNF"), anyInt());
+        verify(bars, times(1)).fetch(eq("SYNR"), anyInt());
+        assertThat(capped.pending()).isEqualTo(1);
     }
 
     /** Final review I4: a successful fetch confirms the streak as real no-data and resets it. */
@@ -307,6 +399,7 @@ class BenchmarkOutcomeJobTest {
 
         verify(repo, times(10)).recordNoData(anyString(), eq(TODAY));
         verify(repo, never()).recordNoData(eq("SYNQJ"), any());
+        verify(bars, never()).fetch("EUNL.DE", BenchmarkOutcomeJob.PROBE_BARS);
         assertThat(s.noData()).isEqualTo(10);
         assertThat(s.sourceFailed()).isZero();
         assertThat(s.rowsWritten()).isEqualTo(2);

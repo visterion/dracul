@@ -65,16 +65,15 @@ class BenchmarkOutcomeRepositoryIT {
     @Test
     void noDataCountsAtMostOncePerNightAndClears() {
         String sym = uniq("SYNN");
-        assertThat(repo.noDataNights(sym)).isZero();
+        assertThat(repo.noDataStates()).doesNotContainKey(sym);
         repo.recordNoData(sym, LocalDate.of(2026, 6, 30));
         repo.recordNoData(sym, LocalDate.of(2026, 6, 30));
-        assertThat(repo.noDataNights(sym)).isEqualTo(1);
+        assertThat(repo.noDataStates()).containsEntry(sym,
+                new BenchmarkOutcomeRepository.NoDataState(1, LocalDate.of(2026, 6, 30)));
         repo.recordNoData(sym, LocalDate.of(2026, 7, 1));
-        assertThat(repo.noDataNights(sym)).isEqualTo(2);
         assertThat(repo.noDataStates()).containsEntry(sym,
                 new BenchmarkOutcomeRepository.NoDataState(2, LocalDate.of(2026, 7, 1)));
         repo.clearNoData(sym);
-        assertThat(repo.noDataNights(sym)).isZero();
         assertThat(repo.noDataStates()).doesNotContainKey(sym);
     }
 

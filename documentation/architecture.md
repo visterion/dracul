@@ -953,8 +953,9 @@ the EUNL horizon date exists → delisted (merger offer price when known, else l
 Agora `get_ohlc`, one symbol per call; EUNL and FX once per run; at most
 `dracul.benchmark.max-symbols-per-run` (150) instruments per night, oldest events first. A
 request-scoped Agora error is booked as a no-data night only once confirmed (a later success that night
-or the normal end of the run); 10 in a row stop the night as source trouble (`source-failed`, no no-data
-night). Given-up symbols (3 nights) are retried 28 days after their last no-data night. One summary
+or the normal end of the run). After 10 in a row EUNL.DE is probed once: if it answers, the 10 are booked
+as no-data and the night continues; if not, the night stops as source trouble (`source-failed`, no no-data
+night). Symbols with a no-data row are fetched after all others (oldest first within each group). Given-up symbols (3 nights) are retried 28 days after their last no-data night. One summary
 line per run: `benchmark run: events scanned=… rows written=… pending=… no-entry=… delisted=… no-data=…
 unknown-currency=… source-failed=…`. The read side is `GET /api/benchmark/summary` (see `api.md`): intervals
 are Newey–West over weekly means (lag = horizon/5 weeks), and every row carries the excluded counts.
