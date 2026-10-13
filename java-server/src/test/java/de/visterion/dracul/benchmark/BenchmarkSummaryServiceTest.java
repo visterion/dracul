@@ -41,7 +41,7 @@ class BenchmarkSummaryServiceTest {
         assertThat(s.benchmark()).isEqualTo("EUNL.DE");
         assertThat(s.decisionDate()).isEqualTo("2027-04-13");
         assertThat(s.minEvents()).isEqualTo(30);
-        assertThat(s.minWeeks()).isEqualTo(5);
+        assertThat(s.minWeeks()).isEqualTo(24);
         assertThat(s.depot()).isSameAs(block);
         assertThat(s.agents()).extracting(AgentBenchmark::agent).containsExactly("strigoi-syna", "strigoi-synb");
 
@@ -66,5 +66,26 @@ class BenchmarkSummaryServiceTest {
     void anInvalidDecisionDateFailsFast() {
         assertThatThrownBy(() -> new BenchmarkSummaryService(outcomes, candidates, depot, "April"))
                 .isInstanceOf(DateTimeParseException.class);
+    }
+
+    /** Final review M4 / spec §2.5: insider has no control group — paired is null even when a few
+     *  rejected clusters were measured. */
+    @Test
+    void insiderNeverGetsAPairedComparison() {
+        when(outcomes.findForStats()).thenReturn(List.of(
+                row(EventKind.SIGNAL, "strigoi-insider", null, 60, "0.01"),
+                row(EventKind.CANDIDATE, "strigoi-insider", true, 20, "0.05"),
+                row(EventKind.CANDIDATE, "strigoi-insider", false, 20, "0.01"),
+                row(EventKind.CANDIDATE, "strigoi-insider", true, 60, "0.05"),
+                row(EventKind.CANDIDATE, "strigoi-insider", false, 60, "0.01")));
+        when(candidates.coverageStart()).thenReturn(Map.of());
+
+        AgentBenchmark a = new BenchmarkSummaryService(outcomes, candidates, depot, "2027-04-13")
+                .summary("owner@example.com").agents().getFirst();
+
+        assertThat(a.agent()).isEqualTo("strigoi-insider");
+        assertThat(a.signal60().n()).isEqualTo(1);
+        assertThat(a.paired20()).isNull();
+        assertThat(a.paired60()).isNull();
     }
 }
