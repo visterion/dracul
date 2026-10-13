@@ -916,6 +916,30 @@ row (`action='ESCALATE'`) plus a Telegram CRITICAL alert.
   every prior `exec-v1.x` bump) — verify it alongside the existing history rows rather than expecting
   an in-place edit.
 
+### Benchmark measurement (2026-10) — rollout, backfill and what to watch
+
+1. Deploy as usual. Flyway applies V55. From the next hunter fetch on, the six pre-screen hunters write
+   `screen_candidate` rows: one INFO line `screen-candidate capture <agent>: stored=… duplicate=…
+   symbol-less=…` per fetch. Any `screen-candidate capture failed` WARN is a capture bug; the hunt itself
+   is unaffected.
+2. **One-time backfill** of the candidates recorded before the deploy:
+   - Set `DRACUL_BENCHMARK_IMPORT_TOKEN` to a fresh random value in the deployment's environment. The
+     value must reach the container's environment, not only an env file. Recreate the container.
+   - Run the operator's backfill script on the host. It reads the six hunters' recorded fetch-tool
+     outputs from the Vistierie database and POSTs them, grouped per (agent, fetched_at), in chunks to
+     `/api/benchmark/candidates/import` over the internal network. Dracul itself never gets access to
+     the Vistierie database.
+   - Re-running is safe: the second run reports everything as `duplicate`.
+   - Blank the token again and recreate the container. The endpoint is back to 404.
+3. From the first night on, `BenchmarkOutcomeJob` logs one line at 00:15 UTC: `benchmark run: events
+   scanned=… rows written=… pending=… no-entry=… delisted=… no-data=… unknown-currency=… source-failed=…`.
+   The initial backlog drains over several nights (150 instruments per night).
+   - A growing `source-failed` means Agora is not answering.
+   - `no-data` counts symbols Agora has nothing for. They are given up after 3 nights
+     (`benchmark_symbol_no_data`).
+4. Chronicle → **Benchmark** shows the result. Statuses stay "zu wenig Daten" until a Strigoi has 30
+   signal events across 5 calendar weeks at the 60-day horizon.
+
 ### `UNBOOKED_ROUND_TRIP`
 
 A signal's clientRef carries both an entry fill and an exit fill, the broker holds

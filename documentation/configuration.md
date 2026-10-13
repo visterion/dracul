@@ -766,6 +766,21 @@ research indicators via the existing read-only `AgoraClient`
 (`DRACUL_AGORA_BASE_URL` / `DRACUL_AGORA_TOKEN`); the trading-specific
 base URL/token above are additive and separate.
 
+## Benchmark measurement
+
+Nightly, code-only measurement of prey and pre-screen candidates against EUNL.DE in EUR (see
+`architecture.md` → "Benchmark measurement"). A **Dracul-internal cron** — no Vistierie agent, no budget,
+no `definition/reset`. Read-only against Agora, writes only `benchmark_outcome` /
+`benchmark_symbol_no_data`. Independent of `dracul.executor.enabled` and `dracul.strigoi.momentum.enabled`.
+
+| Env var / property | Default | Purpose |
+|---|---|---|
+| `DRACUL_BENCHMARK_ENABLED` (`dracul.benchmark.enabled`) | `true` | Registers `BenchmarkOutcomeJob`. Live capture into `screen_candidate` and the summary endpoint do not depend on it. |
+| `DRACUL_BENCHMARK_CRON` (`dracul.benchmark.cron`) | `0 15 0 * * 2-6` | Spring cron; the zone is fixed to **UTC** in code. Default 00:15 UTC Tue–Sat (after the US close of Mon–Fri). |
+| `DRACUL_BENCHMARK_MAX_SYMBOLS_PER_RUN` (`dracul.benchmark.max-symbols-per-run`) | `150` | Distinct instruments fetched per night (oldest pending events first); EUNL.DE and the FX pairs do not count. |
+| `DRACUL_BENCHMARK_DECISION_DATE` (`dracul.benchmark.decision-date`) | `2027-04-13` | Review date shown in Chronicle; validated as ISO date at startup. |
+| `DRACUL_BENCHMARK_IMPORT_TOKEN` (`dracul.benchmark.import-token`) | *(empty)* | Bearer for the one-time `POST /api/benchmark/candidates/import`. **Empty = the endpoint answers 404.** Set only for the backfill, blank it afterwards. |
+
 ## Stop-Proximity Watcher
 
 Deterministic intraday watcher that checks every live **depot-1** position's price (`HeldPositionService.openPositions`, joined to `position_context`) against its `active_stop` every ~15 minutes during the US session. `position_context` carries no ATR, so the watcher evaluates with ATR pinned to zero — `STOP_BREACHED` still fires normally, but the `STOP_PROXIMITY` warning band is effectively unavailable until ATR is added to the context model. Emits `STOP_PROXIMITY` (WARNING) and `STOP_BREACHED` (CRITICAL) alerts via the daywalker alert store (keyed by symbol, no `watchlist_item_id`), SSE panel, and Telegram. Gated off by default; enabling it requires Telegram bot-token and chat-id already configured (same `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` as gropar / morning report). This is a **Dracul-internal cron** — it does **not** register a Vistierie agent and requires no Vistierie budget change or `definition/reset`.

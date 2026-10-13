@@ -301,6 +301,9 @@ java -jar dracul-app/target/dracul-app-*.jar
 - **Backtests with discipline.** Every Strigoi has a backtest gate
   before it runs in production: look-ahead bias avoided, survivorship
   bias acknowledged, results documented.
+- **Measured against the ETF it competes with.** Every signal and every pre-screen candidate is scored
+  nightly against a broad world-equity ETF in EUR (20 and 60 trading days, week-clustered 95 % intervals),
+  and the LLM's pick is compared with what it rejected. A fixed review date decides which Strigoi stay on.
 
 ---
 

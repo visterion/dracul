@@ -35,7 +35,7 @@ Both documents are required reading before implementing any view.
 | 4 | Prey Detail | `/prey/:id` | Single prey card — signals, risks, kill criteria, thesis, outcome | Medium | ✅ Chronicle redesign |
 | 5 | Watchlist | `/watchlist` | Tracking-only monitoring of watched candidates (held positions live in Depots now) | Medium | ✅ Etappe 11 |
 | 6 | Pattern Library | `/patterns` | Approve Voievod lessons, view active patterns | Low | ✅ Etappe 11 |
-| 7 | Backtest | `/backtest` | Historical validation of Strigoi strategies | High | ✅ Etappe 13 |
+| 7 | Benchmark | `/benchmark` | Does any Strigoi beat the ETF? Decision countdown + rule, per-Strigoi signal and LLM-vs-pre-screen excess vs EUNL.DE with week-clustered 95 % intervals and a traffic light, paper-depot TWR vs EUNL. Replaces the static Backtest mock; `/backtest` redirects | High | ✅ 2026-10 |
 | 8 | Settings | `/settings` | Providers, budgets, agent config, notifications; embedded Schatzkammer (admin-only) | Variable | ✅ Etappe 11 |
 | 9 | Exit Signal Detail | `/exit-signal/:id` | Full rationale, fired rules, thesis status, position context (resolved by symbol against depot-1) | Low (prose) | ✅ |
 | 10 | Morning Report | `/report` | Daily morning report — per-position stop, +2R target, current price, distance-to-stop, and a read-only order ticket | Medium | ✅ |
@@ -162,7 +162,7 @@ as dead, so a later price recovery does not remove the badge.
 Present on every view:
 
 - **Top bar (64px)**: wordmark "DRACUL" left, navigation tabs center
-  (7 destinations: Chronicle, Watchlist, Depots, Report, Pattern Library, Backtest, Settings),
+  (7 destinations: Chronicle, Watchlist, Depots, Report, Pattern Library, Benchmark, Settings),
   moon-icon + avatar placeholder right.
 - **Bottom status bar (32px)**: operational summary from `useStatusStore` —
   `☾ 6 strigoi · 2 hunting · daywalker active · $0.43 today`
@@ -187,7 +187,7 @@ Below 960px:
   entries from a shared `useNavItems()` composable.
 - The top bar collapses to a slim header (wordmark + live-alert bell only); the
   status bar is hidden.
-- Multi-column view grids stack to a single column; data-dense tables (Backtest)
+- Multi-column view grids stack to a single column; data-dense tables (Benchmark)
   scroll horizontally via the global `.table-scroll` helper (no columns hidden);
   the Settings section nav becomes a horizontal scrollable chip row.
 - **Watchlist** switches from its two-pane layout to a **drill-in**: the list is
@@ -624,7 +624,7 @@ pointer-events: none) with a Phase 2 badge.
 ## Navigation structure
 
 The top-level nav destinations (Chronicle, Watchlist, Depots, Report, Proposals,
-Pattern Library, Backtest, Settings, Inspector) are available from both the desktop
+Pattern Library, Benchmark, Settings, Inspector) are available from both the desktop
 top-bar and the mobile bottom tab bar (`useNavItems()`, the single source of truth
 shared by both). Deep-linked views (Verdict Detail, Strigoi Detail, Prey Detail) are
 not in the nav but are reachable via in-app links.
@@ -640,7 +640,7 @@ not in the nav but are reachable via in-app links.
 - **Proposals** surfaces renfield's daily watchlist-review output — a read-only
   history of trade proposals, not an order ticket.
 - **Pattern Library** is reviewed periodically when the Voievod proposes new patterns.
-- **Backtest** is a reference view; the compute engine is deferred to Stufe 5.
+- **Benchmark** is reviewed on the decision date: green → keep, red → switch off, grey with enough data → switch off, too little data → the owner decides. Switching off is always manual.
 - **Settings** holds utility config plus the admin-only embedded Schatzkammer
   (Vistierie cost panel).
 
@@ -674,8 +674,7 @@ implemented against the real backend. Switch via `VITE_MOCK=false` in
 run against Testcontainers Postgres with seed data.
 
 **Frontend status** with `VITE_MOCK=false`: Views 1–5 + 8 fully wired
-to real backend data. Views 6 (Vistierie) and 7 (Backtest) remain
-intentional stubs pending their respective etappes.
+to real backend data. View 6 (Vistierie) became the embedded Schatzkammer; view 7 is now the live Benchmark view.
 
 ## Implementation status (Etappe 13)
 
@@ -689,12 +688,14 @@ ledger (gold/crimson fills by utilisation) plus a month-total row, an agent-spen
 trend (replacing the former ApexCharts area chart). Backend derives tier budgets from
 `application.yaml` config and aggregates provider costs from `VistierieClient`.
 
-**View 7 — Backtest** (`/backtest`): View structure complete, backtest engine deferred to
-Stufe 5 — Run button is disabled, data is hardcoded. Config panel: strigoi chip-group
-(multi-select), date range with preset chips, universe radio group, disabled "Run Backtest"
-button. Three recent backtest cards are clickable and switch the results section. Four
-result tabs: Overview (4 stat cards), Trades (8 simulated trades), Equity Curve (inline-SVG
-`LineChart` dual-series vs SPY), Comparison (strategy vs SPY table).
+**View 7 — Benchmark** (`/benchmark`, 2026-10, replaced the static Backtest mock; `/backtest` redirects):
+reads `GET /api/benchmark/summary` via `ApiClient.getBenchmarkSummary()` (404 or a non-JSON 200 → empty
+state). Header card with the countdown to `decisionDate` and the review rule (four `TagPill`s). One table
+row per Strigoi: status pill (`Vorsprung` / `Rückstand` / `kein Vorsprung erkennbar` / `zu wenig Daten`),
+signal 20/60-day mean excess with interval, N, weeks and hit rate, the paired LLM-vs-pre-screen difference
+(`—` when a group is empty), and "Daten seit". Paper-depot block (TWR vs EUNL, per source Strigoi) or an
+empty hint when the depot is not visible. Footnotes: no costs/taxes/dividends, coverage, echo paused since
+2026-10-03, week clustering. Tables scroll inside `.table-scroll` on mobile; the bottom nav carries the tab.
 
 ## Implementation status (Etappe 14)
 
@@ -754,7 +755,7 @@ the full interface. `getDashboardData()` in HttpVistierieClient now calls the re
 
 ## E2E Test Suite (Etappe 15)
 
-**Playwright E2E tests** (`chronicle/e2e/`): 22 spec files covering all views, navigation smoke tests, plus `responsive.spec.ts` (mobile shell + Watchlist drill-in, run at a 390×844 viewport via a file-level `test.use`) and five `responsive-*.spec.ts` regression specs (top-bar controls at narrow desktop, exit-signal/settings mobile layout, backtest breakpoint, detail-title gap — the Portfolio-specific mobile-layout spec was removed with the view in Task A9). Includes `report.spec.ts` (8 tests for the Morning Report view: container visibility, all three mock positions, order tickets, German read-only note, and per-position action pills) and `calibration.spec.ts` (8 tests for the Depots view's Calibration card, moved here from the retired Portfolio view in Task A9: container visibility, executor/hunter Brier scores, the reliability bucket table, the insufficient-data chip, veto-precision rows, the caveats footnote list, and behavior stat tiles). Tests run against `VITE_MOCK=true` (no backend required). Chromium only.
+**Playwright E2E tests** (`chronicle/e2e/`): 21 spec files covering all views, navigation smoke tests, plus `responsive.spec.ts` (mobile shell + Watchlist drill-in, run at a 390×844 viewport via a file-level `test.use`) and four `responsive-*.spec.ts` regression specs (top-bar controls at narrow desktop, exit-signal/settings mobile layout, detail-title gap — the Portfolio-specific mobile-layout spec was removed with the view in Task A9). Adds `benchmark.spec.ts` (view smoke, /backtest redirect, phone-width no-overflow, bottom-nav tab). Includes `report.spec.ts` (8 tests for the Morning Report view: container visibility, all three mock positions, order tickets, German read-only note, and per-position action pills) and `calibration.spec.ts` (8 tests for the Depots view's Calibration card, moved here from the retired Portfolio view in Task A9: container visibility, executor/hunter Brier scores, the reliability bucket table, the insufficient-data chip, veto-precision rows, the caveats footnote list, and behavior stat tiles). Tests run against `VITE_MOCK=true` (no backend required). Chromium only.
 
 Run locally: `cd chronicle && npm run test:e2e`
 
