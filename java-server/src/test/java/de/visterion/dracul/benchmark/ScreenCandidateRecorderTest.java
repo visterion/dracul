@@ -100,6 +100,9 @@ class ScreenCandidateRecorderTest {
         assertThat(appender.list).anySatisfy(e -> {
             assertThat(e.getLevel()).isEqualTo(Level.WARN);
             assertThat(e.getFormattedMessage()).startsWith("screen-candidate capture failed for strigoi-merger");
+            // The exception is passed as the last argument, so the stack trace is logged too.
+            assertThat(e.getThrowableProxy()).isNotNull();
+            assertThat(e.getThrowableProxy().getMessage()).isEqualTo("synthetic db failure");
         });
     }
 }

@@ -147,9 +147,9 @@ class BenchmarkOutcomeJobTest {
     @Test
     void theFxPairIsFetchedOncePerRun() {
         when(repo.findPrey()).thenReturn(List.of(
-                prey("0001.HK", "2026-03-01T22:00:00Z"), prey("0002.HK", "2026-03-02T22:00:00Z")));
-        when(bars.fetch(eq("0001.HK"), anyInt())).thenReturn(series(d(2026, 1, 5), d(2026, 6, 26), "10"));
-        when(bars.fetch(eq("0002.HK"), anyInt())).thenReturn(series(d(2026, 1, 5), d(2026, 6, 26), "10"));
+                prey("SYN1.HK", "2026-03-01T22:00:00Z"), prey("SYN2.HK", "2026-03-02T22:00:00Z")));
+        when(bars.fetch(eq("SYN1.HK"), anyInt())).thenReturn(series(d(2026, 1, 5), d(2026, 6, 26), "10"));
+        when(bars.fetch(eq("SYN2.HK"), anyInt())).thenReturn(series(d(2026, 1, 5), d(2026, 6, 26), "10"));
 
         BenchmarkOutcomeJob.RunSummary s = job(150).runOnce();
 

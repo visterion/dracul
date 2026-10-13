@@ -53,7 +53,7 @@ public class ScreenCandidateRecorder {
             log.info("screen-candidate capture {}: stored={} duplicate={} symbol-less={}",
                     agent, c.stored(), c.duplicate(), c.symbolLess());
         } catch (RuntimeException e) {
-            log.warn(WARN_PREFIX + " for {}: {}", agent, e.toString());
+            log.warn(WARN_PREFIX + " for {}: {}", agent, e.toString(), e);
         }
     }
 

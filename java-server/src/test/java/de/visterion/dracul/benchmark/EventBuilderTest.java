@@ -155,6 +155,11 @@ class EventBuilderTest {
         LocalDate day10 = cal.plus(lastAppearance, 10).orElseThrow();
         assertThat(rejected.settledOn(day10, cal)).isFalse();
 
+        // Boundary: exactly 60 trading days later the gap rule (> 60) could still extend the event.
+        LocalDate day60 = cal.plus(lastAppearance, 60).orElseThrow();
+        assertThat(cal.countBetween(lastAppearance, day60)).isEqualTo(60);
+        assertThat(rejected.settledOn(day60, cal)).isFalse();
+
         LocalDate day61 = cal.plus(lastAppearance, 61).orElseThrow();
         assertThat(day61.isAfter(lastAppearance.plusDays(EventBuilder.PICK_AFTER_CALENDAR_DAYS))).isTrue();
         assertThat(rejected.settledOn(day61, cal)).isTrue();

@@ -62,11 +62,11 @@ public class BenchmarkImportController {
         List<Group> groups = new ArrayList<>();
         for (JsonNode g : body) {
             JsonNode agentNode = g.path("agent");
-            String agent = agentNode.isTextual() ? agentNode.asString() : null;
+            String agent = agentNode.isString() ? agentNode.asString() : null;
             Optional<ScreenItemMapper> mapper = ScreenItemMappers.forAgent(agent);
             if (mapper.isEmpty()) return bad("unknown agent: " + agent);
             JsonNode fetchedAtNode = g.path("fetched_at");
-            if (!fetchedAtNode.isTextual()) {
+            if (!fetchedAtNode.isString()) {
                 return bad("fetched_at must be an ISO-8601 instant");
             }
             Instant fetchedAt;

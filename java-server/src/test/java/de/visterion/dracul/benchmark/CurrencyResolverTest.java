@@ -14,7 +14,7 @@ class CurrencyResolverTest {
             "SYN1,USD", "syn1,USD", "SYN-B,USD",
             "SYN2.DE,EUR", "SYN2.F,EUR", "SYN2.AS,EUR", "SYN2.PA,EUR", "SYN2.MI,EUR",
             "SYN2.MC,EUR", "SYN2.BR,EUR", "SYN2.VI,EUR", "SYN2.HE,EUR", "SYN2.LS,EUR",
-            "0001.HK,HKD", "SYN3.HK,HKD"})
+            "SYN1.HK,HKD", "SYN3.HK,HKD"})
     void knownSuffixesResolve(String symbol, String currency) {
         assertThat(CurrencyResolver.currencyOf(symbol)).contains(currency);
     }
