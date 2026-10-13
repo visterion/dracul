@@ -59,6 +59,12 @@ class BenchmarkImportControllerTest {
                 [{"agent":"strigoi-merger","fetched_at":"yesterday","items":[]}]""").getStatusCode().value())
                 .isEqualTo(400);
         assertThat(call(TOKEN, auth, """
+                [{"agent":"strigoi-merger","fetched_at":{"nested":"object"},"items":[]}]""").getStatusCode().value())
+                .isEqualTo(400);
+        assertThat(call(TOKEN, auth, """
+                [{"agent":"strigoi-merger","fetched_at":["2026-07-14T08:00:00Z"],"items":[]}]""").getStatusCode().value())
+                .isEqualTo(400);
+        assertThat(call(TOKEN, auth, """
                 [{"agent":"strigoi-merger","fetched_at":"2026-07-14T08:00:00Z"}]""").getStatusCode().value())
                 .isEqualTo(400);
         verifyNoInteractions(recorder);

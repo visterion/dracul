@@ -26,8 +26,10 @@ import java.util.Optional;
  * (spec 2026-10-13 §2.4). Machine auth: bearer {@code DRACUL_BENCHMARK_IMPORT_TOKEN}, compared in
  * constant time like the hunter webhooks; the path is excluded from the Cloudflare filter, so a
  * Cloudflare login alone never reaches it. A blank token switches the endpoint off — it answers
- * 404, not 401, so its existence is not advertised. The whole body is validated before anything is
- * stored; storing is idempotent (UNIQUE (agent, as_of_date, symbol)).
+ * 404, not 401, matching an unmapped path and not revealing that the endpoint merely sits disabled
+ * (a malformed-body 400 or wrong-method 405 can still leak path existence; Spring routes and parses
+ * before this class ever runs). The whole body is validated before anything is stored; storing is
+ * idempotent (UNIQUE (agent, as_of_date, symbol)).
  */
 @RestController
 @RequestMapping("/api/benchmark/candidates")
@@ -63,9 +65,13 @@ public class BenchmarkImportController {
             String agent = agentNode.isTextual() ? agentNode.asString() : null;
             Optional<ScreenItemMapper> mapper = ScreenItemMappers.forAgent(agent);
             if (mapper.isEmpty()) return bad("unknown agent: " + agent);
+            JsonNode fetchedAtNode = g.path("fetched_at");
+            if (!fetchedAtNode.isTextual()) {
+                return bad("fetched_at must be an ISO-8601 instant");
+            }
             Instant fetchedAt;
             try {
-                fetchedAt = Instant.parse(g.path("fetched_at").asString());
+                fetchedAt = Instant.parse(fetchedAtNode.asString());
             } catch (DateTimeParseException | IllegalArgumentException e) {
                 return bad("fetched_at must be an ISO-8601 instant");
             }
