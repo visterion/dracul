@@ -55,6 +55,22 @@ class OutcomeCalculatorTest {
         assertThat(row.entryRefDate()).isEqualTo(d(2026, 3, 1));
     }
 
+    /** Final review M1: compute applies the HKD 01:30 UTC cutoff — a 05:00 UTC reference on a
+     *  Monday enters Tuesday's open, while a USD reference at the same instant enters Monday. */
+    @Test
+    void theEntryCutoffFollowsTheInstrumentCurrency() {
+        PriceSeries bars = series(d(2026, 2, 2), d(2026, 4, 30), "10");
+        PriceSeries fx = series(d(2026, 1, 5), d(2026, 6, 30), "0.11");
+        MeasureEvent at0500 = new MeasureEvent(EventKind.SIGNAL, "strigoi-syna", "SYN3.HK", d(2026, 3, 2),
+                Instant.parse("2026-03-02T05:00:00Z"), null, d(2026, 3, 2), null);
+
+        BenchmarkOutcome hkd = complete(OutcomeCalculator.compute(at0500, 20, bars, "HKD", EUNL, CAL, fx));
+        BenchmarkOutcome usd = complete(OutcomeCalculator.compute(at0500, 20, bars, "USD", EUNL, CAL, fx));
+
+        assertThat(hkd.entryDate()).isEqualTo(d(2026, 3, 3));
+        assertThat(usd.entryDate()).isEqualTo(d(2026, 3, 2));
+    }
+
     @Test
     void eurInstrumentNeedsNoFx() {
         PriceSeries de = series(d(2026, 2, 2), d(2026, 4, 30), "20", Map.of(d(2026, 3, 30), "21"));

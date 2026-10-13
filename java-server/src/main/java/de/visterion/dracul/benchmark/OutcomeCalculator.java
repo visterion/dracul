@@ -44,9 +44,9 @@ public final class OutcomeCalculator {
     public static Result compute(MeasureEvent e, int horizon, PriceSeries instrument, String currency,
                                  PriceSeries eunl, TradingCalendar eunlCal, PriceSeries fx) {
         List<OhlcBar> bars = instrument.bars();
-        int entryIdx = EntryRule.entryIndex(bars, e.refAt());
+        int entryIdx = EntryRule.entryIndex(bars, e.refAt(), currency);
         if (entryIdx < 0) {
-            LocalDate eligible = EntryRule.firstEligibleDate(e.refAt());
+            LocalDate eligible = EntryRule.firstEligibleDate(e.refAt(), currency);
             if (eunlCal.countAfter(eligible.minusDays(1)) >= NO_ENTRY_EUNL_DAYS) {
                 return new Complete(BenchmarkOutcome.noEntry(e, horizon, currency));
             }
