@@ -14,6 +14,8 @@ import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.research.ResearchMemoryLinkRepository;
 import de.visterion.dracul.watchlist.WatchlistItem;
 import de.visterion.dracul.watchlist.WatchlistRepository;
+import de.visterion.dracul.benchmark.ScreenItemMapper;
+import de.visterion.dracul.benchmark.ScreenItemMappers;
 import de.visterion.dracul.webhook.HuntController;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -204,6 +206,7 @@ public class StrigoiLazarusWebhookController extends HuntController {
     @Override protected String defaultHorizon() { return "12m"; }
     @Override protected boolean skipBlankSymbol() { return true; }
     @Override protected String toolName() { return "fetch_quality_at_low_candidates"; }
+    @Override protected ScreenItemMapper screenItemMapper() { return ScreenItemMappers.LAZARUS; }
 
     @Override
     protected DataSourceResult<?> hunt(Map<String, Object> body) {

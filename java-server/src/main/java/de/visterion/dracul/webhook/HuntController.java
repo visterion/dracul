@@ -1,6 +1,8 @@
 package de.visterion.dracul.webhook;
 
 import de.visterion.dracul.agent.ToolFetchCache;
+import de.visterion.dracul.benchmark.ScreenCandidateRecorder;
+import de.visterion.dracul.benchmark.ScreenItemMapper;
 import de.visterion.dracul.error.ErrorResponse;
 import de.visterion.dracul.executor.PreySignalEmitter;
 import de.visterion.dracul.hivemem.HiveMemResearchService;
@@ -56,6 +58,12 @@ public abstract class HuntController {
      *  gracefully (fetch response simply omits active_patterns) rather than failing hunts. */
     @Autowired
     private ObjectProvider<PatternRepository> patternRepo;
+
+    /** Optional, field-injected like signalEmitter: benchmark capture of the pre-screen candidates
+     *  (spec 2026-10-13 §2.3). Absent bean (or a controller built outside Spring) → no capture;
+     *  the hunt itself is never affected. */
+    @Autowired
+    private ObjectProvider<ScreenCandidateRecorder> screenRecorder;
 
     protected HuntController(String token, PreyRepository preyRepo, ToolFetchCache cache,
             HiveMemResearchService memory, ResearchMemoryLinkRepository memoryLinks) {
@@ -212,6 +220,13 @@ public abstract class HuntController {
      *  "news"). Default is the candidate key; echo overrides it for fetchNews. */
     protected String outputKeyFor(HandlerMethod method) { return fetchOutputKey(); }
 
+    /** Benchmark capture hook (spec 2026-10-13 §2.3): the mapper that turns this hunter's fetch
+     *  items into {@code screen_candidate} rows. Default {@code null} = no capture — momentum
+     *  (ranking) and tech (book) keep it; the six pre-screen hunters override it. */
+    protected ScreenItemMapper screenItemMapper() {
+        return null;
+    }
+
     /** Subclasses call this from their own @PostMapping("/tools/...") method. */
     protected ResponseEntity<Map<String, Object>> handleFetch(String auth, Map<String, Object> body) {
         if (!authorized(auth)) return ResponseEntity.status(401).build();
@@ -253,6 +268,10 @@ public abstract class HuntController {
                                     agentName(), r.items().size(), r.health().partial(),
                                     r.health().truncated(), r.health().status());
                         }
+                        // Benchmark capture (spec 2026-10-13 §2.3): only a source that answered —
+                        // an unavailable fetch has no candidates to compare against. Inside the
+                        // supplier, so a cache hit never re-captures; best effort by contract.
+                        if (r.health().isHealthy()) captureScreenCandidates(r.items());
                         Map<String, Object> output = new java.util.HashMap<>();
                         output.put(fetchOutputKey(), r.items());
                         output.put("data_source_health", healthMap(r.health()));
@@ -289,6 +308,17 @@ public abstract class HuntController {
             }
             return ok(unavailable(Map.of(fetchOutputKey(), List.of()),
                     agentName(), GUARD_MARKER + e));
+        }
+    }
+
+    private void captureScreenCandidates(List<?> items) {
+        ScreenItemMapper itemMapper = screenItemMapper();
+        if (itemMapper == null || screenRecorder == null) return;
+        try {
+            screenRecorder.ifAvailable(rec -> rec.record(agentName(), itemMapper, items));
+        } catch (RuntimeException e) {
+            // The recorder never throws; this guards a failing bean lookup, under the same prefix.
+            log.warn(ScreenCandidateRecorder.WARN_PREFIX + " for {}: {}", agentName(), e.toString());
         }
     }
 

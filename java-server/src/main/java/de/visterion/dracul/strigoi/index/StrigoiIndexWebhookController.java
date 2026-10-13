@@ -10,6 +10,8 @@ import de.visterion.dracul.hunting.agora.IndexConstituent;
 import de.visterion.dracul.prey.Prey;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.research.ResearchMemoryLinkRepository;
+import de.visterion.dracul.benchmark.ScreenItemMapper;
+import de.visterion.dracul.benchmark.ScreenItemMappers;
 import de.visterion.dracul.webhook.HuntController;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -85,6 +87,7 @@ public class StrigoiIndexWebhookController extends HuntController {
     @Override protected String defaultHorizon() { return "1m"; }
     @Override protected boolean skipBlankSymbol() { return true; }
     @Override protected String toolName() { return "fetch_index_reconstitution_events"; }
+    @Override protected ScreenItemMapper screenItemMapper() { return ScreenItemMappers.INDEX; }
 
     /**
      * The four-phase lifecycle hunt (blueprint §2.9), on the same webhook cron:

@@ -6,6 +6,8 @@ import de.visterion.dracul.hunting.DataSourceHealth;
 import de.visterion.dracul.hunting.agora.AgoraFilings;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.research.ResearchMemoryLinkRepository;
+import de.visterion.dracul.benchmark.ScreenItemMapper;
+import de.visterion.dracul.benchmark.ScreenItemMappers;
 import de.visterion.dracul.webhook.HuntController;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -44,6 +46,7 @@ public class StrigoiInsiderWebhookController extends HuntController {
     @Override protected String defaultAnomalyType() { return "INSIDER_CLUSTER"; }
     @Override protected String fetchOutputKey() { return "clusters"; }
     @Override protected String toolName() { return "fetch_recent_clusters"; }
+    @Override protected ScreenItemMapper screenItemMapper() { return ScreenItemMappers.INSIDER; }
 
     @Override
     protected de.visterion.dracul.hunting.DataSourceResult<?> hunt(Map<String, Object> body) {

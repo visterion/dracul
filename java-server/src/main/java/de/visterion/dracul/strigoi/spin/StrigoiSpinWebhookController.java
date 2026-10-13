@@ -8,6 +8,8 @@ import de.visterion.dracul.hunting.agora.SpinoffFiling;
 import de.visterion.dracul.prey.Prey;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.research.ResearchMemoryLinkRepository;
+import de.visterion.dracul.benchmark.ScreenItemMapper;
+import de.visterion.dracul.benchmark.ScreenItemMappers;
 import de.visterion.dracul.webhook.HuntController;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -65,6 +67,7 @@ public class StrigoiSpinWebhookController extends HuntController {
     @Override protected String defaultHorizon() { return "6m"; }
     @Override protected boolean skipBlankSymbol() { return true; }
     @Override protected String toolName() { return "fetch_recent_spinoff_candidates"; }
+    @Override protected ScreenItemMapper screenItemMapper() { return ScreenItemMappers.SPIN; }
 
     /**
      * The four-phase lifecycle hunt (blueprint §3), on the same webhook cron:

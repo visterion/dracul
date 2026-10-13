@@ -9,6 +9,8 @@ import de.visterion.dracul.hunting.agora.AgoraEarnings;
 import de.visterion.dracul.hunting.agora.NewsHeadline;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.research.ResearchMemoryLinkRepository;
+import de.visterion.dracul.benchmark.ScreenItemMapper;
+import de.visterion.dracul.benchmark.ScreenItemMappers;
 import de.visterion.dracul.webhook.HuntController;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -63,6 +65,7 @@ public class StrigoiEchoWebhookController extends HuntController {
     @Override protected String agentName() { return "strigoi-echo"; }
     @Override protected String defaultAnomalyType() { return "PEAD"; }
     @Override protected String toolName() { return "fetch_recent_pead_candidates"; }
+    @Override protected ScreenItemMapper screenItemMapper() { return ScreenItemMappers.ECHO; }
 
     @Override
     protected DataSourceResult<?> hunt(Map<String, Object> body) {
