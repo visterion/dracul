@@ -107,6 +107,18 @@ public class BenchmarkOutcomeRepository {
         jdbc.sql("DELETE FROM benchmark_symbol_no_data WHERE symbol = :s").param("s", symbol).update();
     }
 
+    /** Measured rows only — NO_ENTRY has no excess and never enters a mean. */
+    public List<StatRow> findForStats() {
+        return jdbc.sql("""
+                SELECT kind, agent, picked, horizon_days, entry_date, excess
+                  FROM benchmark_outcome
+                 WHERE exit_kind <> 'NO_ENTRY' AND excess IS NOT NULL AND entry_date IS NOT NULL""")
+                .query((rs, i) -> new StatRow(EventKind.valueOf(rs.getString("kind")), rs.getString("agent"),
+                        rs.getObject("picked", Boolean.class), rs.getInt("horizon_days"),
+                        rs.getObject("entry_date", LocalDate.class), rs.getBigDecimal("excess")))
+                .list();
+    }
+
     private static BigDecimal decimalOrNull(String s) {
         if (s == null || s.isBlank()) return null;
         try {
