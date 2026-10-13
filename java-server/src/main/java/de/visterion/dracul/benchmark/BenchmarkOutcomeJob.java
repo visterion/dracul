@@ -39,6 +39,16 @@ import java.util.TreeSet;
  * {@link OutcomeCalculator#compute}, which would otherwise freeze it as a terminal NO_ENTRY on the
  * first night (an instrument with zero bars has no entry bar, and the EUNL calendar already has
  * plenty of trading days after T).
+ *
+ * <p>Final review I4: request-scoped Agora errors are only booked as "no data" once they are
+ * confirmed — by a later successful fetch in the same night or by the night's natural end. A
+ * streak of {@value #MAX_CONSECUTIVE_REQUEST_ERRORS} request-scoped errors in a row is treated as
+ * source trouble: the night stops, the streak's symbols count as source-failed and NO no-data
+ * night is recorded for them. A symbol given up after {@value #MAX_NO_DATA_NIGHTS} no-data nights
+ * is retried once {@value #NO_DATA_RETRY_DAYS} days after its last no-data night.
+ *
+ * <p>Final review I1b: an event is done when its event identity OR its unique-key tuple
+ * (kind, agent, symbol, entry_ref_date, horizon) already has a row.
  */
 @Component
 @ConditionalOnProperty(value = "dracul.benchmark.enabled", havingValue = "true", matchIfMissing = true)
@@ -48,6 +58,8 @@ public class BenchmarkOutcomeJob {
 
     static final int MAX_NO_DATA_NIGHTS = 3;
     static final int MAX_CONSECUTIVE_SOURCE_FAILURES = 3;
+    static final int MAX_CONSECUTIVE_REQUEST_ERRORS = 10;
+    static final int NO_DATA_RETRY_DAYS = 28;
     /** EUNL/FX reach back past the oldest event's −60-trading-day picked window. */
     static final int CALENDAR_MARGIN_DAYS = 100;
 
@@ -110,7 +122,7 @@ public class BenchmarkOutcomeJob {
         Set<String> done = new HashSet<>(repo.completedEventKeys());
 
         int pending = 0, noData = 0, unknownCurrency = 0, sourceFailed = 0, rowsWritten = 0, noEntry = 0, delisted = 0;
-        Map<String, Integer> noDataNights = new HashMap<>();
+        Map<String, BenchmarkOutcomeRepository.NoDataState> noDataStates = repo.noDataStates();
         Map<String, List<MeasureEvent>> work = new LinkedHashMap<>();
         Map<String, String> currencyOf = new HashMap<>();
         for (MeasureEvent e : events) {
@@ -118,7 +130,7 @@ public class BenchmarkOutcomeJob {
             if (!e.settledOn(today, cal)) { pending++; continue; }
             Optional<String> currency = CurrencyResolver.currencyOf(e.symbol());
             if (currency.isEmpty()) { unknownCurrency++; continue; }
-            if (noDataNights.computeIfAbsent(e.symbol(), repo::noDataNights) >= MAX_NO_DATA_NIGHTS) { noData++; continue; }
+            if (givenUp(noDataStates.get(e.symbol()), today)) { noData++; continue; }
             if (!work.containsKey(e.symbol()) && work.size() >= maxSymbolsPerRun) { pending++; continue; }
             work.computeIfAbsent(e.symbol(), s -> new ArrayList<>()).add(e);
             currencyOf.put(e.symbol(), currency.get());
@@ -135,10 +147,13 @@ public class BenchmarkOutcomeJob {
         }
 
         int consecutiveSourceFailures = 0;
+        // Request-scoped errors not yet booked as no-data (symbol → its events), see class doc (I4).
+        Map<String, List<MeasureEvent>> requestErrorStreak = new LinkedHashMap<>();
+        boolean stopped = false;
         for (Map.Entry<String, List<MeasureEvent>> w : work.entrySet()) {
             String symbol = w.getKey();
             List<MeasureEvent> symbolEvents = w.getValue();
-            if (consecutiveSourceFailures >= MAX_CONSECUTIVE_SOURCE_FAILURES) {
+            if (stopped || consecutiveSourceFailures >= MAX_CONSECUTIVE_SOURCE_FAILURES) {
                 pending += symbolEvents.size();
                 continue;
             }
@@ -149,8 +164,16 @@ public class BenchmarkOutcomeJob {
                 AgoraUnavailableException a = AgoraUnavailableException.unwrap(e);
                 if (a != null && a.scope() == AgoraUnavailableException.Scope.REQUEST) {
                     consecutiveSourceFailures = 0;
-                    repo.recordNoData(symbol, today);
-                    noData += symbolEvents.size();
+                    requestErrorStreak.put(symbol, symbolEvents);
+                    if (requestErrorStreak.size() >= MAX_CONSECUTIVE_REQUEST_ERRORS) {
+                        log.warn("benchmark run: {} request-scoped errors in a row (last {}: {}) — treated as source "
+                                        + "trouble, no no-data night recorded, rest of the night deferred",
+                                requestErrorStreak.size(), symbol, e.getMessage());
+                        sourceFailed += requestErrorStreak.size();
+                        for (List<MeasureEvent> streakEvents : requestErrorStreak.values()) pending += streakEvents.size();
+                        requestErrorStreak.clear();
+                        stopped = true;
+                    }
                 } else {
                     consecutiveSourceFailures++;
                     sourceFailed++;
@@ -159,6 +182,7 @@ public class BenchmarkOutcomeJob {
                 }
                 continue;
             }
+            noData += bookNoData(requestErrorStreak, today);
             consecutiveSourceFailures = 0;
             if (series.isEmpty()) {
                 // Controller ruling: empty bars go to no-data/attempt-limit, never into
@@ -180,11 +204,13 @@ public class BenchmarkOutcomeJob {
                             rowsWritten++;
                         } else {
                             // Plan ruling F4: the unique key already existed — not an error, just a
-                            // concurrent or re-scanned write. Logged once, never thrown.
+                            // concurrent write. Logged once: from the next night on the event is
+                            // done by its unique-key tuple (final review I1b), never thrown.
                             log.warn("benchmark run: {} already has a row for {}/{}/{} h{} — skipped",
                                     e.kind(), e.agent(), e.symbol(), e.eventStart(), h);
                         }
                         done.add(BenchmarkOutcomeRepository.eventKey(e.kind(), e.agent(), e.symbol(), e.eventStart(), h));
+                        done.add(BenchmarkOutcomeRepository.refKey(e.kind(), e.agent(), e.symbol(), e.refDate(), h));
                         if (row.exitKind() == ExitKind.NO_ENTRY) eventNoEntry = true;
                         if (row.exitKind() == ExitKind.DELISTED_OFFER || row.exitKind() == ExitKind.DELISTED_LAST) {
                             eventDelisted = true;
@@ -198,16 +224,40 @@ public class BenchmarkOutcomeJob {
                 if (eventDelisted) delisted++;
             }
         }
+        if (consecutiveSourceFailures >= MAX_CONSECUTIVE_SOURCE_FAILURES) {
+            // The night was cut by a source outage — unconfirmed request errors stay unbooked.
+            for (List<MeasureEvent> streakEvents : requestErrorStreak.values()) pending += streakEvents.size();
+        } else {
+            noData += bookNoData(requestErrorStreak, today);
+        }
         return logged(new RunSummary(events.size(), rowsWritten, pending, noEntry, delisted, noData,
                 unknownCurrency, sourceFailed));
+    }
+
+    /** Records one no-data night per confirmed request-error symbol; returns their event count. */
+    private int bookNoData(Map<String, List<MeasureEvent>> streak, LocalDate today) {
+        int events = 0;
+        for (Map.Entry<String, List<MeasureEvent>> s : streak.entrySet()) {
+            repo.recordNoData(s.getKey(), today);
+            events += s.getValue().size();
+        }
+        streak.clear();
+        return events;
+    }
+
+    /** Given up after {@value #MAX_NO_DATA_NIGHTS} nights; retried once {@value #NO_DATA_RETRY_DAYS}
+     *  days after the last no-data night (a failed retry books a new night and restarts the wait). */
+    static boolean givenUp(BenchmarkOutcomeRepository.NoDataState state, LocalDate today) {
+        if (state == null || state.nights() < MAX_NO_DATA_NIGHTS) return false;
+        return today.isBefore(state.lastNight().plusDays(NO_DATA_RETRY_DAYS));
     }
 
     private static List<Integer> openHorizons(MeasureEvent e, Set<String> done) {
         List<Integer> open = new ArrayList<>();
         for (int h : OutcomeCalculator.HORIZONS) {
-            if (!done.contains(BenchmarkOutcomeRepository.eventKey(e.kind(), e.agent(), e.symbol(), e.eventStart(), h))) {
-                open.add(h);
-            }
+            boolean byEvent = done.contains(BenchmarkOutcomeRepository.eventKey(e.kind(), e.agent(), e.symbol(), e.eventStart(), h));
+            boolean byUniqueKey = done.contains(BenchmarkOutcomeRepository.refKey(e.kind(), e.agent(), e.symbol(), e.refDate(), h));
+            if (!byEvent && !byUniqueKey) open.add(h);
         }
         return open;
     }

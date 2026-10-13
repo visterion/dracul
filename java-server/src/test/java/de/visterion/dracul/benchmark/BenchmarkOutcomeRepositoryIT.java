@@ -44,8 +44,10 @@ class BenchmarkOutcomeRepositoryIT {
         String agent = uniq("strigoi-syn");
         assertThat(repo.insert(row(agent, "SYNA", 20))).isTrue();
         assertThat(repo.insert(row(agent, "SYNA", 20))).isFalse();
-        assertThat(repo.completedEventKeys()).contains(BenchmarkOutcomeRepository.eventKey(
-                EventKind.CANDIDATE, agent, "SYNA", LocalDate.of(2026, 3, 2), 20));
+        assertThat(repo.completedEventKeys()).contains(
+                BenchmarkOutcomeRepository.eventKey(EventKind.CANDIDATE, agent, "SYNA", LocalDate.of(2026, 3, 2), 20),
+                // Final review I1b: the unique-key tuple (entry_ref_date 2026-03-01) is a done key too.
+                BenchmarkOutcomeRepository.refKey(EventKind.CANDIDATE, agent, "SYNA", LocalDate.of(2026, 3, 1), 20));
     }
 
     @Test
@@ -68,8 +70,11 @@ class BenchmarkOutcomeRepositoryIT {
         assertThat(repo.noDataNights(sym)).isEqualTo(1);
         repo.recordNoData(sym, LocalDate.of(2026, 7, 1));
         assertThat(repo.noDataNights(sym)).isEqualTo(2);
+        assertThat(repo.noDataStates()).containsEntry(sym,
+                new BenchmarkOutcomeRepository.NoDataState(2, LocalDate.of(2026, 7, 1)));
         repo.clearNoData(sym);
         assertThat(repo.noDataNights(sym)).isZero();
+        assertThat(repo.noDataStates()).doesNotContainKey(sym);
     }
 
     @Test

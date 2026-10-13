@@ -6,8 +6,10 @@ import org.springframework.stereotype.Repository;
 import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.time.LocalDate;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /** Reads prey + screen_candidate for event building; owns benchmark_outcome and
@@ -46,14 +48,30 @@ public class BenchmarkOutcomeRepository {
         return kind.name() + "|" + agent + "|" + symbol + "|" + eventStart + "|" + horizon;
     }
 
-    /** One key per already written (kind, agent, symbol, event_start_date, horizon) — plan ruling R5. */
+    /** Key of the table's UNIQUE tuple (kind, agent, symbol, entry_ref_date, horizon_days). */
+    public static String refKey(EventKind kind, String agent, String symbol, LocalDate entryRefDate, int horizon) {
+        return "ref|" + kind.name() + "|" + agent + "|" + symbol + "|" + entryRefDate + "|" + horizon;
+    }
+
+    /**
+     * Two keys per written row: its event identity ({@link #eventKey}, plan ruling R5) AND its
+     * unique-key tuple ({@link #refKey}). An event counts as done when EITHER exists (final review
+     * I1b) — otherwise an event whose insert hit the unique key under a different event_start_date
+     * would be refetched and re-warned every night.
+     */
     public Set<String> completedEventKeys() {
-        return new HashSet<>(jdbc.sql("""
-                SELECT kind, agent, symbol, event_start_date, horizon_days FROM benchmark_outcome""")
-                .query((rs, i) -> eventKey(EventKind.valueOf(rs.getString("kind")), rs.getString("agent"),
-                        rs.getString("symbol"), rs.getObject("event_start_date", LocalDate.class),
-                        rs.getInt("horizon_days")))
-                .list());
+        Set<String> keys = new HashSet<>();
+        jdbc.sql("""
+                SELECT kind, agent, symbol, event_start_date, entry_ref_date, horizon_days FROM benchmark_outcome""")
+                .query(rs -> {
+                    EventKind kind = EventKind.valueOf(rs.getString("kind"));
+                    String agent = rs.getString("agent");
+                    String symbol = rs.getString("symbol");
+                    int h = rs.getInt("horizon_days");
+                    keys.add(eventKey(kind, agent, symbol, rs.getObject("event_start_date", LocalDate.class), h));
+                    keys.add(refKey(kind, agent, symbol, rs.getObject("entry_ref_date", LocalDate.class), h));
+                });
+        return keys;
     }
 
     /** @return true when written; false when the unique key already existed. */
@@ -86,6 +104,21 @@ public class BenchmarkOutcomeRepository {
                 .param("excess", o.excess())
                 .param("exitKind", o.exitKind().name())
                 .update() == 1;
+    }
+
+    /** No-data bookkeeping of one symbol: consecutive no-data nights and the last such night. */
+    public record NoDataState(int nights, LocalDate lastNight) {
+    }
+
+    /** All no-data rows in one query (one SELECT per run instead of one per symbol). */
+    public Map<String, NoDataState> noDataStates() {
+        Map<String, NoDataState> out = new HashMap<>();
+        jdbc.sql("SELECT symbol, nights, last_night FROM benchmark_symbol_no_data")
+                .query(rs -> {
+                    out.put(rs.getString("symbol"),
+                            new NoDataState(rs.getInt("nights"), rs.getObject("last_night", LocalDate.class)));
+                });
+        return out;
     }
 
     public int noDataNights(String symbol) {
