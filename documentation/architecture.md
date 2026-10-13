@@ -937,7 +937,10 @@ executor). It measures two things, never mixed:
 - **Candidate events** — consecutive `screen_candidate` appearances (gap > 60 EUNL trading days = new
   event). *Picked* when a prey of the same agent and symbol falls into [first appearance − 60 trading
   days, last appearance + 5 calendar days]; picked events are measured from the prey, rejected ones
-  from the first appearance (and only once 5 calendar days have passed since the last appearance).
+  from the first appearance, and only once settled — **both** more than 5 calendar days **and** more
+  than 60 EUNL trading days have passed since the last appearance (`MeasureEvent.settledOn`), not
+  calendar days alone, since a reappearance within the trading-day gap could still extend the same
+  event or a late prey could still flip it to picked.
 
 Entry is the open of the instrument's first trading day whose open is after the reference (before 07:00
 UTC the reference's own date counts). Exit is the close of the h-th bar after entry (h = 20, 60).

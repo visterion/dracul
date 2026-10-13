@@ -925,21 +925,27 @@ row (`action='ESCALATE'`) plus a Telegram CRITICAL alert.
 2. **One-time backfill** of the candidates recorded before the deploy:
    - Set `DRACUL_BENCHMARK_IMPORT_TOKEN` to a fresh random value in the deployment's environment. The
      value must reach the container's environment, not only an env file. Recreate the container.
-   - Run the operator's backfill script with `--dry-run` first: it prints per-agent fetch/item counts
-     and POSTs nothing. Compare the total against the known candidate-row count from the audit before
-     running it for real.
-   - Run the operator's backfill script on the host. It reads the six hunters' recorded fetch-tool
-     outputs from the Vistierie database and POSTs them, grouped per (agent, fetched_at), in chunks to
-     `/api/benchmark/candidates/import` over the internal network. Dracul itself never gets access to
-     the Vistierie database.
+   - Run the operator's backfill script on the host with `--dry-run` first: it prints per-agent
+     fetch/item counts and POSTs nothing. Compare the total against the known candidate-row count from
+     the audit, then run it for real (same script, without the flag). It reads the six hunters' recorded
+     fetch-tool outputs from the Vistierie database and POSTs them, grouped per (agent, fetched_at), in
+     chunks to `/api/benchmark/candidates/import` over the internal network. Dracul itself never gets
+     access to the Vistierie database.
    - Re-running is safe: the second run reports everything as `duplicate`.
    - Blank the token again and recreate the container. The endpoint is back to 404.
 3. From the first night on, `BenchmarkOutcomeJob` logs one line at 00:15 UTC: `benchmark run: events
    scanned=… rows written=… pending=… no-entry=… delisted=… no-data=… unknown-currency=… source-failed=…`.
-   The initial backlog drains over several nights (150 instruments per night).
+   All of these count **events**, not symbols or instruments — one slow-moving symbol with several open
+   events contributes to the count once per event. The initial backlog drains over several nights
+   (150 instruments per night).
    - A growing `source-failed` means Agora is not answering.
-   - `no-data` counts symbols Agora has nothing for. They are given up after 3 nights
-     (`benchmark_symbol_no_data`).
+   - `no-data` counts events whose symbol has nothing at all from Agora. The symbol is given up after
+     3 nights (`benchmark_symbol_no_data`).
+   - If EUNL.DE itself is unreachable or returns no bars, the whole run stops early: one WARN
+     (`… unavailable — nothing measured tonight` or `… served no bars — nothing measured tonight`) and
+     a summary line of `events scanned=0 … source-failed=1` — nothing is written that night. A missing
+     `<CUR>EUR=X` FX series is narrower: only the events in that currency stay `pending`
+     (`fx series missing`); everything else still runs.
 4. Chronicle → **Benchmark** shows the result. Statuses stay "zu wenig Daten" until a Strigoi has 30
    signal events across 5 calendar weeks at the 60-day horizon.
 

@@ -1307,7 +1307,7 @@ Human endpoint behind Cloudflare Access. Response:
 | `agents[].signal20` / `signal60` | prey events: `n`, `weeks`, `mean`, `median`, `hitRate`, `clusteredMean`, `ciLow`, `ciHigh` |
 | `agents[].paired20` / `paired60` | picked vs rejected pre-screen candidates: `pickedN`, `pickedMean`, `pickedWeeks`, `rejectedN`, `rejectedMean`, `rejectedWeeks`, `difference`, `ciLow`, `ciHigh`; `null` when either group is empty |
 | `agents[].status` | `GREEN` (ciLow > 0), `RED` (ciHigh < 0), `GREY`, or `INSUFFICIENT` (< 30 events or < 5 weeks), from `signal60` |
-| `depot` | `null` when the executor connection is not visible to the caller; else `connection`, `from`, `to`, `twr`, `benchmarkReturn`, `excess`, `byStrigoi[]` (`strigoi`, `positions`, `openPositions`, `capitalEur`, `returnEur`, `benchmarkReturn`, `excess`, `skipped`) |
+| `depot` | `null` when the executor connection is not visible to the caller, or when nothing can be computed (e.g. no equity-curve points and no positions); else `connection`, `from`, `to`, `twr`, `benchmarkReturn`, `excess`, `byStrigoi[]` (`strigoi`, `positions`, `openPositions`, `capitalEur`, `returnEur`, `benchmarkReturn`, `excess`, `skipped`) |
 
 Intervals are 95 % t-intervals over **ISO-week means of the entry date** (events of one week share the
 market); `ciLow`/`ciHigh` are `null` below 5 weeks. `mean`/`median`/`hitRate` are event-level; the
