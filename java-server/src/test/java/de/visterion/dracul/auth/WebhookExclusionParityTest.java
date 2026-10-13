@@ -85,7 +85,8 @@ class WebhookExclusionParityTest {
             "/api/executor/tools/exit-position", "/api/executor/tools/add-tranche",
             "/api/executor/complete",
             "/api/voievod/tools/fetch-candidates", "/api/voievod/complete",
-            "/api/renfield/complete");
+            "/api/renfield/complete",
+            "/api/benchmark/candidates/import");
 
     // Keeps the context bootable without a real Vistierie; GenericAgentRegistrar calls
     // getAgent/registerAgent on this mock at startup (mirrors AgentRegistrationParityTest).
