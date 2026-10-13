@@ -775,7 +775,7 @@ no `definition/reset`. Read-only against Agora, writes only `benchmark_outcome` 
 
 | Env var / property | Default | Purpose |
 |---|---|---|
-| `DRACUL_BENCHMARK_ENABLED` (`dracul.benchmark.enabled`) | `true` | Registers `BenchmarkOutcomeJob`. Live capture into `screen_candidate` and the summary endpoint do not depend on it. |
+| `DRACUL_BENCHMARK_ENABLED` (`dracul.benchmark.enabled`) | `true` | Registers `BenchmarkOutcomeJob`. Live capture into `screen_candidate` and the summary endpoint do not depend on it. Set `false` for the first deploy until the one-time backfill is imported (`operations.md` → "Benchmark measurement"). |
 | `DRACUL_BENCHMARK_CRON` (`dracul.benchmark.cron`) | `0 15 0 * * 2-6` | Spring cron; the zone is fixed to **UTC** in code. Default 00:15 UTC Tue–Sat (after the US close of Mon–Fri). |
 | `DRACUL_BENCHMARK_MAX_SYMBOLS_PER_RUN` (`dracul.benchmark.max-symbols-per-run`) | `150` | Distinct instruments fetched per night (oldest pending events first); EUNL.DE and the FX pairs do not count. |
 | `DRACUL_BENCHMARK_DECISION_DATE` (`dracul.benchmark.decision-date`) | `2027-04-13` | Review date shown in Chronicle; validated as ISO date at startup. |

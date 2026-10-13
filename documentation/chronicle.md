@@ -35,7 +35,7 @@ Both documents are required reading before implementing any view.
 | 4 | Prey Detail | `/prey/:id` | Single prey card — signals, risks, kill criteria, thesis, outcome | Medium | ✅ Chronicle redesign |
 | 5 | Watchlist | `/watchlist` | Tracking-only monitoring of watched candidates (held positions live in Depots now) | Medium | ✅ Etappe 11 |
 | 6 | Pattern Library | `/patterns` | Approve Voievod lessons, view active patterns | Low | ✅ Etappe 11 |
-| 7 | Benchmark | `/benchmark` | Does any Strigoi beat the ETF? Decision countdown + rule, per-Strigoi signal and LLM-vs-pre-screen excess vs EUNL.DE with week-clustered 95 % intervals and a traffic light, paper-depot TWR vs EUNL. Replaces the static Backtest mock; `/backtest` redirects | High | ✅ 2026-10 |
+| 7 | Benchmark | `/benchmark` | Does any Strigoi beat the ETF? Decision countdown + rule, per-Strigoi signal and LLM-vs-pre-screen excess vs EUNL.DE with 95 % intervals (Newey–West over weekly means, lag = horizon/5 weeks), excluded-event counts and a traffic light, paper-depot TWR vs EUNL. Replaces the static Backtest mock; `/backtest` redirects | High | ✅ 2026-10 |
 | 8 | Settings | `/settings` | Providers, budgets, agent config, notifications; embedded Schatzkammer (admin-only) | Variable | ✅ Etappe 11 |
 | 9 | Exit Signal Detail | `/exit-signal/:id` | Full rationale, fired rules, thesis status, position context (resolved by symbol against depot-1) | Low (prose) | ✅ |
 | 10 | Morning Report | `/report` | Daily morning report — per-position stop, +2R target, current price, distance-to-stop, and a read-only order ticket | Medium | ✅ |
@@ -693,9 +693,13 @@ reads `GET /api/benchmark/summary` via `ApiClient.getBenchmarkSummary()` (404 or
 state). Header card with the countdown to `decisionDate` and the review rule (four `TagPill`s). One table
 row per Strigoi: status pill (`Vorsprung` / `Rückstand` / `kein Vorsprung erkennbar` / `zu wenig Daten`),
 signal 20/60-day mean excess with interval, N, weeks and hit rate, the paired LLM-vs-pre-screen difference
-(`—` when a group is empty), and "Daten seit". Paper-depot block (TWR vs EUNL, per source Strigoi) or an
+(`—` when a group is empty, always for insider), and "Daten seit". Under the Strigoi name,
+"ausgeschlossen: n" with a tooltip per group (signal / picked / rejected × no entry / no data / currency)
+when events never reached a mean. Paper-depot block (TWR vs EUNL, per source Strigoi) or an
 empty hint when the depot is not visible. Footnotes: no costs/taxes/dividends, coverage, echo paused since
-2026-10-03, week clustering. Tables scroll inside `.table-scroll` on mobile; the bottom nav carries the tab.
+2026-10-03, the interval method (weekly means + Newey–West), the timing asymmetry of the paired comparison
+(rejected measured from first appearance and only after > 60 trading days, picked from the LLM pick), and
+what "ausgeschlossen" counts. Tables scroll inside `.table-scroll` on mobile; the bottom nav carries the tab.
 
 ## Implementation status (Etappe 14)
 

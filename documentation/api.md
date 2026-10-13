@@ -1301,17 +1301,23 @@ Human endpoint behind Cloudflare Access. Response:
 |---|---|
 | `benchmark` | `"EUNL.DE"` |
 | `decisionDate` | `dracul.benchmark.decision-date` (default `2027-04-13`) |
-| `minEvents`, `minWeeks` | status thresholds (30 / 5) |
+| `minEvents`, `minWeeks` | status thresholds (30 events / 24 weeks — the weeks the 60-day interval needs) |
 | `agents[]` | one row per Strigoi with a measured outcome or a captured pre-screen candidate, sorted by name |
 | `agents[].coverageStart` | first `screen_candidate.as_of_date` of that agent, or `null` |
 | `agents[].signal20` / `signal60` | prey events: `n`, `weeks`, `mean`, `median`, `hitRate`, `clusteredMean`, `ciLow`, `ciHigh` |
-| `agents[].paired20` / `paired60` | picked vs rejected pre-screen candidates: `pickedN`, `pickedMean`, `pickedWeeks`, `rejectedN`, `rejectedMean`, `rejectedWeeks`, `difference`, `ciLow`, `ciHigh`; `null` when either group is empty |
-| `agents[].status` | `GREEN` (ciLow > 0), `RED` (ciHigh < 0), `GREY`, or `INSUFFICIENT` (< 30 events or < 5 weeks), from `signal60` |
+| `agents[].paired20` / `paired60` | picked vs rejected pre-screen candidates: `pickedN`, `pickedMean`, `pickedWeeks`, `rejectedN`, `rejectedMean`, `rejectedWeeks`, `difference`, `ciLow`, `ciHigh`; `null` when either group is empty, and always for `strigoi-insider` (no control group — the LLM picks almost every cluster) |
+| `agents[].status` | `GREEN` (ciLow > 0), `RED` (ciHigh < 0), `GREY`, or `INSUFFICIENT` (< 30 events, < 24 weeks or no interval), from `signal60` |
+| `agents[].excluded` | events that never reach a mean: `signal`, `picked`, `rejected` (each `noEntry`, `noData`, `unknownCurrency`, `total`) and `total`. `noEntry` = distinct events with a terminal `NO_ENTRY` row. `noData` / `unknownCurrency` = never-measured (agent, symbol) pairs whose symbol is given up (≥ 3 no-data nights) or has no known quote currency — counted per pair, a lower bound on the events; a candidate pair counts as `picked` when the agent has a prey for the symbol. An agent whose every event is excluded still gets a row |
 | `depot` | `null` when the executor connection is not visible to the caller, or when nothing can be computed (e.g. no equity-curve points and no positions); else `connection`, `from`, `to`, `twr`, `benchmarkReturn`, `excess`, `byStrigoi[]` (`strigoi`, `positions`, `openPositions`, `capitalEur`, `returnEur`, `benchmarkReturn`, `excess`, `skipped`) |
 
-Intervals are 95 % t-intervals over **ISO-week means of the entry date** (events of one week share the
-market); `ciLow`/`ciHigh` are `null` below 5 weeks. `mean`/`median`/`hitRate` are event-level; the
-interval is centred on `clusteredMean`. The paired difference uses Welch over weekly means.
+Intervals use **Newey–West over weekly means (lag = horizon/5 weeks)**: events are first averaged per
+ISO week of the entry date (events of one week share the market); because a 20-/60-trading-day holding
+window spans 4/12 weeks, consecutive weekly means overlap, so the standard error of their mean is a
+Newey–West (Bartlett kernel) estimate with lag L = ceil(horizon/5) weeks (4 for 20 d, 12 for 60 d),
+scaled by n/(n−1) (L = 0 gives the plain s/√n). Interval = `clusteredMean` ± t(weeks − 1) · SE;
+`ciLow`/`ciHigh` are `null` below max(5, 2L) weeks — 8 for 20 d, 24 for 60 d. `mean`/`median`/`hitRate`
+are event-level. The paired difference uses the Newey–West variance per group and Welch–Satterthwaite
+degrees of freedom on (weeks − 1) per group, with the same minimum weeks per group.
 
 ### `POST /api/benchmark/candidates/import`
 

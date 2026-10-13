@@ -438,8 +438,8 @@ label for tables Dracul owns, not a Postgres `CREATE SCHEMA dracul`.
 | `cooldown` | (V18) Symbols temporarily excluded from fresh entries after any exit (hard or soft): `symbol`, `reason`, `expires_at` (`dracul.executor.cooldown-days` out), `exception_condition` |
 | `outcome_log` | (V23) One row per `decision_log` entry/reject signal, written exclusively by the nightly `OutcomeBatchJob` — the Executor itself never reads or writes this table. `kind` is `TRADE` (a closed position's realized outcome: quantity-weighted `realized_r` across partial exits, `mae_r`/`mfe_r`, `slippage_vs_limit`, whipsaw flags `reentry_within_10d`/`roundtrip_under_5d`) or `COUNTERFACTUAL` (a rejected signal's "what would have happened", via `HypotheticalREngine`: `hypothetical` JSONB with `r_after_20d`/`r_after_60d`/`would_have_stopped_out`/`skipped_reason`/`entry_source`/`entry_price` (SP8), plus `hunter_label` — the triple-barrier +1R-before-1R label used for hunter-confidence calibration). Unique on `log_id_ref` (the source `decision_log.log_id`), upserted idempotently (`ON CONFLICT ... DO UPDATE`) so re-runs refine rather than duplicate a row. See "Outcome batch job" below |
 | `screen_candidate` | (V55) Every pre-screen candidate a capture hunter (echo, lazarus, merger, insider, spin, index) handed its LLM — picked **and** rejected. Written by `ScreenCandidateRecorder`, live from `HuntController.handleFetch` (inside the fetch-cache supplier, only when the source is not `unavailable`, `source = LIVE`) or by the one-time import endpoint (`source = BACKFILL`). Columns: `agent`, `fetched_at`, `as_of_date` (UTC day), `symbol` (`symbol`/`ticker`, else the first ticker in the first parenthesis of `companyName`), `score` (informational), `extra` (merger `offerPrice`), `source`. `UNIQUE (agent, as_of_date, symbol)`, `ON CONFLICT DO NOTHING`. Capture is best effort: a failure logs `screen-candidate capture failed` and never changes the hunt response. |
-| `benchmark_outcome` | (V55) One row per `(kind, agent, symbol, entry_ref_date, horizon_days)`, written once complete by `BenchmarkOutcomeJob`, never recomputed. `kind` `SIGNAL` (prey) or `CANDIDATE` (`picked` true/false); `event_start_date` is the event identity; `horizon_days` 20 or 60; entry/exit date and price, `currency`, `fx_entry`/`fx_exit`, `return_eur`, `benchmark_return_eur` (EUNL.DE), `excess`; `exit_kind` `NORMAL`, `DELISTED_OFFER`, `DELISTED_LAST` or `NO_ENTRY` (terminal, `excess` null). |
-| `benchmark_symbol_no_data` | (V55) Nights on which Agora served no bars for a symbol; the job gives the symbol up at 3 and deletes the row when bars appear. |
+| `benchmark_outcome` | (V55) One row per `(kind, agent, symbol, entry_ref_date, horizon_days)`, written once complete by `BenchmarkOutcomeJob`, never recomputed. `kind` `SIGNAL` (prey) or `CANDIDATE` (`picked` true/false); `event_start_date` is the event identity (an event also counts as done when its unique-key tuple already has a row); `horizon_days` 20 or 60; entry/exit date and price, `currency`, `fx_entry`/`fx_exit`, `return_eur`, `benchmark_return_eur` (EUNL.DE), `excess`; `exit_kind` `NORMAL`, `DELISTED_OFFER`, `DELISTED_LAST` or `NO_ENTRY` (terminal, `excess` null). |
+| `benchmark_symbol_no_data` | (V55) Nights on which Agora served no bars for a symbol (`nights`, `last_night`); the job gives the symbol up at 3, retries it once 28 days after `last_night`, and deletes the row when bars appear. |
 
 **Doctrine note:** Dracul is deliberately, otherwise strictly, read-only —
 no order routing, no broker integration, no auto-trading (see `README.md`
@@ -942,17 +942,22 @@ executor). It measures two things, never mixed:
   calendar days alone, since a reappearance within the trading-day gap could still extend the same
   event or a late prey could still flip it to picked.
 
-Entry is the open of the instrument's first trading day whose open is after the reference (before 07:00
-UTC the reference's own date counts). Exit is the close of the h-th bar after entry (h = 20, 60).
+Entry is the open of the instrument's first trading day whose open is after the reference: before the
+instrument's same-day cutoff the reference's own date counts, otherwise the next trading day. The cutoff
+is the market open in UTC per currency — USD and EUR 07:00, HKD 01:30 (Hong Kong opens 09:30 HKT). Exit is the close of the h-th bar after entry (h = 20, 60).
 Benchmark: EUNL.DE close on the last Xetra day before entry → last Xetra day ≤ exit. Currency from the
 symbol suffix (none → USD; `.DE .F .AS .PA .MI .MC .BR .VI .HE .LS` → EUR; `.HK` → HKD; anything else,
 including `.L`, unknown and skipped); EUR via `<CUR>EUR=X` closes. No bar after the reference while EUNL
 has ≥ 10 trading days after it → `NO_ENTRY`; an instrument without bars for ≥ 10 EUNL trading days once
 the EUNL horizon date exists → delisted (merger offer price when known, else last close). Bars come from
 Agora `get_ohlc`, one symbol per call; EUNL and FX once per run; at most
-`dracul.benchmark.max-symbols-per-run` (150) instruments per night, oldest events first. One summary
+`dracul.benchmark.max-symbols-per-run` (150) instruments per night, oldest events first. A
+request-scoped Agora error is booked as a no-data night only once confirmed (a later success that night
+or the normal end of the run); 10 in a row stop the night as source trouble (`source-failed`, no no-data
+night). Given-up symbols (3 nights) are retried 28 days after their last no-data night. One summary
 line per run: `benchmark run: events scanned=… rows written=… pending=… no-entry=… delisted=… no-data=…
-unknown-currency=… source-failed=…`. The read side is `GET /api/benchmark/summary` (see `api.md`).
+unknown-currency=… source-failed=…`. The read side is `GET /api/benchmark/summary` (see `api.md`): intervals
+are Newey–West over weekly means (lag = horizon/5 weeks), and every row carries the excluded counts.
 
 ## Data Flow
 

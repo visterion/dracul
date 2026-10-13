@@ -918,7 +918,16 @@ row (`action='ESCALATE'`) plus a Telegram CRITICAL alert.
 
 ### Benchmark measurement (2026-10) — rollout, backfill and what to watch
 
-1. Deploy as usual. Flyway applies V55. From the next hunter fetch on, the six pre-screen hunters write
+**Order matters: deploy with the nightly job off, import the backfill, then switch the job on.** If
+`BenchmarkOutcomeJob` runs before the backfill, it builds candidate events from the live rows alone, so
+every candidate event starts ("first appearance") on the deploy day. Picked events settle at once and are
+written with that identity; once the older backfilled appearances arrive, the same candidate run starts
+weeks earlier, so the event gets a different identity and a different picked/rejected window. Rows are
+never recomputed, so the deploy-day anchoring would stay in the numbers for good.
+
+1. Deploy with `DRACUL_BENCHMARK_ENABLED=false`. Put it in the compose service's `environment:` list —
+   that is what reaches the container, an env file alone does not. Flyway applies V55. Live capture and
+   the summary endpoint do not depend on the flag. From the next hunter fetch on, the six pre-screen hunters write
    `screen_candidate` rows: one INFO line `screen-candidate capture <agent>: stored=… duplicate=…
    symbol-less=…` per fetch. Any `screen-candidate capture failed` WARN is a capture bug; the hunt itself
    is unaffected.
@@ -932,22 +941,30 @@ row (`action='ESCALATE'`) plus a Telegram CRITICAL alert.
      chunks to `/api/benchmark/candidates/import` over the internal network. Dracul itself never gets
      access to the Vistierie database.
    - Re-running is safe: the second run reports everything as `duplicate`.
-   - Blank the token again and recreate the container. The endpoint is back to 404.
-3. From the first night on, `BenchmarkOutcomeJob` logs one line at 00:15 UTC: `benchmark run: events
+   - Blank the token again **and** remove `DRACUL_BENCHMARK_ENABLED=false` (or set it to `true`), then
+     recreate the container. The import endpoint is back to 404 and the nightly job is registered.
+3. From the first night after enabling, `BenchmarkOutcomeJob` logs one line at 00:15 UTC: `benchmark run: events
    scanned=… rows written=… pending=… no-entry=… delisted=… no-data=… unknown-currency=… source-failed=…`.
    All of these count **events**, not symbols or instruments — one slow-moving symbol with several open
    events contributes to the count once per event. The initial backlog drains over several nights
    (150 instruments per night).
-   - A growing `source-failed` means Agora is not answering.
-   - `no-data` counts events whose symbol has nothing at all from Agora. The symbol is given up after
-     3 nights (`benchmark_symbol_no_data`).
+   - A growing `source-failed` means Agora is not answering. Ten request-scoped Agora errors in a row
+     (for example "unknown symbol" for every request) are treated the same way: the night stops with a
+     WARN `… request-scoped errors in a row … rest of the night deferred`, those symbols count as
+     `source-failed`, and no no-data night is recorded for them.
+   - `no-data` counts events whose symbol has nothing at all from Agora. A request-scoped error only
+     counts as no-data once a later fetch in the same night succeeds or the night ends normally. The
+     symbol is given up after 3 nights (`benchmark_symbol_no_data`) and retried once 28 days after its
+     last no-data night; a failed retry books another night and the wait restarts.
    - If EUNL.DE itself is unreachable or returns no bars, the whole run stops early: one WARN
      (`… unavailable — nothing measured tonight` or `… served no bars — nothing measured tonight`) and
      a summary line of `events scanned=0 … source-failed=1` — nothing is written that night. A missing
      `<CUR>EUR=X` FX series is narrower: only the events in that currency stay `pending`
      (`fx series missing`); everything else still runs.
 4. Chronicle → **Benchmark** shows the result. Statuses stay "zu wenig Daten" until a Strigoi has 30
-   signal events across 5 calendar weeks at the 60-day horizon.
+   signal events across 24 calendar weeks at the 60-day horizon (Newey–West lag 12 weeks → 2 × 12).
+   Each row shows "ausgeschlossen: n" for events that never reach a mean (no entry, symbol given up,
+   unknown currency).
 
 ### `UNBOOKED_ROUND_TRIP`
 
