@@ -47,7 +47,15 @@
           </thead>
           <tbody>
             <tr v-for="a in summary.agents" :key="a.agent" data-testid="benchmark-row" :data-agent="a.agent">
-              <td class="tkr">{{ a.agent }}</td>
+              <td class="tkr">
+                {{ a.agent }}
+                <div
+                  v-if="a.excluded?.total"
+                  class="bm-sub bm-excluded"
+                  :title="excludedTitle(a.excluded)"
+                  :data-testid="`benchmark-excluded-${a.agent}`"
+                >{{ t('benchmark.cell.excluded', { n: a.excluded.total }) }}</div>
+              </td>
               <td>
                 <TagPill :tone="statusTone(a.status)" :data-testid="`benchmark-status-${a.agent}`">
                   {{ t(`benchmark.status.${a.status}`) }}
@@ -143,6 +151,8 @@
         <li>{{ t('benchmark.notes.coverage') }}</li>
         <li>{{ t('benchmark.notes.echoPaused') }}</li>
         <li>{{ t('benchmark.notes.ci') }}</li>
+        <li>{{ t('benchmark.notes.timing') }}</li>
+        <li>{{ t('benchmark.notes.excluded') }}</li>
       </ul>
     </template>
   </div>
@@ -156,7 +166,14 @@ import BatGlyph from '../components/common/BatGlyph.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
 import TagPill from '../components/common/TagPill.vue'
 import { useApi } from '../api'
-import type { BenchmarkPairedStats, BenchmarkSignalStats, BenchmarkStatus, BenchmarkSummary } from '../api/types'
+import type {
+  BenchmarkExcludedCounts,
+  BenchmarkExclusions,
+  BenchmarkPairedStats,
+  BenchmarkSignalStats,
+  BenchmarkStatus,
+  BenchmarkSummary,
+} from '../api/types'
 import { formatNumber, formatPercent, pctClass } from '../utils/format'
 
 const { t } = useI18n()
@@ -227,6 +244,19 @@ function signalSub(s: BenchmarkSignalStats): string {
   ].filter(Boolean).join(' · ')
 }
 
+function excludedGroup(c: BenchmarkExcludedCounts): string {
+  return t('benchmark.cell.excludedGroup', {
+    total: c.total, noEntry: c.noEntry, noData: c.noData, unknownCurrency: c.unknownCurrency,
+  })
+}
+
+/** Tooltip: the excluded events split by group and reason (final review I3). */
+function excludedTitle(x: BenchmarkExclusions): string {
+  return t('benchmark.cell.excludedTitle', {
+    signal: excludedGroup(x.signal), picked: excludedGroup(x.picked), rejected: excludedGroup(x.rejected),
+  })
+}
+
 function pairedSub(p: BenchmarkPairedStats): string {
   return [
     ciText(p.ciLow, p.ciHigh),
@@ -242,6 +272,7 @@ function pairedSub(p: BenchmarkPairedStats): string {
 .bm-rules { list-style: none; padding: 0; margin: 0 0 var(--space-4); display: grid; gap: var(--space-2); }
 .bm-rules li { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; color: var(--bone-ivory-dim); }
 .bm-note { margin: var(--space-2) 0 0; font-size: var(--text-body-sm); color: var(--ash-gray); }
+.bm-excluded { cursor: help; text-decoration: underline dotted; }
 .bm-sub { font-size: var(--text-micro); color: var(--ash-gray); font-family: var(--font-mono); }
 .bm-depot { margin-bottom: var(--space-6); }
 .bm-depot-head { color: var(--ash-gray); margin-bottom: var(--space-4); }

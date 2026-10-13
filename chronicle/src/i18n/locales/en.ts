@@ -328,7 +328,7 @@ export default {
       red: 'switch off',
       grey: 'with enough data, switch off — no edge after a year is the answer',
       insufficient: 'your call: keep measuring or switch off as too rare to matter',
-      basis: 'Traffic light = 60-day excess return of the signals (prey) vs EUNL, 95 % interval over calendar weeks; "too little data" below {minEvents} events or {minWeeks} weeks.',
+      basis: 'Traffic light = 60-day excess return of the signals (prey) vs EUNL, 95 % interval over calendar-week means; "too little data" below {minEvents} events or {minWeeks} weeks.',
       owner: 'Nothing is ever switched off automatically — that is always your decision.',
     },
     status: {
@@ -359,6 +359,9 @@ export default {
       hit: '{n} % hits',
       picked: 'picked {n}',
       rejected: 'rejected {n}',
+      excluded: 'excluded: {n}',
+      excludedTitle: 'Signal: {signal} — picked: {picked} — rejected: {rejected}',
+      excludedGroup: '{total} (no entry {noEntry} · no data {noData} · currency {unknownCurrency})',
     },
     depot: {
       empty: 'No depot comparison available.',
@@ -379,7 +382,9 @@ export default {
       costs: 'No costs, taxes or dividends.',
       coverage: '"Data since" = first stored pre-screen candidate of this strigoi; older prey count as signals but not in the paired comparison. Signal-only strigoi (tech, momentum) store no pre-screen candidates, so "data since" stays "—" for them.',
       echoPaused: 'strigoi-echo has been paused since 2026-10-03; its data stays as history.',
-      ci: 'Intervals are clustered by calendar week — events of the same week share the market.',
+      ci: 'Intervals: events are first averaged per calendar week (events of the same week share the market), then a Newey–West standard error over the weekly means with lag = horizon/5 weeks, because 20/60-day holding windows overlap across 4/12 weeks. An interval needs at least 8 (20 d) or 24 weeks (60 d).',
+      timing: 'Paired comparison: rejected candidates are measured from their first appearance and only once they have not reappeared for more than 60 trading days; picked ones from the moment of the LLM pick (prey). The two groups are therefore not perfectly time-matched.',
+      excluded: '"excluded" = events without a measurement: no entry (no price after the signal), given up after 3 nights without price data (retried after 28 days) or unknown currency. The last two count per symbol, not per event.',
     },
   },
   patterns: {

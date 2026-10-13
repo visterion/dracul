@@ -328,7 +328,7 @@ export default {
       red: 'abschalten',
       grey: 'mit genug Daten abschalten — kein Vorsprung nach einem Jahr ist die Antwort',
       insufficient: 'du entscheidest: weiter messen oder als zu selten abschalten',
-      basis: 'Ampel = 60-Tage-Überrendite der Signale (Prey) gegen EUNL, 95-%-Intervall über Kalenderwochen; „zu wenig Daten" unter {minEvents} Ereignissen oder {minWeeks} Wochen.',
+      basis: 'Ampel = 60-Tage-Überrendite der Signale (Prey) gegen EUNL, 95-%-Intervall über Kalenderwochen-Mittel; „zu wenig Daten" unter {minEvents} Ereignissen oder {minWeeks} Wochen.',
       owner: 'Abgeschaltet wird nie automatisch — das machst immer du.',
     },
     status: {
@@ -359,6 +359,9 @@ export default {
       hit: '{n} % Treffer',
       picked: 'gewählt {n}',
       rejected: 'verworfen {n}',
+      excluded: 'ausgeschlossen: {n}',
+      excludedTitle: 'Signal: {signal} — gewählt: {picked} — verworfen: {rejected}',
+      excludedGroup: '{total} (ohne Einstieg {noEntry} · keine Daten {noData} · Währung {unknownCurrency})',
     },
     depot: {
       empty: 'Kein Depot-Vergleich verfügbar.',
@@ -379,7 +382,9 @@ export default {
       costs: 'Ohne Kosten, Steuern und Dividenden.',
       coverage: '„Daten seit" = erster gespeicherter Vorfilter-Kandidat dieses Strigoi; ältere Prey zählen als Signal, aber nicht im Paarvergleich. Für reine Signal-Strigoi (tech, momentum) gibt es keine Vorfilter-Kandidaten — „Daten seit" bleibt dort „—".',
       echoPaused: 'strigoi-echo ist seit 2026-10-03 pausiert; seine Daten bleiben als Historie.',
-      ci: 'Intervalle sind nach Kalenderwoche gebündelt — Ereignisse derselben Woche teilen sich den Markt.',
+      ci: 'Intervalle: erst Mittel je Kalenderwoche (Ereignisse derselben Woche teilen sich den Markt), dann Newey–West-Standardfehler über die Wochenmittel mit Lag = Horizont/5 Wochen, weil sich 20-/60-Tage-Haltefenster über 4/12 Wochen überlappen. Ein Intervall braucht mindestens 8 (20 T) bzw. 24 Wochen (60 T).',
+      timing: 'Paarvergleich: verworfene Kandidaten werden ab ihrem ersten Auftauchen gemessen und erst, wenn sie über 60 Handelstage nicht wieder auftauchen; gewählte ab dem Zeitpunkt der LLM-Wahl (Prey). Beide Gruppen sind also zeitlich nicht exakt deckungsgleich.',
+      excluded: '„ausgeschlossen" = Ereignisse ohne Messwert: ohne Einstieg (kein Kurs nach dem Signal), aufgegeben nach 3 Nächten ohne Kursdaten (nach 28 Tagen erneut versucht) oder unbekannte Währung. Die letzten beiden zählen je Symbol, nicht je Ereignis.',
     },
   },
   patterns: {

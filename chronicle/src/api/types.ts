@@ -807,14 +807,33 @@ export interface BenchmarkPairedStats {
   ciHigh: number | null
 }
 
+/** Events of one group that never reach a mean. noEntry = distinct NO_ENTRY events; noData /
+ *  unknownCurrency = never-measured (agent, symbol) pairs whose symbol is given up after ≥ 3
+ *  no-data nights / has no known quote currency (a lower bound on the events behind them). */
+export interface BenchmarkExcludedCounts {
+  noEntry: number
+  noData: number
+  unknownCurrency: number
+  total: number
+}
+
+export interface BenchmarkExclusions {
+  signal: BenchmarkExcludedCounts
+  picked: BenchmarkExcludedCounts
+  rejected: BenchmarkExcludedCounts
+  total: number
+}
+
 export interface BenchmarkAgent {
   agent: string
   coverageStart: string | null
   signal20: BenchmarkSignalStats
   signal60: BenchmarkSignalStats
+  /** null without a control group — and always for strigoi-insider (picks ~all clusters). */
   paired20: BenchmarkPairedStats | null
   paired60: BenchmarkPairedStats | null
   status: BenchmarkStatus
+  excluded: BenchmarkExclusions
 }
 
 export interface BenchmarkStrigoiDepot {
@@ -842,6 +861,7 @@ export interface BenchmarkSummary {
   benchmark: string
   decisionDate: string
   minEvents: number
+  /** Weeks needed for the 60-day interval that drives the status (Newey–West lag 12 → 24). */
   minWeeks: number
   agents: BenchmarkAgent[]
   depot: BenchmarkDepot | null
