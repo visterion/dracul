@@ -471,6 +471,12 @@ dracul:
       max-per-run: ${DRACUL_OUTCOME_RECONSTRUCT_ANCHORS_MAX_PER_RUN:100}
       shadow-sample: ${DRACUL_OUTCOME_RECONSTRUCT_ANCHORS_SHADOW_SAMPLE:10}
   benchmark:
+    # Nightly measurement of prey + pre-screen candidates against EUNL.DE in EUR (spec 2026-10-13).
+    # Read-only against Agora, writes only benchmark_* tables; independent of executor/momentum.
+    enabled: ${DRACUL_BENCHMARK_ENABLED:true}
+    cron: ${DRACUL_BENCHMARK_CRON:0 15 0 * * 2-6}
+    max-symbols-per-run: ${DRACUL_BENCHMARK_MAX_SYMBOLS_PER_RUN:150}
+    decision-date: ${DRACUL_BENCHMARK_DECISION_DATE:2027-04-13}
     # One-time backfill import (POST /api/benchmark/candidates/import). Empty = endpoint answers 404.
     import-token: ${DRACUL_BENCHMARK_IMPORT_TOKEN:}
   pattern-scorer:
