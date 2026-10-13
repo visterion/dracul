@@ -152,6 +152,44 @@ public class BenchmarkOutcomeRepository {
                 .list();
     }
 
+    /** Distinct NO_ENTRY events per (kind, agent, picked) — final review I3. */
+    public List<ExclusionCounter.NoEntryCount> noEntryCounts() {
+        return jdbc.sql("""
+                SELECT kind, agent, picked, count(DISTINCT (symbol, event_start_date)) AS events
+                  FROM benchmark_outcome
+                 WHERE exit_kind = 'NO_ENTRY'
+                 GROUP BY kind, agent, picked""")
+                .query((rs, i) -> new ExclusionCounter.NoEntryCount(EventKind.valueOf(rs.getString("kind")),
+                        rs.getString("agent"), rs.getObject("picked", Boolean.class), rs.getInt("events")))
+                .list();
+    }
+
+    /**
+     * (kind, agent, symbol) pairs with no benchmark_outcome row at all — final review I3. SIGNAL
+     * pairs come from prey; CANDIDATE pairs from screen_candidate, picked = the same agent has a
+     * prey for the symbol.
+     */
+    public List<ExclusionCounter.UnmeasuredPair> unmeasuredPairs() {
+        return jdbc.sql("""
+                SELECT DISTINCT 'SIGNAL' AS kind, p.discovered_by AS agent, upper(btrim(p.symbol)) AS symbol,
+                       CAST(NULL AS boolean) AS picked
+                  FROM prey p
+                 WHERE btrim(p.symbol) <> ''
+                   AND NOT EXISTS (SELECT 1 FROM benchmark_outcome o
+                                    WHERE o.kind = 'SIGNAL' AND o.agent = p.discovered_by
+                                      AND o.symbol = upper(btrim(p.symbol)))
+                UNION ALL
+                SELECT DISTINCT 'CANDIDATE', c.agent, c.symbol,
+                       EXISTS (SELECT 1 FROM prey p WHERE p.discovered_by = c.agent
+                                                      AND upper(btrim(p.symbol)) = c.symbol)
+                  FROM screen_candidate c
+                 WHERE NOT EXISTS (SELECT 1 FROM benchmark_outcome o
+                                    WHERE o.kind = 'CANDIDATE' AND o.agent = c.agent AND o.symbol = c.symbol)""")
+                .query((rs, i) -> new ExclusionCounter.UnmeasuredPair(EventKind.valueOf(rs.getString("kind")),
+                        rs.getString("agent"), rs.getString("symbol"), rs.getObject("picked", Boolean.class)))
+                .list();
+    }
+
     private static BigDecimal decimalOrNull(String s) {
         if (s == null || s.isBlank()) return null;
         try {

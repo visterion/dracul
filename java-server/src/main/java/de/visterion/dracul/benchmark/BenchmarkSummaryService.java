@@ -37,8 +37,12 @@ public class BenchmarkSummaryService {
     public BenchmarkSummary summary(String userEmail) {
         List<StatRow> rows = outcomes.findForStats();
         Map<String, LocalDate> coverage = candidates.coverageStart();
+        Map<String, AgentExclusions> excluded = ExclusionCounter.count(outcomes.noEntryCounts(),
+                outcomes.unmeasuredPairs(), outcomes.noDataStates());
         SortedSet<String> agents = new TreeSet<>(coverage.keySet());
         rows.forEach(r -> agents.add(r.agent()));
+        // An agent whose every event is excluded must still show up — with its exclusions.
+        excluded.forEach((agent, x) -> { if (x.total() > 0) agents.add(agent); });
 
         List<AgentBenchmark> out = new ArrayList<>();
         for (String agent : agents) {
@@ -48,7 +52,7 @@ public class BenchmarkSummaryService {
             PairedStats p60 = paired(rows, agent, 60);
             LocalDate cov = coverage.get(agent);
             out.add(new AgentBenchmark(agent, cov == null ? null : cov.toString(), s20, s60, p20, p60,
-                    BenchmarkStats.status(s60)));
+                    BenchmarkStats.status(s60), excluded.getOrDefault(agent, AgentExclusions.NONE)));
         }
         return new BenchmarkSummary(BenchmarkBars.BENCHMARK_SYMBOL, decisionDate, BenchmarkStats.MIN_EVENTS,
                 BenchmarkStats.minWeeks(BenchmarkStats.STATUS_HORIZON), out, depot.block(userEmail));

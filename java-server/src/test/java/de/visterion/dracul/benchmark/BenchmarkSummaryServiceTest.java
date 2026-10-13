@@ -60,6 +60,7 @@ class BenchmarkSummaryServiceTest {
         assertThat(b.coverageStart()).isEqualTo("2026-07-14");
         assertThat(b.signal60()).isEqualTo(SignalStats.empty());
         assertThat(b.paired60()).isNull();
+        assertThat(b.excluded()).isEqualTo(AgentExclusions.NONE);
     }
 
     @Test
@@ -87,5 +88,26 @@ class BenchmarkSummaryServiceTest {
         assertThat(a.signal60().n()).isEqualTo(1);
         assertThat(a.paired20()).isNull();
         assertThat(a.paired60()).isNull();
+    }
+
+    /** Final review I3: exclusions reach the row, and an agent whose every event is excluded
+     *  still gets a row. */
+    @Test
+    void exclusionsAreAttachedAndAddExclusionOnlyAgents() {
+        when(outcomes.findForStats()).thenReturn(List.of(row(EventKind.SIGNAL, "strigoi-syna", null, 20, "0.01")));
+        when(candidates.coverageStart()).thenReturn(Map.of());
+        when(outcomes.noEntryCounts()).thenReturn(List.of(
+                new ExclusionCounter.NoEntryCount(EventKind.SIGNAL, "strigoi-synz", null, 2)));
+        when(outcomes.unmeasuredPairs()).thenReturn(List.of(
+                new ExclusionCounter.UnmeasuredPair(EventKind.CANDIDATE, "strigoi-syna", "SYNX.ZZ", false)));
+
+        BenchmarkSummary s = new BenchmarkSummaryService(outcomes, candidates, depot, "2027-04-13")
+                .summary("owner@example.com");
+
+        assertThat(s.agents()).extracting(AgentBenchmark::agent).containsExactly("strigoi-syna", "strigoi-synz");
+        assertThat(s.agents().get(0).excluded().rejected()).isEqualTo(ExcludedCounts.of(0, 0, 1));
+        assertThat(s.agents().get(0).excluded().total()).isEqualTo(1);
+        assertThat(s.agents().get(1).excluded().signal().noEntry()).isEqualTo(2);
+        assertThat(s.agents().get(1).signal60()).isEqualTo(SignalStats.empty());
     }
 }

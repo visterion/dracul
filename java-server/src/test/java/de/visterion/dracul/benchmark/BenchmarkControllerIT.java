@@ -55,5 +55,10 @@ class BenchmarkControllerIT {
         assertThat(row.path("signal60").path("n").asInt()).isZero();
         assertThat(row.path("paired20").isNull()).isTrue();
         assertThat(row.path("status").asString()).isEqualTo("INSUFFICIENT");
+        // Final review I3: the excluded block is serialised with all three groups and a total.
+        assertThat(row.path("excluded").path("total").asInt()).isZero();
+        assertThat(row.path("excluded").path("signal").path("noEntry").asInt()).isZero();
+        assertThat(row.path("excluded").path("rejected").has("unknownCurrency")).isTrue();
+        assertThat(resp.path("minWeeks").asInt()).isEqualTo(24);
     }
 }
