@@ -925,6 +925,9 @@ row (`action='ESCALATE'`) plus a Telegram CRITICAL alert.
 2. **One-time backfill** of the candidates recorded before the deploy:
    - Set `DRACUL_BENCHMARK_IMPORT_TOKEN` to a fresh random value in the deployment's environment. The
      value must reach the container's environment, not only an env file. Recreate the container.
+   - Run the operator's backfill script with `--dry-run` first: it prints per-agent fetch/item counts
+     and POSTs nothing. Compare the total against the known candidate-row count from the audit before
+     running it for real.
    - Run the operator's backfill script on the host. It reads the six hunters' recorded fetch-tool
      outputs from the Vistierie database and POSTs them, grouped per (agent, fetched_at), in chunks to
      `/api/benchmark/candidates/import` over the internal network. Dracul itself never gets access to
