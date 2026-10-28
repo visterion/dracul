@@ -18,7 +18,7 @@
     "@mdi/font": "^7.4.47",
     "@phosphor-icons/vue": "^2.2.0",
     "@phosphor-icons/web": "^2.1.2",
-    "dompurify": "^3.4.16",
+    "dompurify": "^3.4.17",
     "echarts": "^6.1.0",
     "marked": "^18.0.14",
     "pinia": "^3.0.4",
